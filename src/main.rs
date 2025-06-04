@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
-use bevy_panorbit_camera::{PanOrbitCamera, PanOrbitCameraPlugin};
+use bevy::input::mouse::{MouseScrollUnit, MouseWheel, MouseMotion};
 use rand::Rng;
 use std::f32::consts::PI;
 
@@ -9,6 +9,13 @@ const FORMATION_WIDTH: f32 = 200.0;
 const UNIT_SPACING: f32 = 2.0;
 const MARCH_DISTANCE: f32 = 300.0;
 const MARCH_SPEED: f32 = 3.0;
+
+// RTS Camera settings
+const CAMERA_SPEED: f32 = 50.0;
+const CAMERA_ZOOM_SPEED: f32 = 10.0;
+const CAMERA_MIN_HEIGHT: f32 = 20.0;
+const CAMERA_MAX_HEIGHT: f32 = 200.0;
+const CAMERA_ROTATION_SPEED: f32 = 0.005;
 
 #[derive(Component)]
 struct BattleDroid {
@@ -26,16 +33,22 @@ struct FormationUnit {
     column: usize,
 }
 
+#[derive(Component)]
+struct RtsCamera {
+    focus_point: Vec3,
+    yaw: f32,
+    pitch: f32,
+    distance: f32,
+}
+
 fn main() {
     App::new()
-        .add_plugins((
-            DefaultPlugins,
-            PanOrbitCameraPlugin,
-        ))
+        .add_plugins(DefaultPlugins)
         .add_systems(Startup, (setup_scene, spawn_army))
         .add_systems(Update, (
             animate_march,
             update_camera_info,
+            rts_camera_movement,
         ))
         .run();
 }
@@ -114,14 +127,24 @@ fn setup_scene(
         brightness: 300.0,
     });
 
-    // Camera with pan-orbit controls (positioned for better battlefield view)
+    // RTS Camera (positioned for better battlefield view)
+    let focus_point = Vec3::new(0.0, 0.0, MARCH_DISTANCE / 2.0);
+    let initial_distance = 200.0;
+    let initial_yaw = 0.0;
+    let initial_pitch = -0.5; // Looking down at battlefield
+    
     commands.spawn((
         Camera3dBundle {
             transform: Transform::from_xyz(0.0, 120.0, 180.0)
-                .looking_at(Vec3::new(0.0, 0.0, MARCH_DISTANCE / 2.0), Vec3::Y),
+                .looking_at(focus_point, Vec3::Y),
             ..default()
         },
-        PanOrbitCamera::default(),
+        RtsCamera {
+            focus_point,
+            yaw: initial_yaw,
+            pitch: initial_pitch,
+            distance: initial_distance,
+        },
     ));
 
     // UI text for performance info
@@ -387,8 +410,79 @@ fn update_camera_info(
             .unwrap_or(0.0);
             
         text.sections[0].value = format!(
-            "Battle Droid Army - {} Units\nFPS: {:.1}\nWSAD/Mouse: Camera controls\nScroll: Zoom",
+            "Battle Droid Army - {} Units\nFPS: {:.1}\nWSAD: Camera movement\nMouse drag: Rotate\nScroll: Zoom",
             ARMY_SIZE, fps
         );
+    }
+}
+
+fn rts_camera_movement(
+    time: Res<Time>,
+    keyboard_input: Res<ButtonInput<KeyCode>>,
+    mouse_button_input: Res<ButtonInput<MouseButton>>,
+    mut scroll_events: EventReader<MouseWheel>,
+    mut mouse_motion_events: EventReader<MouseMotion>,
+    mut camera_query: Query<(&mut Transform, &mut RtsCamera)>,
+) {
+    if let Ok((mut transform, mut camera)) = camera_query.get_single_mut() {
+        let delta_time = time.delta_seconds();
+        
+        // Mouse drag rotation
+        if mouse_button_input.pressed(MouseButton::Left) {
+            for motion in mouse_motion_events.read() {
+                camera.yaw -= motion.delta.x * CAMERA_ROTATION_SPEED;
+                camera.pitch = (camera.pitch - motion.delta.y * CAMERA_ROTATION_SPEED)
+                    .clamp(-1.5, -0.1); // Limit pitch to reasonable RTS angles
+            }
+        } else {
+            // Clear mouse motion events if not dragging to prevent accumulation
+            mouse_motion_events.clear();
+        }
+        
+        // WASD movement (relative to camera's view direction)
+        let mut movement = Vec3::ZERO;
+        
+        if keyboard_input.pressed(KeyCode::KeyW) || keyboard_input.pressed(KeyCode::ArrowUp) {
+            movement.z -= 1.0; // Move North (away from camera in world space)
+        }
+        if keyboard_input.pressed(KeyCode::KeyS) || keyboard_input.pressed(KeyCode::ArrowDown) {
+            movement.z += 1.0; // Move South (toward camera in world space)
+        }
+        if keyboard_input.pressed(KeyCode::KeyA) || keyboard_input.pressed(KeyCode::ArrowLeft) {
+            movement.x -= 1.0; // Move West (left from camera perspective)
+        }
+        if keyboard_input.pressed(KeyCode::KeyD) || keyboard_input.pressed(KeyCode::ArrowRight) {
+            movement.x += 1.0; // Move East (right from camera perspective)
+        }
+        
+        // Apply movement relative to camera rotation
+        if movement.length() > 0.0 {
+            movement = movement.normalize() * CAMERA_SPEED * delta_time;
+            
+            // Rotate movement vector by camera yaw to make it relative to camera facing
+            // Only rotate around Y axis (yaw) to keep movement on the ground plane
+            let yaw_rotation = Mat3::from_rotation_y(camera.yaw);
+            let rotated_movement = yaw_rotation * movement;
+            
+            camera.focus_point += rotated_movement;
+        }
+        
+        // Mouse wheel zoom
+        for scroll in scroll_events.read() {
+            let zoom_delta = match scroll.unit {
+                MouseScrollUnit::Line => scroll.y * CAMERA_ZOOM_SPEED,
+                MouseScrollUnit::Pixel => scroll.y * CAMERA_ZOOM_SPEED * 0.1,
+            };
+            
+            camera.distance = (camera.distance - zoom_delta)
+                .clamp(CAMERA_MIN_HEIGHT, CAMERA_MAX_HEIGHT);
+        }
+        
+        // Update camera transform based on focus point, yaw, pitch, and distance
+        let rotation = Quat::from_euler(EulerRot::YXZ, camera.yaw, camera.pitch, 0.0);
+        let offset = rotation * Vec3::new(0.0, 0.0, camera.distance);
+        
+        transform.translation = camera.focus_point + offset;
+        transform.rotation = rotation;
     }
 } 

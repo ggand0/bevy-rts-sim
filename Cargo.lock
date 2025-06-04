@@ -311,7 +311,6 @@ name = "bevy-mass-render"
 version = "0.1.0"
 dependencies = [
  "bevy",
- "bevy_panorbit_camera",
  "rand",
 ]
 
@@ -770,15 +769,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "66cf695a264b043f2c4edb92dd5c742e6892180d2b30dac870012d153f8557ea"
 dependencies = [
  "glam",
-]
-
-[[package]]
-name = "bevy_panorbit_camera"
-version = "0.19.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dacb1375f393411c20584a5ede4eac42b1ea1185ec9d2d93e969c2c6b971daa6"
-dependencies = [
- "bevy",
 ]
 
 [[package]]
