@@ -1,6 +1,8 @@
 # Bevy RTS Sim
 
 A real-time battle simulation built with the Bevy game engine in Rust, demonstrating autonomous combat between 10,000 units with basic performance optimizations. Features spatial partitioning and team-based battles. The entire codebase was generated with Claude Sonnet 4.
+![Screenshot from 2025-06-05 04-36-37](https://github.com/user-attachments/assets/d3c76bfb-d288-4f79-bf01-788e9e7084e8)
+
 
 ## Features
 
