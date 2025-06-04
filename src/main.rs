@@ -17,6 +17,12 @@ const CAMERA_MIN_HEIGHT: f32 = 20.0;
 const CAMERA_MAX_HEIGHT: f32 = 200.0;
 const CAMERA_ROTATION_SPEED: f32 = 0.005;
 
+// Laser projectile settings
+const LASER_SPEED: f32 = 100.0;
+const LASER_LIFETIME: f32 = 3.0;
+const LASER_LENGTH: f32 = 3.0;
+const LASER_WIDTH: f32 = 0.2;
+
 #[derive(Component)]
 struct BattleDroid {
     march_speed: f32,
@@ -41,6 +47,12 @@ struct RtsCamera {
     distance: f32,
 }
 
+#[derive(Component)]
+struct LaserProjectile {
+    velocity: Vec3,
+    lifetime: f32,
+}
+
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
@@ -49,6 +61,8 @@ fn main() {
             animate_march,
             update_camera_info,
             rts_camera_movement,
+            volley_fire_system,
+            update_projectiles,
         ))
         .run();
 }
@@ -410,7 +424,7 @@ fn update_camera_info(
             .unwrap_or(0.0);
             
         text.sections[0].value = format!(
-            "Battle Droid Army - {} Units\nFPS: {:.1}\nWSAD: Camera movement\nMouse drag: Rotate\nScroll: Zoom",
+            "Battle Droid Army - {} Units\nFPS: {:.1}\nWSAD: Camera movement\nMouse drag: Rotate\nScroll: Zoom\nF: Volley Fire!",
             ARMY_SIZE, fps
         );
     }
@@ -484,5 +498,146 @@ fn rts_camera_movement(
         
         transform.translation = camera.focus_point + offset;
         transform.rotation = rotation;
+    }
+}
+
+fn volley_fire_system(
+    keyboard_input: Res<ButtonInput<KeyCode>>,
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut images: ResMut<Assets<Image>>,
+    droid_query: Query<&Transform, (With<BattleDroid>, Without<LaserProjectile>)>,
+) {
+    if keyboard_input.just_pressed(KeyCode::KeyF) {
+        // Create a simple laser texture (bright center with falloff)
+        let texture_size = 16;
+        let mut texture_data = Vec::new();
+        
+        for y in 0..texture_size {
+            for x in 0..texture_size {
+                let center_x = texture_size as f32 / 2.0;
+                let center_y = texture_size as f32 / 2.0;
+                let dist = ((x as f32 - center_x).powi(2) + (y as f32 - center_y).powi(2)).sqrt();
+                let max_dist = center_x;
+                let intensity = (1.0 - (dist / max_dist).clamp(0.0, 1.0)) * 255.0;
+                
+                texture_data.extend_from_slice(&[
+                    0,                    // R - no red
+                    intensity as u8,      // G - green
+                    0,                    // B - no blue  
+                    intensity as u8,      // A - alpha based on distance
+                ]);
+            }
+        }
+        
+        let laser_texture = images.add(Image::new(
+            bevy::render::render_resource::Extent3d {
+                width: texture_size,
+                height: texture_size,
+                depth_or_array_layers: 1,
+            },
+            bevy::render::render_resource::TextureDimension::D2,
+            texture_data,
+            bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb,
+            bevy::render::render_asset::RenderAssetUsages::RENDER_WORLD,
+        ));
+        
+        // Create laser material with additive blending for glow effect
+        let laser_material = materials.add(StandardMaterial {
+            base_color: Color::srgb(0.0, 2.0, 0.0), // Bright green
+            base_color_texture: Some(laser_texture),
+            emissive: Color::srgb(0.0, 1.0, 0.0).into(),
+            unlit: true, // No lighting calculations
+            alpha_mode: AlphaMode::Add, // Additive blending for glow
+            cull_mode: None, // Visible from both sides
+            ..default()
+        });
+        
+        // Create laser mesh (simple quad)
+        let laser_mesh = meshes.add(Rectangle::new(LASER_WIDTH, LASER_LENGTH));
+        
+        // Spawn laser from each droid
+        for droid_transform in droid_query.iter() {
+            // Calculate firing position (slightly in front of droid)
+            let firing_pos = droid_transform.translation + Vec3::new(0.0, 0.8, 0.0);
+            
+            // Get droid's forward direction (corrected)
+            let forward = -droid_transform.forward().as_vec3(); // Negative to fix direction
+            let velocity = forward * LASER_SPEED;
+            
+            // Create laser transform - quad billboarded and oriented along velocity
+            let laser_transform = Transform::from_translation(firing_pos);
+            
+            // Spawn laser projectile
+            commands.spawn((
+                PbrBundle {
+                    mesh: laser_mesh.clone(),
+                    material: laser_material.clone(),
+                    transform: laser_transform,
+                    ..default()
+                },
+                LaserProjectile {
+                    velocity,
+                    lifetime: LASER_LIFETIME,
+                },
+            ));
+        }
+        
+        info!("Volley fire! {} lasers fired!", droid_query.iter().count());
+    }
+}
+
+fn update_projectiles(
+    time: Res<Time>,
+    mut commands: Commands,
+    mut projectile_query: Query<(Entity, &mut Transform, &mut LaserProjectile)>,
+    camera_query: Query<&Transform, (With<RtsCamera>, Without<LaserProjectile>)>,
+) {
+    let delta_time = time.delta_seconds();
+    
+    // Get camera position for billboarding
+    let camera_transform = camera_query.get_single().ok();
+    
+    for (entity, mut transform, mut laser) in projectile_query.iter_mut() {
+        // Update lifetime
+        laser.lifetime -= delta_time;
+        
+        // Despawn if lifetime expired
+        if laser.lifetime <= 0.0 {
+            commands.entity(entity).despawn();
+            continue;
+        }
+        
+        // Move projectile
+        transform.translation += laser.velocity * delta_time;
+        
+        // Orient quad: align length with velocity direction, face camera
+        if let Some(cam_transform) = camera_transform {
+            if laser.velocity.length() > 0.0 {
+                let velocity_dir = laser.velocity.normalize();
+                let to_camera = (cam_transform.translation - transform.translation).normalize();
+                
+                // First, make the quad face the camera
+                let base_rotation = Transform::from_translation(Vec3::ZERO)
+                    .looking_at(-to_camera, Vec3::Y)
+                    .rotation;
+                
+                // Then rotate around the camera direction to align with velocity
+                // Calculate the angle between "up" (Y) and the velocity direction when projected onto the quad plane
+                let velocity_in_quad_plane = velocity_dir - velocity_dir.dot(to_camera) * to_camera;
+                if velocity_in_quad_plane.length() > 0.001 {
+                    let velocity_in_quad_plane = velocity_in_quad_plane.normalize();
+                    let angle = Vec3::Y.dot(velocity_in_quad_plane).acos();
+                    let cross = Vec3::Y.cross(velocity_in_quad_plane);
+                    let rotation_sign = if cross.dot(to_camera) > 0.0 { 1.0 } else { -1.0 };
+                    
+                    let alignment_rotation = Quat::from_axis_angle(to_camera, angle * rotation_sign);
+                    transform.rotation = alignment_rotation * base_rotation;
+                } else {
+                    transform.rotation = base_rotation;
+                }
+            }
+        }
     }
 } 
