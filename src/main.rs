@@ -25,10 +25,10 @@ const LASER_LENGTH: f32 = 3.0;
 const LASER_WIDTH: f32 = 0.2;
 
 // Combat settings
-const TARGETING_RANGE: f32 = 100.0;
+const TARGETING_RANGE: f32 = 150.0;
 const TARGET_SCAN_INTERVAL: f32 = 2.0;
 const COLLISION_RADIUS: f32 = 1.0;
-const AUTO_FIRE_INTERVAL: f32 = 1.5;
+const AUTO_FIRE_INTERVAL: f32 = 2.0;
 
 #[derive(Component, Clone, Copy, PartialEq)]
 enum Team {
@@ -90,6 +90,39 @@ fn main() {
             collision_detection_system,
         ))
         .run();
+}
+
+// Helper function to calculate proper laser orientation
+fn calculate_laser_orientation(
+    velocity: Vec3,
+    position: Vec3,
+    camera_position: Vec3,
+) -> Quat {
+    if velocity.length() > 0.0 {
+        let velocity_dir = velocity.normalize();
+        let to_camera = (camera_position - position).normalize();
+        
+        // First, make the quad face the camera
+        let base_rotation = Transform::from_translation(Vec3::ZERO)
+            .looking_at(-to_camera, Vec3::Y)
+            .rotation;
+        
+        // Then rotate around the camera direction to align with velocity
+        let velocity_in_quad_plane = velocity_dir - velocity_dir.dot(to_camera) * to_camera;
+        if velocity_in_quad_plane.length() > 0.001 {
+            let velocity_in_quad_plane = velocity_in_quad_plane.normalize();
+            let angle = Vec3::Y.dot(velocity_in_quad_plane).acos();
+            let cross = Vec3::Y.cross(velocity_in_quad_plane);
+            let rotation_sign = if cross.dot(to_camera) > 0.0 { 1.0 } else { -1.0 };
+            
+            let alignment_rotation = Quat::from_axis_angle(to_camera, angle * rotation_sign);
+            alignment_rotation * base_rotation
+        } else {
+            base_rotation
+        }
+    } else {
+        Quat::IDENTITY
+    }
 }
 
 fn setup_scene(
@@ -597,6 +630,7 @@ fn volley_fire_system(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut images: ResMut<Assets<Image>>,
     droid_query: Query<(&Transform, &BattleDroid), Without<LaserProjectile>>,
+    camera_query: Query<&Transform, (With<RtsCamera>, Without<LaserProjectile>)>,
 ) {
     if keyboard_input.just_pressed(KeyCode::KeyF) {
         // Create a simple laser texture (bright center with falloff)
@@ -632,11 +666,21 @@ fn volley_fire_system(
             bevy::render::render_asset::RenderAssetUsages::RENDER_WORLD,
         ));
         
-        // Create laser material with additive blending for glow effect
-        let laser_material = materials.add(StandardMaterial {
-            base_color: Color::srgb(0.0, 2.0, 0.0), // Bright green
-            base_color_texture: Some(laser_texture),
+        // Create laser materials for both teams
+        let team_a_laser_material = materials.add(StandardMaterial {
+            base_color: Color::srgb(0.0, 2.0, 0.0), // Bright green for Team A
+            base_color_texture: Some(laser_texture.clone()),
             emissive: Color::srgb(0.0, 1.0, 0.0).into(),
+            unlit: true, // No lighting calculations
+            alpha_mode: AlphaMode::Add, // Additive blending for glow
+            cull_mode: None, // Visible from both sides
+            ..default()
+        });
+        
+        let team_b_laser_material = materials.add(StandardMaterial {
+            base_color: Color::srgb(2.0, 0.0, 0.0), // Bright red for Team B
+            base_color_texture: Some(laser_texture),
+            emissive: Color::srgb(1.0, 0.0, 0.0).into(),
             unlit: true, // No lighting calculations
             alpha_mode: AlphaMode::Add, // Additive blending for glow
             cull_mode: None, // Visible from both sides
@@ -645,6 +689,11 @@ fn volley_fire_system(
         
         // Create laser mesh (simple quad)
         let laser_mesh = meshes.add(Rectangle::new(LASER_WIDTH, LASER_LENGTH));
+        
+        // Get camera position for initial orientation
+        let camera_position = camera_query.get_single()
+            .map(|cam_transform| cam_transform.translation)
+            .unwrap_or(Vec3::new(0.0, 100.0, 100.0)); // Fallback position
         
         // Spawn laser from each droid
         for (droid_transform, droid) in droid_query.iter() {
@@ -655,14 +704,22 @@ fn volley_fire_system(
             let forward = -droid_transform.forward().as_vec3(); // Negative to fix direction
             let velocity = forward * LASER_SPEED;
             
-            // Create laser transform - quad billboarded and oriented along velocity
-            let laser_transform = Transform::from_translation(firing_pos);
+            // Calculate proper initial orientation
+            let laser_rotation = calculate_laser_orientation(velocity, firing_pos, camera_position);
+            let laser_transform = Transform::from_translation(firing_pos)
+                .with_rotation(laser_rotation);
+            
+            // Choose material based on team
+            let laser_material = match droid.team {
+                Team::A => team_a_laser_material.clone(),
+                Team::B => team_b_laser_material.clone(),
+            };
             
             // Spawn laser projectile
             commands.spawn((
                 PbrBundle {
                     mesh: laser_mesh.clone(),
-                    material: laser_material.clone(),
+                    material: laser_material,
                     transform: laser_transform,
                     ..default()
                 },
@@ -735,9 +792,14 @@ fn update_projectiles(
 fn target_acquisition_system(
     time: Res<Time>,
     mut combat_query: Query<(Entity, &Transform, &BattleDroid, &mut CombatUnit)>,
-    potential_targets_query: Query<(Entity, &Transform, &BattleDroid), With<CombatUnit>>,
 ) {
     let delta_time = time.delta_seconds();
+    
+    // Collect all unit data first to avoid borrowing issues
+    let all_units: Vec<(Entity, Vec3, Team)> = combat_query
+        .iter()
+        .map(|(entity, transform, droid, _)| (entity, transform.translation, droid.team))
+        .collect();
     
     for (entity, transform, droid, mut combat_unit) in combat_query.iter_mut() {
         // Update target scan timer
@@ -750,13 +812,13 @@ fn target_acquisition_system(
             let mut closest_enemy: Option<Entity> = None;
             let mut closest_distance = f32::INFINITY;
             
-            for (target_entity, target_transform, target_droid) in potential_targets_query.iter() {
+            for &(target_entity, target_position, target_team) in &all_units {
                 // Skip allies and self
-                if target_droid.team == droid.team || target_entity == entity {
+                if target_team == droid.team || target_entity == entity {
                     continue;
                 }
                 
-                let distance = transform.translation.distance(target_transform.translation);
+                let distance = transform.translation.distance(target_position);
                 if distance <= TARGETING_RANGE && distance < closest_distance {
                     closest_distance = distance;
                     closest_enemy = Some(target_entity);
@@ -775,8 +837,14 @@ fn auto_fire_system(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut combat_query: Query<(&Transform, &BattleDroid, &mut CombatUnit)>,
     target_query: Query<&Transform, With<BattleDroid>>,
+    camera_query: Query<&Transform, (With<RtsCamera>, Without<LaserProjectile>)>,
 ) {
     let delta_time = time.delta_seconds();
+    
+    // Get camera position for initial orientation
+    let camera_position = camera_query.get_single()
+        .map(|cam_transform| cam_transform.translation)
+        .unwrap_or(Vec3::new(0.0, 100.0, 100.0)); // Fallback position
     
     for (droid_transform, droid, mut combat_unit) in combat_query.iter_mut() {
         // Update auto fire timer
@@ -788,15 +856,25 @@ fn auto_fire_system(
                     // Reset timer
                     combat_unit.auto_fire_timer = AUTO_FIRE_INTERVAL;
                     
-                    // Create laser material (simplified)
-                    let laser_material = materials.add(StandardMaterial {
-                        base_color: Color::srgb(0.0, 2.0, 0.0),
-                        emissive: Color::srgb(0.0, 1.0, 0.0).into(),
-                        unlit: true,
-                        alpha_mode: AlphaMode::Add,
-                        cull_mode: None,
-                        ..default()
-                    });
+                    // Create laser material based on team
+                    let laser_material = match droid.team {
+                        Team::A => materials.add(StandardMaterial {
+                            base_color: Color::srgb(0.0, 2.0, 0.0), // Green for Team A
+                            emissive: Color::srgb(0.0, 1.0, 0.0).into(),
+                            unlit: true,
+                            alpha_mode: AlphaMode::Add,
+                            cull_mode: None,
+                            ..default()
+                        }),
+                        Team::B => materials.add(StandardMaterial {
+                            base_color: Color::srgb(2.0, 0.0, 0.0), // Red for Team B
+                            emissive: Color::srgb(1.0, 0.0, 0.0).into(),
+                            unlit: true,
+                            alpha_mode: AlphaMode::Add,
+                            cull_mode: None,
+                            ..default()
+                        }),
+                    };
                     
                     let laser_mesh = meshes.add(Rectangle::new(LASER_WIDTH, LASER_LENGTH));
                     
@@ -806,12 +884,17 @@ fn auto_fire_system(
                     let direction = (target_pos - firing_pos).normalize();
                     let velocity = direction * LASER_SPEED;
                     
+                    // Calculate proper initial orientation
+                    let laser_rotation = calculate_laser_orientation(velocity, firing_pos, camera_position);
+                    let laser_transform = Transform::from_translation(firing_pos)
+                        .with_rotation(laser_rotation);
+                    
                     // Spawn targeted laser
                     commands.spawn((
                         PbrBundle {
                             mesh: laser_mesh,
                             material: laser_material,
-                            transform: Transform::from_translation(firing_pos),
+                            transform: laser_transform,
                             ..default()
                         },
                         LaserProjectile {
