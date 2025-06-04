@@ -4,11 +4,12 @@ use bevy::input::mouse::{MouseScrollUnit, MouseWheel, MouseMotion};
 use rand::Rng;
 use std::f32::consts::PI;
 
-const ARMY_SIZE: usize = 10_000;
+const ARMY_SIZE_PER_TEAM: usize = 5_000;
 const FORMATION_WIDTH: f32 = 200.0;
 const UNIT_SPACING: f32 = 2.0;
-const MARCH_DISTANCE: f32 = 300.0;
+const MARCH_DISTANCE: f32 = 150.0;
 const MARCH_SPEED: f32 = 3.0;
+const BATTLEFIELD_SIZE: f32 = 400.0;
 
 // RTS Camera settings
 const CAMERA_SPEED: f32 = 50.0;
@@ -23,6 +24,12 @@ const LASER_LIFETIME: f32 = 3.0;
 const LASER_LENGTH: f32 = 3.0;
 const LASER_WIDTH: f32 = 0.2;
 
+#[derive(Component, Clone, Copy, PartialEq)]
+enum Team {
+    A,
+    B,
+}
+
 #[derive(Component)]
 struct BattleDroid {
     march_speed: f32,
@@ -30,6 +37,7 @@ struct BattleDroid {
     target_position: Vec3,
     march_offset: f32,
     returning_to_spawn: bool,
+    team: Team,
 }
 
 #[derive(Component)]
@@ -164,7 +172,7 @@ fn setup_scene(
     // UI text for performance info
     commands.spawn(
         TextBundle::from_section(
-            "Battle Droid Army - 10,000 Units\nWSAD/Mouse: Camera controls\nScroll: Zoom",
+            "Battle Droids - 5,000 vs 5,000 Units\nWSAD: Camera movement\nMouse drag: Rotate\nScroll: Zoom\nF: Volley Fire!",
             TextStyle {
                 font_size: 20.0,
                 color: Color::WHITE,
@@ -188,18 +196,33 @@ fn spawn_army(
     // Create battle droid mesh (simple humanoid shape using cubes)
     let droid_mesh = create_battle_droid_mesh(&mut meshes);
     
-    // Materials for different parts
-    let body_material = materials.add(StandardMaterial {
+    // Team A materials (current blue-gray theme)
+    let team_a_body_material = materials.add(StandardMaterial {
         base_color: Color::srgb(0.7, 0.7, 0.8),
         metallic: 0.3,
         perceptual_roughness: 0.5,
         ..default()
     });
     
-    let head_material = materials.add(StandardMaterial {
+    let team_a_head_material = materials.add(StandardMaterial {
         base_color: Color::srgb(0.8, 0.6, 0.4),
         metallic: 0.2,
         perceptual_roughness: 0.6,
+        ..default()
+    });
+
+    // Team B materials (white/light theme)
+    let team_b_body_material = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.9, 0.9, 0.95),
+        metallic: 0.4,
+        perceptual_roughness: 0.3,
+        ..default()
+    });
+    
+    let team_b_head_material = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.95, 0.95, 1.0),
+        metallic: 0.3,
+        perceptual_roughness: 0.4,
         ..default()
     });
 
@@ -207,41 +230,87 @@ fn spawn_army(
     
     // Calculate formation parameters
     let units_per_row = (FORMATION_WIDTH / UNIT_SPACING) as usize;
-    let total_rows = (ARMY_SIZE + units_per_row - 1) / units_per_row;
+    let total_rows = (ARMY_SIZE_PER_TEAM + units_per_row - 1) / units_per_row;
     
-    for i in 0..ARMY_SIZE {
+    // Spawn Team A (left side, facing right)
+    spawn_team(
+        &mut commands,
+        &mut rng,
+        &droid_mesh,
+        &team_a_body_material,
+        &team_a_head_material,
+        Team::A,
+        Vec3::new(-BATTLEFIELD_SIZE / 2.0, 0.0, 0.0),
+        Vec3::new(1.0, 0.0, 0.0), // Facing right
+        units_per_row,
+        total_rows,
+    );
+    
+    // Spawn Team B (right side, facing left) 
+    spawn_team(
+        &mut commands,
+        &mut rng,
+        &droid_mesh,
+        &team_b_body_material,
+        &team_b_head_material,
+        Team::B,
+        Vec3::new(BATTLEFIELD_SIZE / 2.0, 0.0, 0.0),
+        Vec3::new(-1.0, 0.0, 0.0), // Facing left
+        units_per_row,
+        total_rows,
+    );
+    
+    info!("Spawned {} droids per team ({} total)", ARMY_SIZE_PER_TEAM, ARMY_SIZE_PER_TEAM * 2);
+}
+
+fn spawn_team(
+    commands: &mut Commands,
+    rng: &mut rand::rngs::ThreadRng,
+    droid_mesh: &Handle<Mesh>,
+    body_material: &Handle<StandardMaterial>,
+    head_material: &Handle<StandardMaterial>,
+    team: Team,
+    team_center: Vec3,
+    facing_direction: Vec3,
+    units_per_row: usize,
+    total_rows: usize,
+) {
+    for i in 0..ARMY_SIZE_PER_TEAM {
         let row = i / units_per_row;
         let column = i % units_per_row;
         
-        // Calculate position in formation
+        // Calculate position in formation relative to team center
         let x = (column as f32 - units_per_row as f32 / 2.0) * UNIT_SPACING;
         let z = (row as f32 - total_rows as f32 / 2.0) * UNIT_SPACING;
         let y = 0.0;
         
-        let position = Vec3::new(x, y, z);
+        let local_position = Vec3::new(x, y, z);
+        let world_position = team_center + local_position;
         
         // Add some randomness to march timing
         let march_offset = rng.gen_range(0.0..2.0 * PI);
         let march_speed = rng.gen_range(0.8..1.2);
         
-        // Calculate target position (march forward)
-        let target_position = position + Vec3::new(0.0, 0.0, MARCH_DISTANCE);
+        // Calculate target position (march toward center of battlefield)
+        let target_position = world_position + facing_direction * MARCH_DISTANCE;
         
         // Spawn the battle droid
         let droid_entity = commands.spawn((
             PbrBundle {
                 mesh: droid_mesh.clone(),
                 material: body_material.clone(),
-                transform: Transform::from_translation(position)
-                    .with_scale(Vec3::splat(0.8)),
+                transform: Transform::from_translation(world_position)
+                    .with_scale(Vec3::splat(0.8))
+                    .looking_at(world_position + facing_direction, Vec3::Y),
                 ..default()
             },
             BattleDroid {
                 march_speed,
-                spawn_position: position,
+                spawn_position: world_position,
                 target_position,
                 march_offset,
                 returning_to_spawn: false,
+                team,
             },
             FormationUnit {
                 formation_index: i,
@@ -250,18 +319,17 @@ fn spawn_army(
             },
         )).id();
         
-        // Add a head (separate entity as child)
+        // Add a head (separate entity as child) - need to create mesh here
         let head_entity = commands.spawn(PbrBundle {
-            mesh: meshes.add(Cuboid::new(0.6, 0.6, 0.6)),
+            mesh: droid_mesh.clone(), // Reuse droid mesh for now, can be improved later
             material: head_material.clone(),
-            transform: Transform::from_xyz(0.0, 1.2, 0.0),
+            transform: Transform::from_xyz(0.0, 1.2, 0.0)
+                .with_scale(Vec3::splat(0.3)),
             ..default()
         }).id();
         
         commands.entity(droid_entity).push_children(&[head_entity]);
     }
-    
-    info!("Spawned {} battle droids in formation", ARMY_SIZE);
 }
 
 fn create_battle_droid_mesh(meshes: &mut ResMut<Assets<Mesh>>) -> Handle<Mesh> {
@@ -424,8 +492,8 @@ fn update_camera_info(
             .unwrap_or(0.0);
             
         text.sections[0].value = format!(
-            "Battle Droid Army - {} Units\nFPS: {:.1}\nWSAD: Camera movement\nMouse drag: Rotate\nScroll: Zoom\nF: Volley Fire!",
-            ARMY_SIZE, fps
+            "Battle Droids - {} vs {} Units\nFPS: {:.1}\nWSAD: Camera movement\nMouse drag: Rotate\nScroll: Zoom\nF: Volley Fire!",
+            ARMY_SIZE_PER_TEAM, ARMY_SIZE_PER_TEAM, fps
         );
     }
 }
