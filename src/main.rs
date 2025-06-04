@@ -315,7 +315,7 @@ fn setup_scene(
     // UI text for performance info
     commands.spawn(
         TextBundle::from_section(
-            "Battle Droids - 5,000 vs 5,000 Units\nWSAD: Camera movement\nMouse drag: Rotate\nScroll: Zoom\nF: Volley Fire!",
+            "5,000 vs 5,000 Units | FPS: --\nWSAD: Move | Mouse: Rotate | Scroll: Zoom | F: Volley Fire",
             TextStyle {
                 font_size: 20.0,
                 color: Color::WHITE,
@@ -640,7 +640,7 @@ fn update_camera_info(
             .unwrap_or(0.0);
             
         text.sections[0].value = format!(
-            "Battle Droids - {} vs {} Units\nFPS: {:.1}\nWSAD: Camera movement\nMouse drag: Rotate\nScroll: Zoom\nF: Volley Fire!",
+            "{} vs {} Units | FPS: {:.1}\nWSAD: Move | Mouse: Rotate | Scroll: Zoom | F: Volley Fire",
             ARMY_SIZE_PER_TEAM, ARMY_SIZE_PER_TEAM, fps
         );
     }
