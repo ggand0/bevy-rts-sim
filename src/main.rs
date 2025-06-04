@@ -7,12 +7,16 @@ use std::f32::consts::PI;
 const ARMY_SIZE: usize = 10_000;
 const FORMATION_WIDTH: f32 = 200.0;
 const UNIT_SPACING: f32 = 2.0;
+const MARCH_DISTANCE: f32 = 300.0;
+const MARCH_SPEED: f32 = 3.0;
 
 #[derive(Component)]
 struct BattleDroid {
     march_speed: f32,
-    base_position: Vec3,
+    spawn_position: Vec3,
+    target_position: Vec3,
     march_offset: f32,
+    returning_to_spawn: bool,
 }
 
 #[derive(Component)]
@@ -75,9 +79,9 @@ fn setup_scene(
     
     let ground_texture = images.add(image);
 
-    // Ground plane
+    // Ground plane (expanded for marching distance)
     commands.spawn(PbrBundle {
-        mesh: meshes.add(Rectangle::new(400.0, 400.0)),
+        mesh: meshes.add(Rectangle::new(800.0, 800.0)),
         material: materials.add(StandardMaterial {
             base_color_texture: Some(ground_texture),
             perceptual_roughness: 0.8,
@@ -110,11 +114,11 @@ fn setup_scene(
         brightness: 300.0,
     });
 
-    // Camera with pan-orbit controls
+    // Camera with pan-orbit controls (positioned for better battlefield view)
     commands.spawn((
         Camera3dBundle {
-            transform: Transform::from_xyz(0.0, 80.0, 120.0)
-                .looking_at(Vec3::new(0.0, 0.0, 0.0), Vec3::Y),
+            transform: Transform::from_xyz(0.0, 120.0, 180.0)
+                .looking_at(Vec3::new(0.0, 0.0, MARCH_DISTANCE / 2.0), Vec3::Y),
             ..default()
         },
         PanOrbitCamera::default(),
@@ -183,6 +187,9 @@ fn spawn_army(
         let march_offset = rng.gen_range(0.0..2.0 * PI);
         let march_speed = rng.gen_range(0.8..1.2);
         
+        // Calculate target position (march forward)
+        let target_position = position + Vec3::new(0.0, 0.0, MARCH_DISTANCE);
+        
         // Spawn the battle droid
         let droid_entity = commands.spawn((
             PbrBundle {
@@ -194,8 +201,10 @@ fn spawn_army(
             },
             BattleDroid {
                 march_speed,
-                base_position: position,
+                spawn_position: position,
+                target_position,
                 march_offset,
+                returning_to_spawn: false,
             },
             FormationUnit {
                 formation_index: i,
@@ -324,21 +333,46 @@ fn create_battle_droid_mesh(meshes: &mut ResMut<Assets<Mesh>>) -> Handle<Mesh> {
 
 fn animate_march(
     time: Res<Time>,
-    mut query: Query<(&BattleDroid, &mut Transform), With<FormationUnit>>,
+    mut query: Query<(&mut BattleDroid, &mut Transform), With<FormationUnit>>,
 ) {
     let time_seconds = time.elapsed_seconds();
+    let delta_time = time.delta_seconds();
     
-    for (droid, mut transform) in query.iter_mut() {
-        // Simple marching animation - slight bobbing motion
-        let march_cycle = (time_seconds * droid.march_speed + droid.march_offset).sin();
-        let bob_height = march_cycle * 0.05; // Subtle up/down movement
+    for (mut droid, mut transform) in query.iter_mut() {
+        // Determine current target
+        let current_target = if droid.returning_to_spawn {
+            droid.spawn_position
+        } else {
+            droid.target_position
+        };
         
-        // Update position with marching bob
-        transform.translation = droid.base_position + Vec3::new(0.0, bob_height, 0.0);
+        // Calculate direction to target
+        let direction = (current_target - transform.translation).normalize_or_zero();
+        let distance_to_target = transform.translation.distance(current_target);
         
-        // Slight rotation for more natural look
-        let sway = (time_seconds * droid.march_speed * 2.0 + droid.march_offset).sin() * 0.02;
-        transform.rotation = Quat::from_rotation_y(sway);
+        // Check if we've reached the target
+        if distance_to_target < 1.0 {
+            // Switch direction
+            droid.returning_to_spawn = !droid.returning_to_spawn;
+        } else {
+            // Move towards target
+            let movement = direction * MARCH_SPEED * delta_time * droid.march_speed;
+            transform.translation += movement;
+        }
+        
+        // Add marching animation - slight bobbing motion
+        let march_cycle = (time_seconds * droid.march_speed * 4.0 + droid.march_offset).sin();
+        let bob_height = march_cycle * 0.03; // Subtle up/down movement
+        transform.translation.y += bob_height;
+        
+        // Slight rotation for more natural look and face movement direction
+        let sway = (time_seconds * droid.march_speed * 2.0 + droid.march_offset).sin() * 0.01;
+        let forward_rotation = if direction.length() > 0.1 {
+            Quat::from_rotation_y(direction.x.atan2(direction.z))
+        } else {
+            transform.rotation
+        };
+        transform.rotation = forward_rotation * Quat::from_rotation_y(sway);
     }
 }
 
