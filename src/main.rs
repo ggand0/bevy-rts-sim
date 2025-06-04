@@ -30,6 +30,10 @@ const TARGET_SCAN_INTERVAL: f32 = 2.0;
 const COLLISION_RADIUS: f32 = 1.0;
 const AUTO_FIRE_INTERVAL: f32 = 2.0;
 
+// Spatial partitioning settings
+const GRID_CELL_SIZE: f32 = 10.0; // Size of each grid cell
+const GRID_SIZE: i32 = 100; // Number of cells per side (covers 1000x1000 area)
+
 #[derive(Component, Clone, Copy, PartialEq)]
 enum Team {
     A,
@@ -75,9 +79,75 @@ struct CombatUnit {
     current_target: Option<Entity>,
 }
 
+// Spatial grid for collision optimization
+#[derive(Resource, Default)]
+struct SpatialGrid {
+    // Grid cells containing entity IDs - [x][y]
+    laser_cells: Vec<Vec<Vec<Entity>>>,
+    droid_cells: Vec<Vec<Vec<Entity>>>,
+}
+
+impl SpatialGrid {
+    fn new() -> Self {
+        let size = GRID_SIZE as usize;
+        Self {
+            laser_cells: vec![vec![Vec::new(); size]; size],
+            droid_cells: vec![vec![Vec::new(); size]; size],
+        }
+    }
+    
+    fn clear(&mut self) {
+        for row in &mut self.laser_cells {
+            for cell in row {
+                cell.clear();
+            }
+        }
+        for row in &mut self.droid_cells {
+            for cell in row {
+                cell.clear();
+            }
+        }
+    }
+    
+    fn world_to_grid(pos: Vec3) -> (i32, i32) {
+        let x = ((pos.x + GRID_SIZE as f32 * GRID_CELL_SIZE * 0.5) / GRID_CELL_SIZE) as i32;
+        let z = ((pos.z + GRID_SIZE as f32 * GRID_CELL_SIZE * 0.5) / GRID_CELL_SIZE) as i32;
+        (x.clamp(0, GRID_SIZE - 1), z.clamp(0, GRID_SIZE - 1))
+    }
+    
+    fn add_laser(&mut self, entity: Entity, pos: Vec3) {
+        let (x, z) = Self::world_to_grid(pos);
+        self.laser_cells[x as usize][z as usize].push(entity);
+    }
+    
+    fn add_droid(&mut self, entity: Entity, pos: Vec3) {
+        let (x, z) = Self::world_to_grid(pos);
+        self.droid_cells[x as usize][z as usize].push(entity);
+    }
+    
+    fn get_nearby_droids(&self, pos: Vec3) -> Vec<Entity> {
+        let (center_x, center_z) = Self::world_to_grid(pos);
+        let mut nearby = Vec::new();
+        
+        // Check 3x3 grid around the position to account for collision radius
+        for dx in -1..=1 {
+            for dz in -1..=1 {
+                let x = center_x + dx;
+                let z = center_z + dz;
+                if x >= 0 && x < GRID_SIZE && z >= 0 && z < GRID_SIZE {
+                    nearby.extend(&self.droid_cells[x as usize][z as usize]);
+                }
+            }
+        }
+        nearby
+    }
+}
+
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
+        .add_plugins(bevy::diagnostic::FrameTimeDiagnosticsPlugin)
+        .insert_resource(SpatialGrid::new())
         .add_systems(Startup, (setup_scene, spawn_army))
         .add_systems(Update, (
             animate_march,
@@ -911,35 +981,51 @@ fn auto_fire_system(
 
 fn collision_detection_system(
     mut commands: Commands,
+    mut spatial_grid: ResMut<SpatialGrid>,
     laser_query: Query<(Entity, &Transform, &LaserProjectile)>,
     droid_query: Query<(Entity, &Transform, &BattleDroid), Without<LaserProjectile>>,
 ) {
+    // Clear and rebuild the spatial grid each frame
+    spatial_grid.clear();
+    
+    // Populate grid with droids
+    for (droid_entity, droid_transform, _) in droid_query.iter() {
+        spatial_grid.add_droid(droid_entity, droid_transform.translation);
+    }
+    
     let mut entities_to_despawn = std::collections::HashSet::new();
     
+    // Check collisions for each laser using spatial grid
     for (laser_entity, laser_transform, laser) in laser_query.iter() {
         // Skip if laser already marked for despawn
         if entities_to_despawn.contains(&laser_entity) {
             continue;
         }
         
-        for (droid_entity, droid_transform, droid) in droid_query.iter() {
+        // Get only nearby droids using spatial grid
+        let nearby_droids = spatial_grid.get_nearby_droids(laser_transform.translation);
+        
+        for &droid_entity in &nearby_droids {
             // Skip if droid already marked for despawn
             if entities_to_despawn.contains(&droid_entity) {
                 continue;
             }
             
-            // Skip friendly fire
-            if laser.team == droid.team {
-                continue;
-            }
-            
-            // Simple sphere collision detection
-            let distance = laser_transform.translation.distance(droid_transform.translation);
-            if distance <= COLLISION_RADIUS {
-                // Hit! Mark both laser and droid for despawn
-                entities_to_despawn.insert(laser_entity);
-                entities_to_despawn.insert(droid_entity);
-                break; // Laser can only hit one target
+            // Get droid data - we need to check if it still exists and get its data
+            if let Ok((_, droid_transform, droid)) = droid_query.get(droid_entity) {
+                // Skip friendly fire
+                if laser.team == droid.team {
+                    continue;
+                }
+                
+                // Simple sphere collision detection
+                let distance = laser_transform.translation.distance(droid_transform.translation);
+                if distance <= COLLISION_RADIUS {
+                    // Hit! Mark both laser and droid for despawn
+                    entities_to_despawn.insert(laser_entity);
+                    entities_to_despawn.insert(droid_entity);
+                    break; // Laser can only hit one target
+                }
             }
         }
     }
