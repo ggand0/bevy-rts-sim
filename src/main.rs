@@ -24,6 +24,12 @@ const LASER_LIFETIME: f32 = 3.0;
 const LASER_LENGTH: f32 = 3.0;
 const LASER_WIDTH: f32 = 0.2;
 
+// Combat settings
+const TARGETING_RANGE: f32 = 100.0;
+const TARGET_SCAN_INTERVAL: f32 = 2.0;
+const COLLISION_RADIUS: f32 = 1.0;
+const AUTO_FIRE_INTERVAL: f32 = 1.5;
+
 #[derive(Component, Clone, Copy, PartialEq)]
 enum Team {
     A,
@@ -59,6 +65,14 @@ struct RtsCamera {
 struct LaserProjectile {
     velocity: Vec3,
     lifetime: f32,
+    team: Team, // Track which team fired this laser
+}
+
+#[derive(Component)]
+struct CombatUnit {
+    target_scan_timer: f32,
+    auto_fire_timer: f32,
+    current_target: Option<Entity>,
 }
 
 fn main() {
@@ -69,8 +83,11 @@ fn main() {
             animate_march,
             update_camera_info,
             rts_camera_movement,
+            target_acquisition_system,
+            auto_fire_system,
             volley_fire_system,
             update_projectiles,
+            collision_detection_system,
         ))
         .run();
 }
@@ -108,10 +125,9 @@ fn setup_scene(
                 image.data[index + 1] = 60;  // G
                 image.data[index + 2] = 30;  // B
                 image.data[index + 3] = 255; // A
-            }
-        }
-    }
-    
+                      }
+      }
+  }
     let ground_texture = images.add(image);
 
     // Ground plane (expanded for marching distance)
@@ -311,6 +327,11 @@ fn spawn_team(
                 march_offset,
                 returning_to_spawn: false,
                 team,
+            },
+            CombatUnit {
+                target_scan_timer: rng.gen_range(0.0..TARGET_SCAN_INTERVAL),
+                auto_fire_timer: rng.gen_range(0.0..AUTO_FIRE_INTERVAL),
+                current_target: None,
             },
             FormationUnit {
                 formation_index: i,
@@ -575,7 +596,7 @@ fn volley_fire_system(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut images: ResMut<Assets<Image>>,
-    droid_query: Query<&Transform, (With<BattleDroid>, Without<LaserProjectile>)>,
+    droid_query: Query<(&Transform, &BattleDroid), Without<LaserProjectile>>,
 ) {
     if keyboard_input.just_pressed(KeyCode::KeyF) {
         // Create a simple laser texture (bright center with falloff)
@@ -626,7 +647,7 @@ fn volley_fire_system(
         let laser_mesh = meshes.add(Rectangle::new(LASER_WIDTH, LASER_LENGTH));
         
         // Spawn laser from each droid
-        for droid_transform in droid_query.iter() {
+        for (droid_transform, droid) in droid_query.iter() {
             // Calculate firing position (slightly in front of droid)
             let firing_pos = droid_transform.translation + Vec3::new(0.0, 0.8, 0.0);
             
@@ -648,6 +669,7 @@ fn volley_fire_system(
                 LaserProjectile {
                     velocity,
                     lifetime: LASER_LIFETIME,
+                    team: droid.team, // Add team to track laser ownership
                 },
             ));
         }
@@ -706,6 +728,143 @@ fn update_projectiles(
                     transform.rotation = base_rotation;
                 }
             }
+        }
+    }
+}
+
+fn target_acquisition_system(
+    time: Res<Time>,
+    mut combat_query: Query<(Entity, &Transform, &BattleDroid, &mut CombatUnit)>,
+    potential_targets_query: Query<(Entity, &Transform, &BattleDroid), With<CombatUnit>>,
+) {
+    let delta_time = time.delta_seconds();
+    
+    for (entity, transform, droid, mut combat_unit) in combat_query.iter_mut() {
+        // Update target scan timer
+        combat_unit.target_scan_timer -= delta_time;
+        
+        if combat_unit.target_scan_timer <= 0.0 {
+            combat_unit.target_scan_timer = TARGET_SCAN_INTERVAL;
+            
+            // Find closest enemy within range
+            let mut closest_enemy: Option<Entity> = None;
+            let mut closest_distance = f32::INFINITY;
+            
+            for (target_entity, target_transform, target_droid) in potential_targets_query.iter() {
+                // Skip allies and self
+                if target_droid.team == droid.team || target_entity == entity {
+                    continue;
+                }
+                
+                let distance = transform.translation.distance(target_transform.translation);
+                if distance <= TARGETING_RANGE && distance < closest_distance {
+                    closest_distance = distance;
+                    closest_enemy = Some(target_entity);
+                }
+            }
+            
+            combat_unit.current_target = closest_enemy;
+        }
+    }
+}
+
+fn auto_fire_system(
+    time: Res<Time>,
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut combat_query: Query<(&Transform, &BattleDroid, &mut CombatUnit)>,
+    target_query: Query<&Transform, With<BattleDroid>>,
+) {
+    let delta_time = time.delta_seconds();
+    
+    for (droid_transform, droid, mut combat_unit) in combat_query.iter_mut() {
+        // Update auto fire timer
+        combat_unit.auto_fire_timer -= delta_time;
+        
+        if combat_unit.auto_fire_timer <= 0.0 && combat_unit.current_target.is_some() {
+            if let Some(target_entity) = combat_unit.current_target {
+                if let Ok(target_transform) = target_query.get(target_entity) {
+                    // Reset timer
+                    combat_unit.auto_fire_timer = AUTO_FIRE_INTERVAL;
+                    
+                    // Create laser material (simplified)
+                    let laser_material = materials.add(StandardMaterial {
+                        base_color: Color::srgb(0.0, 2.0, 0.0),
+                        emissive: Color::srgb(0.0, 1.0, 0.0).into(),
+                        unlit: true,
+                        alpha_mode: AlphaMode::Add,
+                        cull_mode: None,
+                        ..default()
+                    });
+                    
+                    let laser_mesh = meshes.add(Rectangle::new(LASER_WIDTH, LASER_LENGTH));
+                    
+                    // Calculate firing position and direction toward target
+                    let firing_pos = droid_transform.translation + Vec3::new(0.0, 0.8, 0.0);
+                    let target_pos = target_transform.translation + Vec3::new(0.0, 0.8, 0.0);
+                    let direction = (target_pos - firing_pos).normalize();
+                    let velocity = direction * LASER_SPEED;
+                    
+                    // Spawn targeted laser
+                    commands.spawn((
+                        PbrBundle {
+                            mesh: laser_mesh,
+                            material: laser_material,
+                            transform: Transform::from_translation(firing_pos),
+                            ..default()
+                        },
+                        LaserProjectile {
+                            velocity,
+                            lifetime: LASER_LIFETIME,
+                            team: droid.team,
+                        },
+                    ));
+                }
+            }
+        }
+    }
+}
+
+fn collision_detection_system(
+    mut commands: Commands,
+    laser_query: Query<(Entity, &Transform, &LaserProjectile)>,
+    droid_query: Query<(Entity, &Transform, &BattleDroid), Without<LaserProjectile>>,
+) {
+    let mut entities_to_despawn = std::collections::HashSet::new();
+    
+    for (laser_entity, laser_transform, laser) in laser_query.iter() {
+        // Skip if laser already marked for despawn
+        if entities_to_despawn.contains(&laser_entity) {
+            continue;
+        }
+        
+        for (droid_entity, droid_transform, droid) in droid_query.iter() {
+            // Skip if droid already marked for despawn
+            if entities_to_despawn.contains(&droid_entity) {
+                continue;
+            }
+            
+            // Skip friendly fire
+            if laser.team == droid.team {
+                continue;
+            }
+            
+            // Simple sphere collision detection
+            let distance = laser_transform.translation.distance(droid_transform.translation);
+            if distance <= COLLISION_RADIUS {
+                // Hit! Mark both laser and droid for despawn
+                entities_to_despawn.insert(laser_entity);
+                entities_to_despawn.insert(droid_entity);
+                break; // Laser can only hit one target
+            }
+        }
+    }
+    
+    // Despawn all marked entities
+    for entity in entities_to_despawn {
+        if let Some(entity_commands) = commands.get_entity(entity) {
+            entity_commands.despawn_recursive();
         }
     }
 } 
