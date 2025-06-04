@@ -79,6 +79,19 @@ struct CombatUnit {
     current_target: Option<Entity>,
 }
 
+// Audio resources
+#[derive(Resource)]
+struct AudioAssets {
+    laser_sounds: Vec<Handle<AudioSource>>,
+}
+
+impl AudioAssets {
+    fn get_random_laser_sound(&self, rng: &mut rand::rngs::ThreadRng) -> Handle<AudioSource> {
+        let index = rng.gen_range(0..self.laser_sounds.len());
+        self.laser_sounds[index].clone()
+    }
+}
+
 // Spatial grid for collision optimization
 #[derive(Resource, Default)]
 struct SpatialGrid {
@@ -200,6 +213,7 @@ fn setup_scene(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut images: ResMut<Assets<Image>>,
+    asset_server: Res<AssetServer>,
 ) {
     // Create a simple checkerboard texture for the ground
     let mut image = Image::new_fill(
@@ -287,6 +301,16 @@ fn setup_scene(
             distance: initial_distance,
         },
     ));
+
+    // Load audio assets - all 5 laser sound variations
+    let laser_sounds = vec![
+        asset_server.load("audio/sfx/laser0.wav"),
+        asset_server.load("audio/sfx/laser1.wav"),
+        asset_server.load("audio/sfx/laser2.wav"),
+        asset_server.load("audio/sfx/laser3.wav"),
+        asset_server.load("audio/sfx/laser4.wav"),
+    ];
+    commands.insert_resource(AudioAssets { laser_sounds });
 
     // UI text for performance info
     commands.spawn(
@@ -701,6 +725,7 @@ fn volley_fire_system(
     mut images: ResMut<Assets<Image>>,
     droid_query: Query<(&Transform, &BattleDroid), Without<LaserProjectile>>,
     camera_query: Query<&Transform, (With<RtsCamera>, Without<LaserProjectile>)>,
+    audio_assets: Res<AudioAssets>,
 ) {
     if keyboard_input.just_pressed(KeyCode::KeyF) {
         // Create a simple laser texture (bright center with falloff)
@@ -800,6 +825,14 @@ fn volley_fire_system(
                 },
             ));
         }
+        
+        // Play random laser sound effect for volley fire
+        let mut rng = rand::thread_rng();
+        let sound = audio_assets.get_random_laser_sound(&mut rng);
+        commands.spawn(AudioBundle {
+            source: sound,
+            settings: PlaybackSettings::DESPAWN,
+        });
         
         info!("Volley fire! {} lasers fired!", droid_query.iter().count());
     }
@@ -908,6 +941,7 @@ fn auto_fire_system(
     mut combat_query: Query<(&Transform, &BattleDroid, &mut CombatUnit)>,
     target_query: Query<&Transform, With<BattleDroid>>,
     camera_query: Query<&Transform, (With<RtsCamera>, Without<LaserProjectile>)>,
+    audio_assets: Res<AudioAssets>,
 ) {
     let delta_time = time.delta_seconds();
     
@@ -915,6 +949,10 @@ fn auto_fire_system(
     let camera_position = camera_query.get_single()
         .map(|cam_transform| cam_transform.translation)
         .unwrap_or(Vec3::new(0.0, 100.0, 100.0)); // Fallback position
+    
+    // Count shots fired this frame for audio throttling
+    let mut shots_fired = 0;
+    const MAX_AUDIO_PER_FRAME: usize = 5; // Limit concurrent audio to prevent spam
     
     for (droid_transform, droid, mut combat_unit) in combat_query.iter_mut() {
         // Update auto fire timer
@@ -973,6 +1011,17 @@ fn auto_fire_system(
                             team: droid.team,
                         },
                     ));
+                    
+                    // Play random laser sound (throttled to prevent audio spam)
+                    shots_fired += 1;
+                    if shots_fired <= MAX_AUDIO_PER_FRAME {
+                        let mut rng = rand::thread_rng();
+                        let sound = audio_assets.get_random_laser_sound(&mut rng);
+                        commands.spawn(AudioBundle {
+                            source: sound,
+                            settings: PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::new(0.3)),
+                        });
+                    }
                 }
             }
         }
