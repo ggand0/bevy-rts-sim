@@ -4,11 +4,12 @@ use bevy::input::mouse::{MouseScrollUnit, MouseWheel, MouseMotion};
 use rand::Rng;
 use std::f32::consts::PI;
 
-const ARMY_SIZE: usize = 10_000;
+const ARMY_SIZE_PER_TEAM: usize = 5_000;
 const FORMATION_WIDTH: f32 = 200.0;
 const UNIT_SPACING: f32 = 2.0;
-const MARCH_DISTANCE: f32 = 300.0;
+const MARCH_DISTANCE: f32 = 150.0;
 const MARCH_SPEED: f32 = 3.0;
+const BATTLEFIELD_SIZE: f32 = 400.0;
 
 // RTS Camera settings
 const CAMERA_SPEED: f32 = 50.0;
@@ -23,6 +24,22 @@ const LASER_LIFETIME: f32 = 3.0;
 const LASER_LENGTH: f32 = 3.0;
 const LASER_WIDTH: f32 = 0.2;
 
+// Combat settings
+const TARGETING_RANGE: f32 = 150.0;
+const TARGET_SCAN_INTERVAL: f32 = 2.0;
+const COLLISION_RADIUS: f32 = 1.0;
+const AUTO_FIRE_INTERVAL: f32 = 2.0;
+
+// Spatial partitioning settings
+const GRID_CELL_SIZE: f32 = 10.0; // Size of each grid cell
+const GRID_SIZE: i32 = 100; // Number of cells per side (covers 1000x1000 area)
+
+#[derive(Component, Clone, Copy, PartialEq)]
+enum Team {
+    A,
+    B,
+}
+
 #[derive(Component)]
 struct BattleDroid {
     march_speed: f32,
@@ -30,6 +47,7 @@ struct BattleDroid {
     target_position: Vec3,
     march_offset: f32,
     returning_to_spawn: bool,
+    team: Team,
 }
 
 #[derive(Component)]
@@ -51,20 +69,143 @@ struct RtsCamera {
 struct LaserProjectile {
     velocity: Vec3,
     lifetime: f32,
+    team: Team, // Track which team fired this laser
+}
+
+#[derive(Component)]
+struct CombatUnit {
+    target_scan_timer: f32,
+    auto_fire_timer: f32,
+    current_target: Option<Entity>,
+}
+
+// Audio resources
+#[derive(Resource)]
+struct AudioAssets {
+    laser_sounds: Vec<Handle<AudioSource>>,
+}
+
+impl AudioAssets {
+    fn get_random_laser_sound(&self, rng: &mut rand::rngs::ThreadRng) -> Handle<AudioSource> {
+        let index = rng.gen_range(0..self.laser_sounds.len());
+        self.laser_sounds[index].clone()
+    }
+}
+
+// Spatial grid for collision optimization
+#[derive(Resource, Default)]
+struct SpatialGrid {
+    // Grid cells containing entity IDs - [x][y]
+    laser_cells: Vec<Vec<Vec<Entity>>>,
+    droid_cells: Vec<Vec<Vec<Entity>>>,
+}
+
+impl SpatialGrid {
+    fn new() -> Self {
+        let size = GRID_SIZE as usize;
+        Self {
+            laser_cells: vec![vec![Vec::new(); size]; size],
+            droid_cells: vec![vec![Vec::new(); size]; size],
+        }
+    }
+    
+    fn clear(&mut self) {
+        for row in &mut self.laser_cells {
+            for cell in row {
+                cell.clear();
+            }
+        }
+        for row in &mut self.droid_cells {
+            for cell in row {
+                cell.clear();
+            }
+        }
+    }
+    
+    fn world_to_grid(pos: Vec3) -> (i32, i32) {
+        let x = ((pos.x + GRID_SIZE as f32 * GRID_CELL_SIZE * 0.5) / GRID_CELL_SIZE) as i32;
+        let z = ((pos.z + GRID_SIZE as f32 * GRID_CELL_SIZE * 0.5) / GRID_CELL_SIZE) as i32;
+        (x.clamp(0, GRID_SIZE - 1), z.clamp(0, GRID_SIZE - 1))
+    }
+    
+    fn add_laser(&mut self, entity: Entity, pos: Vec3) {
+        let (x, z) = Self::world_to_grid(pos);
+        self.laser_cells[x as usize][z as usize].push(entity);
+    }
+    
+    fn add_droid(&mut self, entity: Entity, pos: Vec3) {
+        let (x, z) = Self::world_to_grid(pos);
+        self.droid_cells[x as usize][z as usize].push(entity);
+    }
+    
+    fn get_nearby_droids(&self, pos: Vec3) -> Vec<Entity> {
+        let (center_x, center_z) = Self::world_to_grid(pos);
+        let mut nearby = Vec::new();
+        
+        // Check 3x3 grid around the position to account for collision radius
+        for dx in -1..=1 {
+            for dz in -1..=1 {
+                let x = center_x + dx;
+                let z = center_z + dz;
+                if x >= 0 && x < GRID_SIZE && z >= 0 && z < GRID_SIZE {
+                    nearby.extend(&self.droid_cells[x as usize][z as usize]);
+                }
+            }
+        }
+        nearby
+    }
 }
 
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
+        .add_plugins(bevy::diagnostic::FrameTimeDiagnosticsPlugin)
+        .insert_resource(SpatialGrid::new())
         .add_systems(Startup, (setup_scene, spawn_army))
         .add_systems(Update, (
             animate_march,
             update_camera_info,
             rts_camera_movement,
+            target_acquisition_system,
+            auto_fire_system,
             volley_fire_system,
             update_projectiles,
+            collision_detection_system,
         ))
         .run();
+}
+
+// Helper function to calculate proper laser orientation
+fn calculate_laser_orientation(
+    velocity: Vec3,
+    position: Vec3,
+    camera_position: Vec3,
+) -> Quat {
+    if velocity.length() > 0.0 {
+        let velocity_dir = velocity.normalize();
+        let to_camera = (camera_position - position).normalize();
+        
+        // First, make the quad face the camera
+        let base_rotation = Transform::from_translation(Vec3::ZERO)
+            .looking_at(-to_camera, Vec3::Y)
+            .rotation;
+        
+        // Then rotate around the camera direction to align with velocity
+        let velocity_in_quad_plane = velocity_dir - velocity_dir.dot(to_camera) * to_camera;
+        if velocity_in_quad_plane.length() > 0.001 {
+            let velocity_in_quad_plane = velocity_in_quad_plane.normalize();
+            let angle = Vec3::Y.dot(velocity_in_quad_plane).acos();
+            let cross = Vec3::Y.cross(velocity_in_quad_plane);
+            let rotation_sign = if cross.dot(to_camera) > 0.0 { 1.0 } else { -1.0 };
+            
+            let alignment_rotation = Quat::from_axis_angle(to_camera, angle * rotation_sign);
+            alignment_rotation * base_rotation
+        } else {
+            base_rotation
+        }
+    } else {
+        Quat::IDENTITY
+    }
 }
 
 fn setup_scene(
@@ -72,6 +213,7 @@ fn setup_scene(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut images: ResMut<Assets<Image>>,
+    asset_server: Res<AssetServer>,
 ) {
     // Create a simple checkerboard texture for the ground
     let mut image = Image::new_fill(
@@ -100,10 +242,9 @@ fn setup_scene(
                 image.data[index + 1] = 60;  // G
                 image.data[index + 2] = 30;  // B
                 image.data[index + 3] = 255; // A
-            }
-        }
-    }
-    
+                      }
+      }
+  }
     let ground_texture = images.add(image);
 
     // Ground plane (expanded for marching distance)
@@ -161,10 +302,20 @@ fn setup_scene(
         },
     ));
 
+    // Load audio assets - all 5 laser sound variations
+    let laser_sounds = vec![
+        asset_server.load("audio/sfx/laser0.wav"),
+        asset_server.load("audio/sfx/laser1.wav"),
+        asset_server.load("audio/sfx/laser2.wav"),
+        asset_server.load("audio/sfx/laser3.wav"),
+        asset_server.load("audio/sfx/laser4.wav"),
+    ];
+    commands.insert_resource(AudioAssets { laser_sounds });
+
     // UI text for performance info
     commands.spawn(
         TextBundle::from_section(
-            "Battle Droid Army - 10,000 Units\nWSAD/Mouse: Camera controls\nScroll: Zoom",
+            "Battle Droids - 5,000 vs 5,000 Units\nWSAD: Camera movement\nMouse drag: Rotate\nScroll: Zoom\nF: Volley Fire!",
             TextStyle {
                 font_size: 20.0,
                 color: Color::WHITE,
@@ -188,18 +339,33 @@ fn spawn_army(
     // Create battle droid mesh (simple humanoid shape using cubes)
     let droid_mesh = create_battle_droid_mesh(&mut meshes);
     
-    // Materials for different parts
-    let body_material = materials.add(StandardMaterial {
+    // Team A materials (current blue-gray theme)
+    let team_a_body_material = materials.add(StandardMaterial {
         base_color: Color::srgb(0.7, 0.7, 0.8),
         metallic: 0.3,
         perceptual_roughness: 0.5,
         ..default()
     });
     
-    let head_material = materials.add(StandardMaterial {
+    let team_a_head_material = materials.add(StandardMaterial {
         base_color: Color::srgb(0.8, 0.6, 0.4),
         metallic: 0.2,
         perceptual_roughness: 0.6,
+        ..default()
+    });
+
+    // Team B materials (white/light theme)
+    let team_b_body_material = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.9, 0.9, 0.95),
+        metallic: 0.4,
+        perceptual_roughness: 0.3,
+        ..default()
+    });
+    
+    let team_b_head_material = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.95, 0.95, 1.0),
+        metallic: 0.3,
+        perceptual_roughness: 0.4,
         ..default()
     });
 
@@ -207,41 +373,92 @@ fn spawn_army(
     
     // Calculate formation parameters
     let units_per_row = (FORMATION_WIDTH / UNIT_SPACING) as usize;
-    let total_rows = (ARMY_SIZE + units_per_row - 1) / units_per_row;
+    let total_rows = (ARMY_SIZE_PER_TEAM + units_per_row - 1) / units_per_row;
     
-    for i in 0..ARMY_SIZE {
+    // Spawn Team A (left side, facing right)
+    spawn_team(
+        &mut commands,
+        &mut rng,
+        &droid_mesh,
+        &team_a_body_material,
+        &team_a_head_material,
+        Team::A,
+        Vec3::new(-BATTLEFIELD_SIZE / 2.0, 0.0, 0.0),
+        Vec3::new(1.0, 0.0, 0.0), // Facing right
+        units_per_row,
+        total_rows,
+    );
+    
+    // Spawn Team B (right side, facing left) 
+    spawn_team(
+        &mut commands,
+        &mut rng,
+        &droid_mesh,
+        &team_b_body_material,
+        &team_b_head_material,
+        Team::B,
+        Vec3::new(BATTLEFIELD_SIZE / 2.0, 0.0, 0.0),
+        Vec3::new(-1.0, 0.0, 0.0), // Facing left
+        units_per_row,
+        total_rows,
+    );
+    
+    info!("Spawned {} droids per team ({} total)", ARMY_SIZE_PER_TEAM, ARMY_SIZE_PER_TEAM * 2);
+}
+
+fn spawn_team(
+    commands: &mut Commands,
+    rng: &mut rand::rngs::ThreadRng,
+    droid_mesh: &Handle<Mesh>,
+    body_material: &Handle<StandardMaterial>,
+    head_material: &Handle<StandardMaterial>,
+    team: Team,
+    team_center: Vec3,
+    facing_direction: Vec3,
+    units_per_row: usize,
+    total_rows: usize,
+) {
+    for i in 0..ARMY_SIZE_PER_TEAM {
         let row = i / units_per_row;
         let column = i % units_per_row;
         
-        // Calculate position in formation
+        // Calculate position in formation relative to team center
         let x = (column as f32 - units_per_row as f32 / 2.0) * UNIT_SPACING;
         let z = (row as f32 - total_rows as f32 / 2.0) * UNIT_SPACING;
         let y = 0.0;
         
-        let position = Vec3::new(x, y, z);
+        let local_position = Vec3::new(x, y, z);
+        let world_position = team_center + local_position;
         
         // Add some randomness to march timing
         let march_offset = rng.gen_range(0.0..2.0 * PI);
         let march_speed = rng.gen_range(0.8..1.2);
         
-        // Calculate target position (march forward)
-        let target_position = position + Vec3::new(0.0, 0.0, MARCH_DISTANCE);
+        // Calculate target position (march toward center of battlefield)
+        let target_position = world_position + facing_direction * MARCH_DISTANCE;
         
         // Spawn the battle droid
         let droid_entity = commands.spawn((
             PbrBundle {
                 mesh: droid_mesh.clone(),
                 material: body_material.clone(),
-                transform: Transform::from_translation(position)
-                    .with_scale(Vec3::splat(0.8)),
+                transform: Transform::from_translation(world_position)
+                    .with_scale(Vec3::splat(0.8))
+                    .looking_at(world_position + facing_direction, Vec3::Y),
                 ..default()
             },
             BattleDroid {
                 march_speed,
-                spawn_position: position,
+                spawn_position: world_position,
                 target_position,
                 march_offset,
                 returning_to_spawn: false,
+                team,
+            },
+            CombatUnit {
+                target_scan_timer: rng.gen_range(0.0..TARGET_SCAN_INTERVAL),
+                auto_fire_timer: rng.gen_range(0.0..AUTO_FIRE_INTERVAL),
+                current_target: None,
             },
             FormationUnit {
                 formation_index: i,
@@ -250,18 +467,17 @@ fn spawn_army(
             },
         )).id();
         
-        // Add a head (separate entity as child)
+        // Add a head (separate entity as child) - need to create mesh here
         let head_entity = commands.spawn(PbrBundle {
-            mesh: meshes.add(Cuboid::new(0.6, 0.6, 0.6)),
+            mesh: droid_mesh.clone(), // Reuse droid mesh for now, can be improved later
             material: head_material.clone(),
-            transform: Transform::from_xyz(0.0, 1.2, 0.0),
+            transform: Transform::from_xyz(0.0, 1.2, 0.0)
+                .with_scale(Vec3::splat(0.3)),
             ..default()
         }).id();
         
         commands.entity(droid_entity).push_children(&[head_entity]);
     }
-    
-    info!("Spawned {} battle droids in formation", ARMY_SIZE);
 }
 
 fn create_battle_droid_mesh(meshes: &mut ResMut<Assets<Mesh>>) -> Handle<Mesh> {
@@ -424,8 +640,8 @@ fn update_camera_info(
             .unwrap_or(0.0);
             
         text.sections[0].value = format!(
-            "Battle Droid Army - {} Units\nFPS: {:.1}\nWSAD: Camera movement\nMouse drag: Rotate\nScroll: Zoom\nF: Volley Fire!",
-            ARMY_SIZE, fps
+            "Battle Droids - {} vs {} Units\nFPS: {:.1}\nWSAD: Camera movement\nMouse drag: Rotate\nScroll: Zoom\nF: Volley Fire!",
+            ARMY_SIZE_PER_TEAM, ARMY_SIZE_PER_TEAM, fps
         );
     }
 }
@@ -507,7 +723,9 @@ fn volley_fire_system(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut images: ResMut<Assets<Image>>,
-    droid_query: Query<&Transform, (With<BattleDroid>, Without<LaserProjectile>)>,
+    droid_query: Query<(&Transform, &BattleDroid), Without<LaserProjectile>>,
+    camera_query: Query<&Transform, (With<RtsCamera>, Without<LaserProjectile>)>,
+    audio_assets: Res<AudioAssets>,
 ) {
     if keyboard_input.just_pressed(KeyCode::KeyF) {
         // Create a simple laser texture (bright center with falloff)
@@ -543,11 +761,21 @@ fn volley_fire_system(
             bevy::render::render_asset::RenderAssetUsages::RENDER_WORLD,
         ));
         
-        // Create laser material with additive blending for glow effect
-        let laser_material = materials.add(StandardMaterial {
-            base_color: Color::srgb(0.0, 2.0, 0.0), // Bright green
-            base_color_texture: Some(laser_texture),
+        // Create laser materials for both teams
+        let team_a_laser_material = materials.add(StandardMaterial {
+            base_color: Color::srgb(0.0, 2.0, 0.0), // Bright green for Team A
+            base_color_texture: Some(laser_texture.clone()),
             emissive: Color::srgb(0.0, 1.0, 0.0).into(),
+            unlit: true, // No lighting calculations
+            alpha_mode: AlphaMode::Add, // Additive blending for glow
+            cull_mode: None, // Visible from both sides
+            ..default()
+        });
+        
+        let team_b_laser_material = materials.add(StandardMaterial {
+            base_color: Color::srgb(2.0, 0.0, 0.0), // Bright red for Team B
+            base_color_texture: Some(laser_texture),
+            emissive: Color::srgb(1.0, 0.0, 0.0).into(),
             unlit: true, // No lighting calculations
             alpha_mode: AlphaMode::Add, // Additive blending for glow
             cull_mode: None, // Visible from both sides
@@ -557,8 +785,13 @@ fn volley_fire_system(
         // Create laser mesh (simple quad)
         let laser_mesh = meshes.add(Rectangle::new(LASER_WIDTH, LASER_LENGTH));
         
+        // Get camera position for initial orientation
+        let camera_position = camera_query.get_single()
+            .map(|cam_transform| cam_transform.translation)
+            .unwrap_or(Vec3::new(0.0, 100.0, 100.0)); // Fallback position
+        
         // Spawn laser from each droid
-        for droid_transform in droid_query.iter() {
+        for (droid_transform, droid) in droid_query.iter() {
             // Calculate firing position (slightly in front of droid)
             let firing_pos = droid_transform.translation + Vec3::new(0.0, 0.8, 0.0);
             
@@ -566,23 +799,40 @@ fn volley_fire_system(
             let forward = -droid_transform.forward().as_vec3(); // Negative to fix direction
             let velocity = forward * LASER_SPEED;
             
-            // Create laser transform - quad billboarded and oriented along velocity
-            let laser_transform = Transform::from_translation(firing_pos);
+            // Calculate proper initial orientation
+            let laser_rotation = calculate_laser_orientation(velocity, firing_pos, camera_position);
+            let laser_transform = Transform::from_translation(firing_pos)
+                .with_rotation(laser_rotation);
+            
+            // Choose material based on team
+            let laser_material = match droid.team {
+                Team::A => team_a_laser_material.clone(),
+                Team::B => team_b_laser_material.clone(),
+            };
             
             // Spawn laser projectile
             commands.spawn((
                 PbrBundle {
                     mesh: laser_mesh.clone(),
-                    material: laser_material.clone(),
+                    material: laser_material,
                     transform: laser_transform,
                     ..default()
                 },
                 LaserProjectile {
                     velocity,
                     lifetime: LASER_LIFETIME,
+                    team: droid.team, // Add team to track laser ownership
                 },
             ));
         }
+        
+        // Play random laser sound effect for volley fire
+        let mut rng = rand::thread_rng();
+        let sound = audio_assets.get_random_laser_sound(&mut rng);
+        commands.spawn(AudioBundle {
+            source: sound,
+            settings: PlaybackSettings::DESPAWN,
+        });
         
         info!("Volley fire! {} lasers fired!", droid_query.iter().count());
     }
@@ -638,6 +888,201 @@ fn update_projectiles(
                     transform.rotation = base_rotation;
                 }
             }
+        }
+    }
+}
+
+fn target_acquisition_system(
+    time: Res<Time>,
+    mut combat_query: Query<(Entity, &Transform, &BattleDroid, &mut CombatUnit)>,
+) {
+    let delta_time = time.delta_seconds();
+    
+    // Collect all unit data first to avoid borrowing issues
+    let all_units: Vec<(Entity, Vec3, Team)> = combat_query
+        .iter()
+        .map(|(entity, transform, droid, _)| (entity, transform.translation, droid.team))
+        .collect();
+    
+    for (entity, transform, droid, mut combat_unit) in combat_query.iter_mut() {
+        // Update target scan timer
+        combat_unit.target_scan_timer -= delta_time;
+        
+        if combat_unit.target_scan_timer <= 0.0 {
+            combat_unit.target_scan_timer = TARGET_SCAN_INTERVAL;
+            
+            // Find closest enemy within range
+            let mut closest_enemy: Option<Entity> = None;
+            let mut closest_distance = f32::INFINITY;
+            
+            for &(target_entity, target_position, target_team) in &all_units {
+                // Skip allies and self
+                if target_team == droid.team || target_entity == entity {
+                    continue;
+                }
+                
+                let distance = transform.translation.distance(target_position);
+                if distance <= TARGETING_RANGE && distance < closest_distance {
+                    closest_distance = distance;
+                    closest_enemy = Some(target_entity);
+                }
+            }
+            
+            combat_unit.current_target = closest_enemy;
+        }
+    }
+}
+
+fn auto_fire_system(
+    time: Res<Time>,
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut combat_query: Query<(&Transform, &BattleDroid, &mut CombatUnit)>,
+    target_query: Query<&Transform, With<BattleDroid>>,
+    camera_query: Query<&Transform, (With<RtsCamera>, Without<LaserProjectile>)>,
+    audio_assets: Res<AudioAssets>,
+) {
+    let delta_time = time.delta_seconds();
+    
+    // Get camera position for initial orientation
+    let camera_position = camera_query.get_single()
+        .map(|cam_transform| cam_transform.translation)
+        .unwrap_or(Vec3::new(0.0, 100.0, 100.0)); // Fallback position
+    
+    // Count shots fired this frame for audio throttling
+    let mut shots_fired = 0;
+    const MAX_AUDIO_PER_FRAME: usize = 5; // Limit concurrent audio to prevent spam
+    
+    for (droid_transform, droid, mut combat_unit) in combat_query.iter_mut() {
+        // Update auto fire timer
+        combat_unit.auto_fire_timer -= delta_time;
+        
+        if combat_unit.auto_fire_timer <= 0.0 && combat_unit.current_target.is_some() {
+            if let Some(target_entity) = combat_unit.current_target {
+                if let Ok(target_transform) = target_query.get(target_entity) {
+                    // Reset timer
+                    combat_unit.auto_fire_timer = AUTO_FIRE_INTERVAL;
+                    
+                    // Create laser material based on team
+                    let laser_material = match droid.team {
+                        Team::A => materials.add(StandardMaterial {
+                            base_color: Color::srgb(0.0, 2.0, 0.0), // Green for Team A
+                            emissive: Color::srgb(0.0, 1.0, 0.0).into(),
+                            unlit: true,
+                            alpha_mode: AlphaMode::Add,
+                            cull_mode: None,
+                            ..default()
+                        }),
+                        Team::B => materials.add(StandardMaterial {
+                            base_color: Color::srgb(2.0, 0.0, 0.0), // Red for Team B
+                            emissive: Color::srgb(1.0, 0.0, 0.0).into(),
+                            unlit: true,
+                            alpha_mode: AlphaMode::Add,
+                            cull_mode: None,
+                            ..default()
+                        }),
+                    };
+                    
+                    let laser_mesh = meshes.add(Rectangle::new(LASER_WIDTH, LASER_LENGTH));
+                    
+                    // Calculate firing position and direction toward target
+                    let firing_pos = droid_transform.translation + Vec3::new(0.0, 0.8, 0.0);
+                    let target_pos = target_transform.translation + Vec3::new(0.0, 0.8, 0.0);
+                    let direction = (target_pos - firing_pos).normalize();
+                    let velocity = direction * LASER_SPEED;
+                    
+                    // Calculate proper initial orientation
+                    let laser_rotation = calculate_laser_orientation(velocity, firing_pos, camera_position);
+                    let laser_transform = Transform::from_translation(firing_pos)
+                        .with_rotation(laser_rotation);
+                    
+                    // Spawn targeted laser
+                    commands.spawn((
+                        PbrBundle {
+                            mesh: laser_mesh,
+                            material: laser_material,
+                            transform: laser_transform,
+                            ..default()
+                        },
+                        LaserProjectile {
+                            velocity,
+                            lifetime: LASER_LIFETIME,
+                            team: droid.team,
+                        },
+                    ));
+                    
+                    // Play random laser sound (throttled to prevent audio spam)
+                    shots_fired += 1;
+                    if shots_fired <= MAX_AUDIO_PER_FRAME {
+                        let mut rng = rand::thread_rng();
+                        let sound = audio_assets.get_random_laser_sound(&mut rng);
+                        commands.spawn(AudioBundle {
+                            source: sound,
+                            settings: PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::new(0.3)),
+                        });
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn collision_detection_system(
+    mut commands: Commands,
+    mut spatial_grid: ResMut<SpatialGrid>,
+    laser_query: Query<(Entity, &Transform, &LaserProjectile)>,
+    droid_query: Query<(Entity, &Transform, &BattleDroid), Without<LaserProjectile>>,
+) {
+    // Clear and rebuild the spatial grid each frame
+    spatial_grid.clear();
+    
+    // Populate grid with droids
+    for (droid_entity, droid_transform, _) in droid_query.iter() {
+        spatial_grid.add_droid(droid_entity, droid_transform.translation);
+    }
+    
+    let mut entities_to_despawn = std::collections::HashSet::new();
+    
+    // Check collisions for each laser using spatial grid
+    for (laser_entity, laser_transform, laser) in laser_query.iter() {
+        // Skip if laser already marked for despawn
+        if entities_to_despawn.contains(&laser_entity) {
+            continue;
+        }
+        
+        // Get only nearby droids using spatial grid
+        let nearby_droids = spatial_grid.get_nearby_droids(laser_transform.translation);
+        
+        for &droid_entity in &nearby_droids {
+            // Skip if droid already marked for despawn
+            if entities_to_despawn.contains(&droid_entity) {
+                continue;
+            }
+            
+            // Get droid data - we need to check if it still exists and get its data
+            if let Ok((_, droid_transform, droid)) = droid_query.get(droid_entity) {
+                // Skip friendly fire
+                if laser.team == droid.team {
+                    continue;
+                }
+                
+                // Simple sphere collision detection
+                let distance = laser_transform.translation.distance(droid_transform.translation);
+                if distance <= COLLISION_RADIUS {
+                    // Hit! Mark both laser and droid for despawn
+                    entities_to_despawn.insert(laser_entity);
+                    entities_to_despawn.insert(droid_entity);
+                    break; // Laser can only hit one target
+                }
+            }
+        }
+    }
+    
+    // Despawn all marked entities
+    for entity in entities_to_despawn {
+        if let Some(entity_commands) = commands.get_entity(entity) {
+            entity_commands.despawn_recursive();
         }
     }
 } 
