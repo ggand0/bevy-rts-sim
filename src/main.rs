@@ -185,17 +185,29 @@ fn calculate_laser_orientation(
         let velocity_dir = velocity.normalize();
         let to_camera = (camera_position - position).normalize();
         
-        // First, make the quad face the camera
+        // Choose a stable up vector for billboarding that's not parallel to to_camera
+        let up = if to_camera.dot(Vec3::Y).abs() > 0.95 {
+            Vec3::X // fallback when camera is nearly vertical
+        } else {
+            Vec3::Y // normal case
+        };
+        
+        // First, make the quad face the camera using stable up vector
         let base_rotation = Transform::from_translation(Vec3::ZERO)
-            .looking_at(-to_camera, Vec3::Y)
+            .looking_at(-to_camera, up)
             .rotation;
         
-        // Then rotate around the camera direction to align with velocity
+        // Calculate the billboard's actual "up" direction after rotation
+        let billboard_up = base_rotation * Vec3::Y;
+        
+        // Project velocity onto the billboard plane
         let velocity_in_quad_plane = velocity_dir - velocity_dir.dot(to_camera) * to_camera;
         if velocity_in_quad_plane.length() > 0.001 {
             let velocity_in_quad_plane = velocity_in_quad_plane.normalize();
-            let angle = Vec3::Y.dot(velocity_in_quad_plane).acos();
-            let cross = Vec3::Y.cross(velocity_in_quad_plane);
+            
+            // Use billboard's actual up direction instead of fixed Vec3::Y
+            let angle = billboard_up.dot(velocity_in_quad_plane).acos();
+            let cross = billboard_up.cross(velocity_in_quad_plane);
             let rotation_sign = if cross.dot(to_camera) > 0.0 { 1.0 } else { -1.0 };
             
             let alignment_rotation = Quat::from_axis_angle(to_camera, angle * rotation_sign);
@@ -862,32 +874,13 @@ fn update_projectiles(
         // Move projectile
         transform.translation += laser.velocity * delta_time;
         
-        // Orient quad: align length with velocity direction, face camera
+        // Update orientation using our improved calculation
         if let Some(cam_transform) = camera_transform {
-            if laser.velocity.length() > 0.0 {
-                let velocity_dir = laser.velocity.normalize();
-                let to_camera = (cam_transform.translation - transform.translation).normalize();
-                
-                // First, make the quad face the camera
-                let base_rotation = Transform::from_translation(Vec3::ZERO)
-                    .looking_at(-to_camera, Vec3::Y)
-                    .rotation;
-                
-                // Then rotate around the camera direction to align with velocity
-                // Calculate the angle between "up" (Y) and the velocity direction when projected onto the quad plane
-                let velocity_in_quad_plane = velocity_dir - velocity_dir.dot(to_camera) * to_camera;
-                if velocity_in_quad_plane.length() > 0.001 {
-                    let velocity_in_quad_plane = velocity_in_quad_plane.normalize();
-                    let angle = Vec3::Y.dot(velocity_in_quad_plane).acos();
-                    let cross = Vec3::Y.cross(velocity_in_quad_plane);
-                    let rotation_sign = if cross.dot(to_camera) > 0.0 { 1.0 } else { -1.0 };
-                    
-                    let alignment_rotation = Quat::from_axis_angle(to_camera, angle * rotation_sign);
-                    transform.rotation = alignment_rotation * base_rotation;
-                } else {
-                    transform.rotation = base_rotation;
-                }
-            }
+            transform.rotation = calculate_laser_orientation(
+                laser.velocity,
+                transform.translation,
+                cam_transform.translation,
+            );
         }
     }
 }
