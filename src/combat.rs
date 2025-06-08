@@ -1,5 +1,4 @@
 use bevy::prelude::*;
-use bevy::input::mouse::{MouseScrollUnit, MouseWheel, MouseMotion};
 use rand::Rng;
 use crate::types::*;
 use crate::constants::*;
@@ -208,6 +207,7 @@ pub fn update_projectiles(
 pub fn target_acquisition_system(
     time: Res<Time>,
     mut combat_query: Query<(Entity, &Transform, &BattleDroid, &mut CombatUnit)>,
+    tower_query: Query<(Entity, &Transform, &UplinkTower), With<UplinkTower>>,
 ) {
     let delta_time = time.delta_seconds();
     
@@ -217,6 +217,12 @@ pub fn target_acquisition_system(
         .map(|(entity, transform, droid, _)| (entity, transform.translation, droid.team))
         .collect();
     
+    // Collect all tower data
+    let all_towers: Vec<(Entity, Vec3, Team)> = tower_query
+        .iter()
+        .map(|(entity, transform, tower)| (entity, transform.translation, tower.team))
+        .collect();
+    
     for (entity, transform, droid, mut combat_unit) in combat_query.iter_mut() {
         // Update target scan timer
         combat_unit.target_scan_timer -= delta_time;
@@ -224,20 +230,38 @@ pub fn target_acquisition_system(
         if combat_unit.target_scan_timer <= 0.0 {
             combat_unit.target_scan_timer = TARGET_SCAN_INTERVAL;
             
-            // Find closest enemy within range
             let mut closest_enemy: Option<Entity> = None;
             let mut closest_distance = f32::INFINITY;
+            let mut target_priority = 0; // 0 = unit, 1 = tower
             
-            for &(target_entity, target_position, target_team) in &all_units {
-                // Skip allies and self
-                if target_team == droid.team || target_entity == entity {
-                    continue;
+            // Check enemy towers first (higher priority targets)
+            for &(tower_entity, tower_position, tower_team) in &all_towers {
+                if tower_team != droid.team { // Enemy tower
+                    let distance = transform.translation.distance(tower_position);
+                    if distance <= TARGETING_RANGE * 1.5 { // Slightly longer range for towers
+                        // Towers are high priority - prefer them over units
+                        if target_priority < 1 || distance < closest_distance {
+                            closest_distance = distance;
+                            closest_enemy = Some(tower_entity);
+                            target_priority = 1;
+                        }
+                    }
                 }
-                
-                let distance = transform.translation.distance(target_position);
-                if distance <= TARGETING_RANGE && distance < closest_distance {
-                    closest_distance = distance;
-                    closest_enemy = Some(target_entity);
+            }
+            
+            // If no tower in range, check enemy units
+            if target_priority == 0 {
+                for &(target_entity, target_position, target_team) in &all_units {
+                    // Skip allies and self
+                    if target_team == droid.team || target_entity == entity {
+                        continue;
+                    }
+                    
+                    let distance = transform.translation.distance(target_position);
+                    if distance <= TARGETING_RANGE && distance < closest_distance {
+                        closest_distance = distance;
+                        closest_enemy = Some(target_entity);
+                    }
                 }
             }
             
@@ -253,6 +277,7 @@ pub fn auto_fire_system(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut combat_query: Query<(&Transform, &BattleDroid, &mut CombatUnit)>,
     target_query: Query<&Transform, With<BattleDroid>>,
+    tower_target_query: Query<&Transform, With<UplinkTower>>,
     camera_query: Query<&Transform, (With<RtsCamera>, Without<LaserProjectile>)>,
     audio_assets: Res<AudioAssets>,
 ) {
@@ -273,7 +298,11 @@ pub fn auto_fire_system(
         
         if combat_unit.auto_fire_timer <= 0.0 && combat_unit.current_target.is_some() {
             if let Some(target_entity) = combat_unit.current_target {
-                if let Ok(target_transform) = target_query.get(target_entity) {
+                // Try to get target as either a unit or a tower
+                let target_transform = target_query.get(target_entity)
+                    .or_else(|_| tower_target_query.get(target_entity));
+                
+                if let Ok(target_transform) = target_transform {
                     // Reset timer
                     combat_unit.auto_fire_timer = AUTO_FIRE_INTERVAL;
                     

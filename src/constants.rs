@@ -34,4 +34,13 @@ pub const AUTO_FIRE_INTERVAL: f32 = 2.0;
 
 // Spatial partitioning settings
 pub const GRID_CELL_SIZE: f32 = 10.0; // Size of each grid cell
-pub const GRID_SIZE: i32 = 100; // Number of cells per side (covers 1000x1000 area) 
+pub const GRID_SIZE: i32 = 100; // Number of cells per side (covers 1000x1000 area)
+
+// Objective system settings
+pub const TOWER_HEIGHT: f32 = 25.0;
+pub const TOWER_BASE_WIDTH: f32 = 7.0;
+pub const TOWER_MAX_HEALTH: f32 = 1000.0;
+pub const TOWER_DESTRUCTION_RADIUS: f32 = 80.0; // Units within this range explode when tower dies
+pub const EXPLOSION_DELAY_MIN: f32 = 0.5; // Minimum delay before unit explodes
+pub const EXPLOSION_DELAY_MAX: f32 = 3.0; // Maximum delay for dramatic cascade effect
+pub const EXPLOSION_EFFECT_DURATION: f32 = 2.0; // Visual explosion duration 
