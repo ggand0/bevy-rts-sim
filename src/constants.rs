@@ -11,7 +11,7 @@ pub const SQUAD_WIDTH: usize = 10;  // 10 units wide
 pub const SQUAD_DEPTH: usize = 5;   // 5 units deep
 pub const SQUAD_HORIZONTAL_SPACING: f32 = 2.0;
 pub const SQUAD_VERTICAL_SPACING: f32 = 2.5;
-pub const INTER_SQUAD_SPACING: f32 = 8.0; // Space between squads
+pub const INTER_SQUAD_SPACING: f32 = 12.0; // Tactical spacing for combined arms formations
 
 // RTS Camera settings
 pub const CAMERA_SPEED: f32 = 50.0;

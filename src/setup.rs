@@ -265,15 +265,35 @@ fn spawn_team_squads(
         let squad_row = squad_index / squads_per_row;
         let squad_col = squad_index % squads_per_row;
         
-        // Calculate squad center position - extra spacing for line formations
-        let base_squad_width = SQUAD_WIDTH as f32 * SQUAD_HORIZONTAL_SPACING;
-        let line_formation_width = 25.0 * (SQUAD_HORIZONTAL_SPACING * 1.5); // Account for line formation
-        let max_formation_width = base_squad_width.max(line_formation_width);
+        // Calculate squad center position with tactical spacing
+        let base_squad_width = SQUAD_WIDTH as f32 * SQUAD_HORIZONTAL_SPACING; // 20.0 units
         
-        let squad_offset_x = (squad_col as f32 - (squads_per_row as f32 - 1.0) / 2.0) * 
-                             (max_formation_width + INTER_SQUAD_SPACING);
-        let squad_offset_z = (squad_row as f32 - (total_squads as f32 / squads_per_row as f32 - 1.0) / 2.0) * 
-                             (SQUAD_DEPTH as f32 * SQUAD_VERTICAL_SPACING + INTER_SQUAD_SPACING);
+        // Create tactical formation patterns based on position for interesting combat dynamics
+        let formation_depth = SQUAD_DEPTH as f32 * SQUAD_VERTICAL_SPACING + INTER_SQUAD_SPACING;
+        
+        // Standard grid formation with slight staggering for flanking opportunities
+        let mut squad_offset_x = (squad_col as f32 - (squads_per_row as f32 - 1.0) / 2.0) * 
+                                 (base_squad_width + INTER_SQUAD_SPACING);
+        let mut squad_offset_z = (squad_row as f32 - (total_squads as f32 / squads_per_row as f32 - 1.0) / 2.0) * 
+                                 formation_depth;
+        
+        // Create tactical staggering: front rows more compressed, back rows for support
+        if squad_row == 0 {
+            // Front line: tighter spacing for concentrated firepower
+            squad_offset_x *= 0.8;
+        } else if squad_row >= 8 {
+            // Rear guard: wider spacing for coverage and command
+            squad_offset_x *= 1.2;
+            squad_offset_z -= formation_depth * 0.1; // Pull back slightly for better command view
+        }
+        
+        // Create flanking wings: outer columns slightly forward for envelopment tactics
+        if squad_col == 0 || squad_col == squads_per_row - 1 {
+            squad_offset_z += formation_depth * 0.15; // Advance flanking units
+            if squad_row < 3 { // Only for front ranks
+                squad_offset_z += formation_depth * 0.1; // Extra advance for aggressive flanking
+            }
+        }
         
         let right = Vec3::new(facing_direction.z, 0.0, -facing_direction.x).normalize();
         let squad_center = team_center + right * squad_offset_x + facing_direction * squad_offset_z;
