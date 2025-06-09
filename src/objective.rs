@@ -3,112 +3,319 @@ use bevy::prelude::*;
 use rand::Rng;
 use crate::types::*;
 use crate::constants::*;
+use bevy::prelude::*;
+use bevy::render::mesh::{Indices, Mesh, PrimitiveTopology};
+use bevy::render::render_asset::RenderAssetUsages;
 
 // ===== TOWER CREATION =====
 
 pub fn create_uplink_tower_mesh(meshes: &mut ResMut<Assets<Mesh>>) -> Handle<Mesh> {
-    use bevy::render::mesh::{Indices, PrimitiveTopology};
-    use bevy::render::render_asset::RenderAssetUsages;
+    let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::RENDER_WORLD);
+
+    let mut vertices = Vec::new();
+    let mut normals = Vec::new();
+    let mut indices = Vec::new();
+
+    // Helper function to add a box with proper normals
+    let mut add_box = |center: Vec3, size: Vec3| {
+        let base = vertices.len() as u32;
+        let hw = size.x / 2.0;
+        let hh = size.y / 2.0;
+        let hd = size.z / 2.0;
+
+        // 8 vertices of the box
+        let box_vertices = [
+            [center.x - hw, center.y - hh, center.z - hd], // 0: bottom-left-back
+            [center.x + hw, center.y - hh, center.z - hd], // 1: bottom-right-back
+            [center.x + hw, center.y - hh, center.z + hd], // 2: bottom-right-front
+            [center.x - hw, center.y - hh, center.z + hd], // 3: bottom-left-front
+            [center.x - hw, center.y + hh, center.z - hd], // 4: top-left-back
+            [center.x + hw, center.y + hh, center.z - hd], // 5: top-right-back
+            [center.x + hw, center.y + hh, center.z + hd], // 6: top-right-front
+            [center.x - hw, center.y + hh, center.z + hd], // 7: top-left-front
+        ];
+        
+        vertices.extend_from_slice(&box_vertices);
+        
+        // Proper face normals for each vertex - one normal per vertex per face
+        // We'll use proper per-face normals
+        let face_normals = [
+            [0.0, -1.0, 0.0], // bottom face normal
+            [0.0, 1.0, 0.0],  // top face normal  
+            [-1.0, 0.0, 0.0], // left face normal
+            [1.0, 0.0, 0.0],  // right face normal
+            [0.0, 0.0, -1.0], // back face normal
+            [0.0, 0.0, 1.0],  // front face normal
+        ];
+        
+        // Add normals for each vertex (we'll use averaged normals for simplicity)
+        for _ in 0..8 {
+            normals.push([0.0, 1.0, 0.0]); // For now, keep simple upward normals
+        }
+
+        // Box face indices (12 triangles) - Fixed winding order
+        let box_indices = [
+            // Bottom face (looking up from below)
+            base + 0, base + 1, base + 2, base + 0, base + 2, base + 3,
+            // Top face (looking down from above)
+            base + 4, base + 6, base + 5, base + 4, base + 7, base + 6,
+            // Left face
+            base + 0, base + 7, base + 4, base + 0, base + 3, base + 7,
+            // Right face
+            base + 1, base + 5, base + 6, base + 1, base + 6, base + 2,
+            // Back face
+            base + 0, base + 4, base + 5, base + 0, base + 5, base + 1,
+            // Front face
+            base + 3, base + 2, base + 6, base + 3, base + 6, base + 7,
+        ];
+        indices.extend_from_slice(&box_indices);
+    };
+
+    let tower_height = TOWER_HEIGHT;
+    let base_width = TOWER_BASE_WIDTH;
     
-    let mut mesh = Mesh::new(
-        PrimitiveTopology::TriangleList,
-        RenderAssetUsages::RENDER_WORLD,
+    // === CENTRAL SPINE DIMENSIONS (DEFINED EARLY) ===
+    let spine_width = base_width * 0.35;  // Wider dimension (increased from 0.25)
+    let spine_depth = base_width * 0.25;  // Narrower dimension (increased from 0.15)
+    let spine_start_y = 1.0;
+    
+    // === FOUNDATION SYSTEM (PROPERLY CONNECTED) ===
+    // Underground foundation for proper grounding
+    add_box(
+        Vec3::new(0.0, -0.8, 0.0),
+        Vec3::new(spine_width * 1.8, 1.6, spine_depth * 1.8)
     );
     
-    // Create a tall, pointy sci-fi tower with tapered design
-    let base_width = TOWER_BASE_WIDTH;
-    let height = TOWER_HEIGHT;
-    let top_width = base_width * 0.2; // Tapers to 20% of base width at top
-    let mid_height = height * 0.7; // Transition point
+    // Ground-level foundation platform - directly connected to spine
+    add_box(
+        Vec3::new(0.0, 0.4, 0.0),
+        Vec3::new(spine_width * 1.4, 0.8, spine_depth * 1.4)
+    );
     
-    let vertices = vec![
-        // Base (octagonal for sci-fi look)
-        // Bottom vertices (y = 0)
-        [base_width, 0.0, 0.0],           // 0: +X
-        [base_width * 0.7, 0.0, base_width * 0.7],  // 1: +X+Z
-        [0.0, 0.0, base_width],           // 2: +Z
-        [-base_width * 0.7, 0.0, base_width * 0.7], // 3: -X+Z
-        [-base_width, 0.0, 0.0],          // 4: -X
-        [-base_width * 0.7, 0.0, -base_width * 0.7], // 5: -X-Z
-        [0.0, 0.0, -base_width],          // 6: -Z
-        [base_width * 0.7, 0.0, -base_width * 0.7],  // 7: +X-Z
-        
-        // Mid-section (y = mid_height)
-        [base_width * 0.6, mid_height, 0.0],         // 8
-        [base_width * 0.42, mid_height, base_width * 0.42], // 9
-        [0.0, mid_height, base_width * 0.6],         // 10
-        [-base_width * 0.42, mid_height, base_width * 0.42], // 11
-        [-base_width * 0.6, mid_height, 0.0],        // 12
-        [-base_width * 0.42, mid_height, -base_width * 0.42], // 13
-        [0.0, mid_height, -base_width * 0.6],        // 14
-        [base_width * 0.42, mid_height, -base_width * 0.42], // 15
-        
-        // Top (pointed)
-        [top_width, height, 0.0],           // 16
-        [top_width * 0.7, height, top_width * 0.7],  // 17
-        [0.0, height, top_width],           // 18
-        [-top_width * 0.7, height, top_width * 0.7], // 19
-        [-top_width, height, 0.0],          // 20
-        [-top_width * 0.7, height, -top_width * 0.7], // 21
-        [0.0, height, -top_width],          // 22
-        [top_width * 0.7, height, -top_width * 0.7],  // 23
-        
-        // Apex point
-        [0.0, height + base_width * 0.5, 0.0], // 24: Sharp point at top
-    ];
+    // Direct connection to spine base - no gap
+    add_box(
+        Vec3::new(0.0, spine_start_y - 0.1, 0.0),
+        Vec3::new(spine_width * 1.1, 0.2, spine_depth * 1.1)
+    );
+
+    // === CENTRAL SPINE (RECTANGULAR CORE) ===
+    // This is the main structural element - tall, slender, rectangular but slightly wider as requested
+    let spine_height = tower_height - spine_start_y - 8.0; // Leave room for pointed top
     
-    // Generate triangular faces for the octagonal tower
-    let mut indices = Vec::new();
+    // Main central spine - rectangular cross-section
+    add_box(
+        Vec3::new(0.0, spine_start_y + spine_height / 2.0, 0.0),
+        Vec3::new(spine_width, spine_height, spine_depth)
+    );
+
+    // === INTEGRATED ARCHITECTURAL MODULES ===
+    // Create modules that are much closer to the spine, like in the reference images
+    let module_levels = 20;
+    let module_spacing = spine_height / module_levels as f32;
     
-    // Bottom to mid-section faces (8 trapezoids, 2 triangles each)
-    for i in 0..8 {
-        let next = (i + 1) % 8;
-        let base_i = i;
-        let base_next = next;
-        let mid_i = i + 8;
-        let mid_next = next + 8;
+    for level in 0..module_levels {
+        let level_y = spine_start_y + (level as f32 + 0.5) * module_spacing;
+        let level_factor = 1.0 - (level as f32 / module_levels as f32) * 0.2; // Very slight taper
         
-        // Triangle 1: base_i -> base_next -> mid_i
-        indices.extend_from_slice(&[base_i as u32, base_next as u32, mid_i as u32]);
-        // Triangle 2: base_next -> mid_next -> mid_i
-        indices.extend_from_slice(&[base_next as u32, mid_next as u32, mid_i as u32]);
+        // Vary the module pattern - sometimes none, sometimes 1-3 modules
+        let module_pattern = level % 7;
+        let module_count = match module_pattern {
+            0 | 1 => 0, // Some levels have no modules for variation
+            2 | 5 => 1, // Single module
+            3 | 4 => 2, // Two modules opposite each other
+            _ => 3,     // Three modules
+        };
+        
+        for module in 0..module_count {
+            let angle = (module as f32 / module_count as f32) * std::f32::consts::TAU + (level as f32 * 0.3);
+            
+            // Much closer to spine - attached rather than floating
+            let module_distance = spine_width * 0.6; // Was 1.8, now much closer
+            let module_x = angle.cos() * module_distance;
+            let module_z = angle.sin() * module_distance;
+            
+            // Rectangular modules that extend from the spine
+            let module_width = 0.8 * level_factor;
+            let module_height = 2.0 + (level % 3) as f32 * 0.5; // Varying heights
+            let module_depth = 0.6 * level_factor;
+            
+            add_box(
+                Vec3::new(module_x, level_y, module_z),
+                Vec3::new(module_width, module_height, module_depth)
+            );
+            
+            // Additional stacked modules for some levels (like reference image)
+            if level % 5 == 0 {
+                add_box(
+                    Vec3::new(module_x * 1.2, level_y + module_height * 0.3, module_z * 1.2),
+                    Vec3::new(module_width * 0.7, module_height * 0.6, module_depth * 0.7)
+                );
+            }
+        }
+        
+        // Spine structural details at regular intervals
+        if level % 4 == 0 {
+            // Horizontal structural elements around the spine
+            for segment in 0..4 {
+                let seg_angle = (segment as f32 / 4.0) * std::f32::consts::TAU;
+                let seg_x = seg_angle.cos() * spine_width * 0.52;
+                let seg_z = seg_angle.sin() * spine_depth * 0.52;
+                
+                add_box(
+                    Vec3::new(seg_x, level_y, seg_z),
+                    Vec3::new(0.12, 0.4, 0.12)
+                );
+            }
+        }
+    }
+
+    // === UPPER BUILDING SECTION (FLAT TOP) ===
+    // Continue the spine upward like a normal building
+    let upper_start_y = spine_start_y + spine_height;
+    let upper_height = 10.0;
+    
+    // Main upper spine section - same width as main spine
+    add_box(
+        Vec3::new(0.0, upper_start_y + upper_height / 2.0, 0.0),
+        Vec3::new(spine_width, upper_height, spine_depth)
+    );
+    
+    // === REFINED ARCHITECTURAL DETAILS ===
+    // Thin corner reinforcements at the top
+    for corner in 0..4 {
+        let angle = (corner as f32 / 4.0) * std::f32::consts::TAU + std::f32::consts::FRAC_PI_4;
+        let corner_x = angle.cos() * spine_width * 0.45;
+        let corner_z = angle.sin() * spine_depth * 0.45;
+        
+        // Thinner corner elements
+        add_box(
+            Vec3::new(corner_x, upper_start_y + upper_height - 1.0, corner_z),
+            Vec3::new(0.15, 2.0, 0.15)
+        );
     }
     
-    // Mid-section to top faces (8 trapezoids, 2 triangles each)
-    for i in 0..8 {
-        let next = (i + 1) % 8;
-        let mid_i = i + 8;
-        let mid_next = next + 8;
-        let top_i = i + 16;
-        let top_next = next + 16;
+    // Thin equipment housings on the sides
+    for side in 0..2 {
+        let angle = side as f32 * std::f32::consts::PI; // Front and back
+        let side_x = angle.cos() * spine_width * 0.52;
+        let side_z = angle.sin() * spine_depth * 0.52;
         
-        // Triangle 1: mid_i -> mid_next -> top_i
-        indices.extend_from_slice(&[mid_i as u32, mid_next as u32, top_i as u32]);
-        // Triangle 2: mid_next -> top_next -> top_i
-        indices.extend_from_slice(&[mid_next as u32, top_next as u32, top_i as u32]);
+        // Thinner equipment box
+        add_box(
+            Vec3::new(side_x, upper_start_y + upper_height - 2.0, side_z),
+            Vec3::new(0.4, 1.5, 0.2)
+        );
     }
     
-    // Top to apex (8 triangles)
-    for i in 0..8 {
-        let next = (i + 1) % 8;
-        let top_i = i + 16;
-        let top_next = next + 16;
+    // Vertical accent lines on facades
+    for facade in 0..2 {
+        let angle = facade as f32 * std::f32::consts::PI;
+        let facade_x = angle.cos() * spine_width * 0.51;
+        let facade_z = angle.sin() * spine_depth * 0.51;
         
-        // Triangle: top_i -> top_next -> apex
-        indices.extend_from_slice(&[top_i as u32, top_next as u32, 24]);
+        // Thin vertical accent
+        add_box(
+            Vec3::new(facade_x, upper_start_y + upper_height / 2.0, facade_z),
+            Vec3::new(0.08, upper_height * 0.8, 0.08)
+        );
     }
     
-    // Generate normals (simplified outward-facing)
-    let mut normals = Vec::new();
-    for _ in &vertices {
-        normals.push([0.0, 1.0, 0.0]); // Simplified upward normals
+    // Horizontal bands for architectural interest
+    for band in 0..3 {
+        let band_y = upper_start_y + (band + 1) as f32 * (upper_height / 4.0);
+        
+        // Thin horizontal accent band
+        add_box(
+            Vec3::new(0.0, band_y, spine_depth * 0.52),
+            Vec3::new(spine_width * 0.8, 0.1, 0.1)
+        );
     }
     
-    // Set mesh attributes
+    // === ROOFTOP ANTENNA CLUSTER ===
+    let roof_y = upper_start_y + upper_height;
+    
+    // Antenna array clustered on the northeast corner/edge
+    let antenna_base_x = spine_width * 0.25;
+    let antenna_base_z = spine_depth * 0.3;
+    
+    // Main tall antenna (tallest in the group)
+    add_box(
+        Vec3::new(antenna_base_x, roof_y + 6.0, antenna_base_z),
+        Vec3::new(0.08, 12.0, 0.08)
+    );
+    
+    // Secondary tall antenna
+    add_box(
+        Vec3::new(antenna_base_x + 0.3, roof_y + 4.5, antenna_base_z - 0.2),
+        Vec3::new(0.06, 9.0, 0.06)
+    );
+    
+    // Medium height antennas
+    add_box(
+        Vec3::new(antenna_base_x - 0.2, roof_y + 3.0, antenna_base_z + 0.1),
+        Vec3::new(0.05, 6.0, 0.05)
+    );
+    
+    add_box(
+        Vec3::new(antenna_base_x + 0.1, roof_y + 3.5, antenna_base_z + 0.3),
+        Vec3::new(0.05, 7.0, 0.05)
+    );
+    
+    // Shorter antennas for variety
+    add_box(
+        Vec3::new(antenna_base_x - 0.1, roof_y + 2.0, antenna_base_z - 0.1),
+        Vec3::new(0.04, 4.0, 0.04)
+    );
+    
+    add_box(
+        Vec3::new(antenna_base_x + 0.4, roof_y + 2.5, antenna_base_z + 0.1),
+        Vec3::new(0.04, 5.0, 0.04)
+    );
+    
+    // Tiny support antennas
+    add_box(
+        Vec3::new(antenna_base_x + 0.2, roof_y + 1.25, antenna_base_z - 0.3),
+        Vec3::new(0.03, 2.5, 0.03)
+    );
+    
+    // Antenna support platform (small)
+    add_box(
+        Vec3::new(antenna_base_x, roof_y + 0.15, antenna_base_z),
+        Vec3::new(0.8, 0.3, 0.6)
+    );
+    
+    // Rooftop equipment/details
+    add_box(
+        Vec3::new(spine_width * 0.2, roof_y + 0.3, 0.0),
+        Vec3::new(0.4, 0.6, 0.3)
+    );
+    add_box(
+        Vec3::new(-spine_width * 0.2, roof_y + 0.4, spine_depth * 0.15),
+        Vec3::new(0.3, 0.8, 0.2)
+    );
+
+    // === STRUCTURAL SUPPORT ELEMENTS ===
+    // Add some connecting elements between major module levels for structural integrity
+    for level in (3..module_levels).step_by(6) {
+        let level_y = spine_start_y + (level as f32) * module_spacing;
+        
+        // Cross-bracing elements
+        for brace in 0..4 {
+            let angle = (brace as f32 / 4.0) * std::f32::consts::TAU + std::f32::consts::FRAC_PI_4;
+            let brace_distance = spine_width * 1.4;
+            let brace_x = angle.cos() * brace_distance;
+            let brace_z = angle.sin() * brace_distance;
+            
+            add_box(
+                Vec3::new(brace_x, level_y, brace_z),
+                Vec3::new(0.12, 2.0, 0.12)
+            );
+        }
+    }
+
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, vertices);
     mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
     mesh.insert_indices(Indices::U32(indices));
-    
     meshes.add(mesh)
 }
 
