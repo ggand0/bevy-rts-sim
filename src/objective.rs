@@ -3,7 +3,7 @@ use bevy::prelude::*;
 use rand::Rng;
 use crate::types::*;
 use crate::constants::*;
-use bevy::prelude::*;
+use crate::explosion_shader::*;
 use bevy::render::mesh::{Indices, Mesh, PrimitiveTopology};
 use bevy::render::render_asset::RenderAssetUsages;
 
@@ -39,7 +39,7 @@ pub fn create_uplink_tower_mesh(meshes: &mut ResMut<Assets<Mesh>>) -> Handle<Mes
         
         // Proper face normals for each vertex - one normal per vertex per face
         // We'll use proper per-face normals
-        let face_normals = [
+        let _face_normals = [
             [0.0, -1.0, 0.0], // bottom face normal
             [0.0, 1.0, 0.0],  // top face normal  
             [-1.0, 0.0, 0.0], // left face normal
@@ -424,7 +424,10 @@ pub fn tower_targeting_system(
 
 pub fn tower_destruction_system(
     mut commands: Commands,
-    tower_query: Query<(Entity, &Transform, &UplinkTower, &Health), With<UplinkTower>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut images: ResMut<Assets<Image>>,
+    tower_query: Query<(Entity, &Transform, &UplinkTower, &Health), (With<UplinkTower>, Without<PendingExplosion>)>,
     droid_query: Query<(Entity, &Transform, &BattleDroid), With<BattleDroid>>,
     mut game_state: ResMut<GameState>,
 ) {
@@ -448,7 +451,7 @@ pub fn tower_destruction_system(
             }
             
             // Add delayed explosions for dramatic effect
-            let explosion_count = units_to_explode.len(); // Get count before moving the vector
+            let explosion_count = units_to_explode.len();
             let mut rng = rand::thread_rng();
             for unit_entity in units_to_explode {
                 let delay = rng.gen_range(EXPLOSION_DELAY_MIN..EXPLOSION_DELAY_MAX);
@@ -458,19 +461,23 @@ pub fn tower_destruction_system(
                 });
             }
             
-            // Create massive explosion effect at tower location
-            commands.spawn((
-                ExplosionEffect {
-                    timer: 0.0,
-                    max_time: EXPLOSION_EFFECT_DURATION * 2.0, // Tower explosion lasts longer
-                    radius: tower.destruction_radius,
-                    intensity: 2.0,
-                },
-                Transform::from_translation(tower_transform.translation),
-            ));
+                            // Create massive explosion effect at tower location using RTS-style
+            spawn_explosion_effect(
+                &mut commands,
+                &mut meshes,
+                &mut materials,
+                &mut images,
+                tower_transform.translation,
+                tower.destruction_radius,
+                3.0, // High intensity for tower explosion
+                EXPLOSION_EFFECT_DURATION * 2.0, // Tower explosion lasts longer
+            );
             
-            // Remove the tower
-            commands.entity(tower_entity).despawn_recursive();
+            // Add PendingExplosion to tower to prevent re-processing
+            commands.entity(tower_entity).insert(PendingExplosion {
+                delay_timer: 0.1, // Very short delay before removing tower
+                explosion_power: 3.0,
+            });
             
             info!("Tower {:?} destroyed! {} friendly units scheduled for cascade explosion", 
                   tower.team, explosion_count);
@@ -482,25 +489,36 @@ pub fn tower_destruction_system(
 
 pub fn pending_explosion_system(
     mut commands: Commands,
-    mut explosion_query: Query<(Entity, &mut PendingExplosion, &Transform), With<PendingExplosion>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut images: ResMut<Assets<Image>>,
+    mut explosion_query: Query<(Entity, &mut PendingExplosion, &Transform, Option<&UplinkTower>), With<PendingExplosion>>,
     time: Res<Time>,
 ) {
-    for (entity, mut pending, transform) in explosion_query.iter_mut() {
+    for (entity, mut pending, transform, tower_component) in explosion_query.iter_mut() {
         pending.delay_timer -= time.delta_seconds();
         
         if pending.delay_timer <= 0.0 {
-            // Create explosion effect
-            commands.spawn((
-                ExplosionEffect {
-                    timer: 0.0,
-                    max_time: EXPLOSION_EFFECT_DURATION,
-                    radius: 5.0, // Individual unit explosion radius
-                    intensity: pending.explosion_power,
-                },
-                Transform::from_translation(transform.translation),
-            ));
+            // Determine explosion radius based on entity type
+            let explosion_radius = if tower_component.is_some() {
+                tower_component.unwrap().destruction_radius * 0.5 // Tower explosion
+            } else {
+                8.0 // Individual unit explosion radius (increased from 5.0)
+            };
             
-            // Remove the unit
+            // Create explosion effect using RTS-style
+            spawn_explosion_effect(
+                &mut commands,
+                &mut meshes,
+                &mut materials,
+                &mut images,
+                transform.translation,
+                explosion_radius,
+                pending.explosion_power,
+                EXPLOSION_EFFECT_DURATION,
+            );
+            
+            // Remove the entity
             commands.entity(entity).despawn_recursive();
         }
     }
@@ -595,4 +613,153 @@ pub fn spawn_objective_ui(mut commands: Commands) {
         }),
         ObjectiveUI,
     ));
+}
+
+// ===== DEBUG SYSTEMS =====
+
+pub fn debug_explosion_hotkey_system(
+    keyboard_input: Res<ButtonInput<KeyCode>>,
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut images: ResMut<Assets<Image>>,
+    mut tower_query: Query<(Entity, &Transform, &UplinkTower, &mut Health), With<UplinkTower>>,
+    droid_query: Query<(Entity, &Transform, &BattleDroid), With<BattleDroid>>,
+    mut game_state: ResMut<GameState>,
+) {
+    if keyboard_input.just_pressed(KeyCode::KeyE) {
+        info!("🔥 DEBUG: Explosion hotkey pressed! Triggering tower destruction...");
+        
+        // Find Team B tower and destroy it
+        for (tower_entity, tower_transform, tower, mut tower_health) in tower_query.iter_mut() {
+            if tower.team == Team::B {
+                info!("🔥 DEBUG: Destroying Team B tower for explosion test");
+                
+                // Set health to 0 to trigger destruction
+                tower_health.current = 0.0;
+                
+                // Mark game as ended
+                game_state.tower_destroyed(tower.team);
+                
+                // Find all friendly units within destruction radius
+                let mut units_to_explode = Vec::new();
+                for (droid_entity, droid_transform, droid) in droid_query.iter() {
+                    if droid.team == tower.team {
+                        let distance = tower_transform.translation.distance(droid_transform.translation);
+                        if distance <= tower.destruction_radius {
+                            units_to_explode.push(droid_entity);
+                        }
+                    }
+                }
+                
+                // Add immediate explosions for testing (no delay)
+                let explosion_count = units_to_explode.len();
+                for (i, unit_entity) in units_to_explode.into_iter().enumerate() {
+                    let delay = (i as f32) * 0.1; // Stagger explosions every 0.1 seconds
+                    commands.entity(unit_entity).insert(PendingExplosion {
+                        delay_timer: delay,
+                        explosion_power: 1.5,
+                    });
+                }
+                
+                // Create massive explosion effect at tower location
+                spawn_explosion_effect(
+                    &mut commands,
+                    &mut meshes,
+                    &mut materials,
+                    &mut images,
+                    tower_transform.translation,
+                    tower.destruction_radius,
+                    4.0, // Very high intensity for debug
+                    EXPLOSION_EFFECT_DURATION * 3.0, // Long duration for observation
+                );
+                
+                // Also create some test explosions around the battlefield at ground level
+                for i in 0..5 {
+                    let test_pos = Vec3::new(
+                        (i as f32 - 2.0) * 20.0,
+                        0.0, // Ground level
+                        50.0 + (i as f32 - 2.0) * 15.0, // Spread out in front of camera
+                    );
+                    spawn_explosion_effect(
+                        &mut commands,
+                        &mut meshes,
+                        &mut materials,
+                        &mut images,
+                        test_pos,
+                        15.0, // Medium radius
+                        2.0 + i as f32 * 0.5, // Varying intensity
+                        EXPLOSION_EFFECT_DURATION * 2.0,
+                    );
+                }
+                
+                // Mark tower for destruction
+                commands.entity(tower_entity).insert(PendingExplosion {
+                    delay_timer: 0.5, // Half second delay
+                    explosion_power: 5.0,
+                });
+                
+                info!("🔥 DEBUG: Triggered {} unit explosions + 6 test explosions", explosion_count);
+                break; // Only destroy one tower
+            }
+        }
+    }
+    
+    if keyboard_input.just_pressed(KeyCode::KeyT) {
+        info!("🧪 DEBUG: Test explosion hotkey pressed! Creating HUGE visible test explosions AND DEBUG CUBES...");
+        
+        // Create massive test explosions at ground level where camera can see them
+        let test_positions = vec![
+            Vec3::new(0.0, 0.0, 50.0),    // Center, in front of camera
+            Vec3::new(40.0, 0.0, 80.0),   // Right side
+            Vec3::new(-40.0, 0.0, 80.0),  // Left side  
+            Vec3::new(0.0, 0.0, 100.0),   // Further back
+        ];
+        
+        for (i, pos) in test_positions.into_iter().enumerate() {
+            // SPAWN BRIGHT DEBUG CUBES FIRST - these should definitely be visible at ground level
+            commands.spawn(PbrBundle {
+                mesh: meshes.add(Cuboid::new(10.0, 10.0, 10.0)),
+                material: materials.add(Color::srgb(1.0, 0.0, 1.0)), // Bright magenta
+                transform: Transform::from_translation(pos + Vec3::new(0.0, 5.0, 0.0)), // Just above ground
+                ..default()
+            });
+            
+            spawn_explosion_effect(
+                &mut commands,
+                &mut meshes,
+                &mut materials,
+                &mut images,
+                pos,
+                50.0 + i as f32 * 10.0, // HUGE sizes: 50, 60, 70, 80 radius
+                10.0,  // Maximum intensity
+                EXPLOSION_EFFECT_DURATION * 4.0, // Long duration
+            );
+        }
+        
+        info!("🧪 DEBUG: Created 4 MASSIVE test explosions close to camera + 4 debug cubes");
+    }
+    
+    if keyboard_input.just_pressed(KeyCode::KeyR) {
+        info!("🔴 DEBUG: Creating bright test material explosions to verify rendering...");
+        
+        // Create explosions with modified material for maximum visibility at ground level
+        for i in 0..3 {
+            let pos = Vec3::new((i as f32 - 1.0) * 50.0, 0.0, 60.0); // Ground level, spread out
+            
+            // Create explosion with maximum brightness and very simple settings
+            spawn_explosion_effect(
+                &mut commands,
+                &mut meshes,
+                &mut materials,
+                &mut images,
+                pos,
+                40.0, // Large radius
+                20.0, // Maximum intensity
+                10.0, // Very long duration
+            );
+        }
+        
+        info!("🔴 DEBUG: Created 3 maximum brightness explosions");
+    }
 } 

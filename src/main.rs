@@ -6,6 +6,8 @@ mod movement;
 mod setup;
 mod commander;
 mod objective;
+mod explosion_shader;
+use explosion_shader::ExplosionShaderPlugin;
 
 use bevy::prelude::*;
 use types::*;
@@ -13,10 +15,12 @@ use combat::*;
 use formation::*;
 use objective::*;
 
+
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
         .add_plugins(bevy::diagnostic::FrameTimeDiagnosticsPlugin)
+        .add_plugins(ExplosionShaderPlugin)
         .insert_resource(SpatialGrid::new())
         .insert_resource(SquadManager::new())
         .insert_resource(GameState::default())
@@ -54,6 +58,7 @@ fn main() {
             explosion_effect_system,
             win_condition_system,
             update_objective_ui_system,
+            debug_explosion_hotkey_system,
         ))
         .run();
 }
