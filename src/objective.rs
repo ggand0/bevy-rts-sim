@@ -705,40 +705,7 @@ pub fn debug_explosion_hotkey_system(
         }
     }
     
-    if keyboard_input.just_pressed(KeyCode::KeyT) {
-        info!("🧪 DEBUG: Test explosion hotkey pressed! Creating HUGE visible test explosions AND DEBUG CUBES...");
-        
-        // Create massive test explosions at ground level where camera can see them
-        let test_positions = vec![
-            Vec3::new(0.0, 0.0, 50.0),    // Center, in front of camera
-            Vec3::new(40.0, 0.0, 80.0),   // Right side
-            Vec3::new(-40.0, 0.0, 80.0),  // Left side  
-            Vec3::new(0.0, 0.0, 100.0),   // Further back
-        ];
-        
-        for (i, pos) in test_positions.into_iter().enumerate() {
-            // SPAWN BRIGHT DEBUG CUBES FIRST - these should definitely be visible at ground level
-            commands.spawn(PbrBundle {
-                mesh: meshes.add(Cuboid::new(10.0, 10.0, 10.0)),
-                material: materials.add(Color::srgb(1.0, 0.0, 1.0)), // Bright magenta
-                transform: Transform::from_translation(pos + Vec3::new(0.0, 5.0, 0.0)), // Just above ground
-                ..default()
-            });
-            
-            spawn_explosion_effect(
-                &mut commands,
-                &mut meshes,
-                &mut materials,
-                &mut images,
-                pos,
-                50.0 + i as f32 * 10.0, // HUGE sizes: 50, 60, 70, 80 radius
-                10.0,  // Maximum intensity
-                EXPLOSION_EFFECT_DURATION * 4.0, // Long duration
-            );
-        }
-        
-        info!("🧪 DEBUG: Created 4 MASSIVE test explosions close to camera + 4 debug cubes");
-    }
+    // T key functionality removed - debug cubes no longer needed
     
     if keyboard_input.just_pressed(KeyCode::KeyR) {
         info!("🔴 DEBUG: Creating bright test material explosions to verify rendering...");
