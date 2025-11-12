@@ -254,4 +254,89 @@ impl SquadManager {
     pub fn get_unit_squad_id(&self, entity: Entity) -> Option<u32> {
         self.entity_to_squad.get(&entity).copied()
     }
+}
+
+// ===== OBJECTIVE SYSTEM COMPONENTS =====
+
+#[derive(Component)]
+pub struct Health {
+    pub current: f32,
+    pub max: f32,
+}
+
+impl Health {
+    pub fn new(max_health: f32) -> Self {
+        Self {
+            current: max_health,
+            max: max_health,
+        }
+    }
+    
+    pub fn damage(&mut self, amount: f32) {
+        self.current = (self.current - amount).max(0.0);
+    }
+    
+    pub fn is_dead(&self) -> bool {
+        self.current <= 0.0
+    }
+    
+    pub fn health_percentage(&self) -> f32 {
+        self.current / self.max
+    }
+}
+
+#[derive(Component)]
+pub struct UplinkTower {
+    pub team: Team,
+    pub destruction_radius: f32, // Radius for chain reaction
+}
+
+#[derive(Component)]
+pub struct ObjectiveTarget {
+    pub team: Team,
+    pub is_primary: bool, // Primary objectives end the game when destroyed
+}
+
+#[derive(Component)]
+pub struct PendingExplosion {
+    pub delay_timer: f32,
+    pub explosion_power: f32,
+}
+
+// TODO: Update visual effect (scale, alpha, particle systems)
+// For now, just manage lifetime
+
+#[derive(Component)]
+pub struct ExplosionEffect {
+    pub timer: f32,
+    pub max_time: f32,
+    pub radius: f32,
+    pub intensity: f32,
+}
+
+// Game state management
+#[derive(Resource, Default)]
+pub struct GameState {
+    pub team_a_tower_destroyed: bool,
+    pub team_b_tower_destroyed: bool,
+    pub game_ended: bool,
+    pub winner: Option<Team>,
+}
+
+impl GameState {
+    pub fn tower_destroyed(&mut self, team: Team) {
+        match team {
+            Team::A => self.team_a_tower_destroyed = true,
+            Team::B => self.team_b_tower_destroyed = true,
+        }
+        
+        if !self.game_ended {
+            self.game_ended = true;
+            // Winner is the opposing team
+            self.winner = Some(match team {
+                Team::A => Team::B,
+                Team::B => Team::A,
+            });
+        }
+    }
 } 
