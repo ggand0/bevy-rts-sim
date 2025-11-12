@@ -495,32 +495,60 @@ Also, all materials have `unlit: true`.
 
 **Symptom:** `error[B0003]: Could not insert a bundle ... because it doesn't exist`
 
-**Cause:** Trying to add `PendingExplosion` to units already killed in combat.
+**Cause:** Race condition - units are killed by combat systems between query time and command buffer flush. Using `insert()` panics if entity no longer exists when commands are applied.
 
-**Solution:** Already fixed - use safe entity checks:
+**Solution:** ✅ **FIXED (Nov 12, 2025)** - Use `try_insert()` instead:
 ```rust
 if let Some(mut entity_commands) = commands.get_entity(unit_entity) {
-    entity_commands.insert(PendingExplosion { ... });
+    entity_commands.try_insert(PendingExplosion { ... });
 }
 ```
 
+**Why `try_insert()` works:**
+- `insert()`: Panics if entity doesn't exist at flush time (B0003 error)
+- `try_insert()`: Silently succeeds or fails - no panic if entity is gone
+
+**Applied to:**
+- `tower_destruction_system` - unit cascade explosions
+- `tower_destruction_system` - tower entity
+- `debug_explosion_hotkey_system` - all entity insertions
+
 #### 6. Explosion Not Animating
 
-**Symptom:** Explosion shows full sprite sheet grid or doesn't change frames.
+**Symptom:** Explosion shows full 5×5 sprite sheet grid, no frame-by-frame animation.
 
-**Status:** **CURRENT ISSUE** - Being investigated.
+**Status:** ✅ **FIXED (Nov 12, 2025)**
 
-**Potential Causes:**
-- Material not updating each frame
-- Frame calculation incorrect
-- UV coordinates not being applied properly
-- Shader not receiving frame data
+**Root Cause:** 
+`StandardMaterial` cannot animate UV coordinates. The `animate_sprite_explosions()` system was only updating alpha/emissive values, not changing which frame was displayed. The entire texture was always visible on the quad.
 
-**Debug Steps:**
-1. Verify `animate_sprite_explosions` is running (check with `info!()`)
-2. Check if `current_frame` is incrementing
-3. Verify material handle is valid and mutable
-4. Confirm texture is loaded (check asset server state)
+**Solution:** Switch to custom shader approach for all explosions:
+
+```rust
+// Before: StandardMaterial (broken animation)
+spawn_animated_sprite_explosion(
+    commands, meshes, materials, assets, position, radius, intensity, duration
+);
+
+// After: ExplosionMaterial (working animation)
+spawn_custom_shader_explosion(
+    commands, meshes, explosion_materials, assets, position, radius, intensity, duration
+);
+```
+
+**How it works:**
+1. `animate_custom_shader_explosions()` updates `current_frame` each tick
+2. Calculates frame position in 5×5 grid (`frame_x`, `frame_y`)
+3. Updates `ExplosionMaterial` uniforms with frame data
+4. Custom shader (`explosion.wgsl`) samples correct region via UV offsetting
+
+**Updated systems:**
+- `tower_destruction_system` - tower explosions
+- `pending_explosion_system` - unit explosions
+- Both now use `spawn_custom_shader_explosion()` with proper frame animation
+
+**Debug logging added:**
+- Frame updates logged for first 5 frames: `"🎞️ Explosion frame update: 0 → 1"`
 
 ---
 
