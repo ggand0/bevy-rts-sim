@@ -426,7 +426,9 @@ pub fn tower_destruction_system(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut explosion_materials: ResMut<Assets<ExplosionMaterial>>,
     mut images: ResMut<Assets<Image>>,
+    explosion_assets: Option<Res<ExplosionAssets>>,
     tower_query: Query<(Entity, &Transform, &UplinkTower, &Health), (With<UplinkTower>, Without<PendingExplosion>)>,
     droid_query: Query<(Entity, &Transform, &BattleDroid), With<BattleDroid>>,
     mut game_state: ResMut<GameState>,
@@ -455,29 +457,38 @@ pub fn tower_destruction_system(
             let mut rng = rand::thread_rng();
             for unit_entity in units_to_explode {
                 let delay = rng.gen_range(EXPLOSION_DELAY_MIN..EXPLOSION_DELAY_MAX);
-                commands.entity(unit_entity).insert(PendingExplosion {
-                    delay_timer: delay,
-                    explosion_power: 1.0,
-                });
+                // Use try_insert to gracefully handle entities that may have been despawned
+                if let Some(mut entity_commands) = commands.get_entity(unit_entity) {
+                    entity_commands.try_insert(PendingExplosion {
+                        delay_timer: delay,
+                        explosion_power: 1.0,
+                    });
+                }
             }
             
-                            // Create massive explosion effect at tower location using RTS-style
-            spawn_explosion_effect(
-                &mut commands,
-                &mut meshes,
-                &mut materials,
-                &mut images,
-                tower_transform.translation,
-                tower.destruction_radius,
-                3.0, // High intensity for tower explosion
-                EXPLOSION_EFFECT_DURATION * 2.0, // Tower explosion lasts longer
-            );
+            // Create massive explosion effect at tower location using custom shader
+            if let Some(assets) = explosion_assets.as_ref() {
+                spawn_custom_shader_explosion(
+                    &mut commands,
+                    &mut meshes,
+                    &mut explosion_materials,
+                    &assets,
+                    tower_transform.translation,
+                    tower.destruction_radius * 0.5, // Scale down the quad size
+                    3.0, // High intensity for tower explosion
+                    EXPLOSION_EFFECT_DURATION * 2.0, // Tower explosion lasts longer
+                );
+            } else {
+                warn!("Cannot spawn tower explosion - ExplosionAssets not loaded");
+            }
             
             // Add PendingExplosion to tower to prevent re-processing
-            commands.entity(tower_entity).insert(PendingExplosion {
-                delay_timer: 0.1, // Very short delay before removing tower
-                explosion_power: 3.0,
-            });
+            if let Some(mut entity_commands) = commands.get_entity(tower_entity) {
+                entity_commands.try_insert(PendingExplosion {
+                    delay_timer: 0.1, // Very short delay before removing tower
+                    explosion_power: 3.0,
+                });
+            }
             
             info!("Tower {:?} destroyed! {} friendly units scheduled for cascade explosion", 
                   tower.team, explosion_count);
@@ -491,7 +502,9 @@ pub fn pending_explosion_system(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut explosion_materials: ResMut<Assets<ExplosionMaterial>>,
     mut images: ResMut<Assets<Image>>,
+    explosion_assets: Option<Res<ExplosionAssets>>,
     mut explosion_query: Query<(Entity, &mut PendingExplosion, &Transform, Option<&UplinkTower>), With<PendingExplosion>>,
     time: Res<Time>,
 ) {
@@ -506,17 +519,21 @@ pub fn pending_explosion_system(
                 8.0 // Individual unit explosion radius (increased from 5.0)
             };
             
-            // Create explosion effect using RTS-style
-            spawn_explosion_effect(
-                &mut commands,
-                &mut meshes,
-                &mut materials,
-                &mut images,
-                transform.translation,
-                explosion_radius,
-                pending.explosion_power,
-                EXPLOSION_EFFECT_DURATION,
-            );
+            // Create explosion effect using custom shader
+            if let Some(assets) = explosion_assets.as_ref() {
+                spawn_custom_shader_explosion(
+                    &mut commands,
+                    &mut meshes,
+                    &mut explosion_materials,
+                    &assets,
+                    transform.translation,
+                    explosion_radius * 0.1, // Scale down the quad size
+                    pending.explosion_power,
+                    EXPLOSION_EFFECT_DURATION,
+                );
+            } else {
+                warn!("Cannot spawn unit explosion - ExplosionAssets not loaded");
+            }
             
             // Remove the entity
             commands.entity(entity).despawn_recursive();
@@ -656,48 +673,26 @@ pub fn debug_explosion_hotkey_system(
                 let explosion_count = units_to_explode.len();
                 for (i, unit_entity) in units_to_explode.into_iter().enumerate() {
                     let delay = (i as f32) * 0.1; // Stagger explosions every 0.1 seconds
-                    commands.entity(unit_entity).insert(PendingExplosion {
-                        delay_timer: delay,
-                        explosion_power: 1.5,
-                    });
+                    // Use try_insert to gracefully handle entities that may have been despawned
+                    if let Some(mut entity_commands) = commands.get_entity(unit_entity) {
+                        entity_commands.try_insert(PendingExplosion {
+                            delay_timer: delay,
+                            explosion_power: 1.5,
+                        });
+                    }
                 }
                 
-                // Create massive explosion effect at tower location
-                spawn_explosion_effect(
-                    &mut commands,
-                    &mut meshes,
-                    &mut materials,
-                    &mut images,
-                    tower_transform.translation,
-                    tower.destruction_radius,
-                    4.0, // Very high intensity for debug
-                    EXPLOSION_EFFECT_DURATION * 3.0, // Long duration for observation
-                );
-                
-                // Also create some test explosions around the battlefield at ground level
-                for i in 0..5 {
-                    let test_pos = Vec3::new(
-                        (i as f32 - 2.0) * 20.0,
-                        0.0, // Ground level
-                        50.0 + (i as f32 - 2.0) * 15.0, // Spread out in front of camera
-                    );
-                    spawn_explosion_effect(
-                        &mut commands,
-                        &mut meshes,
-                        &mut materials,
-                        &mut images,
-                        test_pos,
-                        15.0, // Medium radius
-                        2.0 + i as f32 * 0.5, // Varying intensity
-                        EXPLOSION_EFFECT_DURATION * 2.0,
-                    );
-                }
+                // Tower explosion will be handled by the normal tower_destruction_system
+                // which will trigger when it detects health <= 0
+                info!("🔥 DEBUG: Tower health set to 0, destruction will be handled by tower_destruction_system");
                 
                 // Mark tower for destruction
-                commands.entity(tower_entity).insert(PendingExplosion {
-                    delay_timer: 0.5, // Half second delay
-                    explosion_power: 5.0,
-                });
+                if let Some(mut entity_commands) = commands.get_entity(tower_entity) {
+                    entity_commands.try_insert(PendingExplosion {
+                        delay_timer: 0.5, // Half second delay
+                        explosion_power: 5.0,
+                    });
+                }
                 
                 info!("🔥 DEBUG: Triggered {} unit explosions + 6 test explosions", explosion_count);
                 break; // Only destroy one tower
@@ -705,28 +700,5 @@ pub fn debug_explosion_hotkey_system(
         }
     }
     
-    // T key functionality removed - debug cubes no longer needed
-    
-    if keyboard_input.just_pressed(KeyCode::KeyR) {
-        info!("🔴 DEBUG: Creating bright test material explosions to verify rendering...");
-        
-        // Create explosions with modified material for maximum visibility at ground level
-        for i in 0..3 {
-            let pos = Vec3::new((i as f32 - 1.0) * 50.0, 0.0, 60.0); // Ground level, spread out
-            
-            // Create explosion with maximum brightness and very simple settings
-            spawn_explosion_effect(
-                &mut commands,
-                &mut meshes,
-                &mut materials,
-                &mut images,
-                pos,
-                40.0, // Large radius
-                20.0, // Maximum intensity
-                10.0, // Very long duration
-            );
-        }
-        
-        info!("🔴 DEBUG: Created 3 maximum brightness explosions");
-    }
+    // T key and R key functionality removed - use Y/U/I keys in explosion_shader.rs instead
 } 

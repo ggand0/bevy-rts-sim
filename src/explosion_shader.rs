@@ -1,7 +1,7 @@
 // Enhanced sprite-based explosion effects with real sprite sheets and custom shader
 use bevy::prelude::*;
 use bevy::pbr::{MaterialPipeline, MaterialPipelineKey, NotShadowCaster, NotShadowReceiver};
-use bevy::render::mesh::MeshVertexBufferLayout;
+use bevy::render::mesh::MeshVertexBufferLayoutRef;
 use bevy::render::render_resource::{
     AsBindGroup, RenderPipelineDescriptor, ShaderRef, SpecializedMeshPipelineError,
 };
@@ -29,6 +29,16 @@ impl Material for ExplosionMaterial {
     
     fn alpha_mode(&self) -> AlphaMode {
         AlphaMode::Blend
+    }
+    
+    fn specialize(
+        _pipeline: &MaterialPipeline<Self>,
+        descriptor: &mut RenderPipelineDescriptor,
+        _layout: &MeshVertexBufferLayoutRef,
+        _key: MaterialPipelineKey<Self>,
+    ) -> Result<(), SpecializedMeshPipelineError> {
+        descriptor.primitive.cull_mode = None;
+        Ok(())
     }
 }
 
@@ -309,7 +319,7 @@ pub fn spawn_debug_explosion_effect(
     ));
 }
 
-// Backward compatibility function - now calls debug version for testing
+// Backward compatibility function - needs ExplosionAssets to work properly
 pub fn spawn_explosion_effect(
     commands: &mut Commands,
     meshes: &mut ResMut<Assets<Mesh>>,
@@ -320,54 +330,10 @@ pub fn spawn_explosion_effect(
     intensity: f32,
     duration: f32,
 ) {
-    info!("🔥 Spawning explosion effect at {} with radius {} intensity {}", position, radius, intensity);
-    
-    // For now, just call the debug version directly with proper component
-    let quad_mesh = meshes.add(Rectangle::new(radius * 0.3, radius * 0.3));
-    
-    let explosion_type = if intensity > 2.5 {
-        ExplosionType::Nuclear
-    } else if intensity > 1.5 {
-        ExplosionType::Fire
-    } else {
-        ExplosionType::Impact
-    };
-    
-    let debug_material = materials.add(StandardMaterial {
-        base_color: Color::srgba(1.0, 1.0, 1.0, 0.95),
-        emissive: Color::srgb(2.0, 1.5, 0.8).into(),
-        alpha_mode: AlphaMode::Blend,
-        unlit: true, // Disable lighting to remove shadows
-        cull_mode: None,
-        ..default()
-    });
-    
-    commands.spawn((
-        PbrBundle {
-            mesh: quad_mesh,
-            material: debug_material,
-            transform: Transform::from_translation(position)
-                .with_scale(Vec3::splat(0.01)),
-            ..default()
-        },
-        ExplosionTimer {
-            timer: Timer::new(Duration::from_secs_f32(duration), TimerMode::Once),
-        },
-        SpriteExplosion {
-            explosion_type,
-            current_phase: ExplosionPhase::Initial,
-            frame_count: 25,
-            current_frame: 0,
-            frame_duration: duration / 25.0,
-            frame_timer: 0.0,
-            scale: radius,
-            fade_alpha: 1.0,
-            phase_transition_timer: 0.0,
-        },
-        NotShadowCaster, // Prevent this entity from casting shadows
-        NotShadowReceiver, // Prevent this entity from receiving shadows
-        Name::new("CompatibilityExplosion"),
-    ));
+    // This is a stub that creates invisible explosions
+    // The actual tower explosion system should use spawn_animated_sprite_explosion instead
+    info!("⚠️ spawn_explosion_effect called without ExplosionAssets - creating placeholder");
+    info!("   Position: {}, Radius: {}, Intensity: {}", position, radius, intensity);
 }
 
 pub fn spawn_explosion(
@@ -667,11 +633,17 @@ fn animate_custom_shader_explosions(
         sprite_explosion.frame_timer += time.delta_seconds();
         if sprite_explosion.frame_timer >= sprite_explosion.frame_duration {
             sprite_explosion.frame_timer = 0.0;
+            let old_frame = sprite_explosion.current_frame;
             sprite_explosion.current_frame += 1;
             
             // Keep frame within bounds
             if sprite_explosion.current_frame >= sprite_explosion.frame_count {
                 sprite_explosion.current_frame = sprite_explosion.frame_count - 1; // Hold on last frame
+            }
+            
+            // Debug log first few frames
+            if old_frame < 5 {
+                info!("🎞️ Explosion frame update: {} → {}", old_frame, sprite_explosion.current_frame);
             }
         }
         
