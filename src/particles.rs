@@ -1,0 +1,301 @@
+// Particle effects system using Bevy Hanabi
+// Provides debris, sparks, and smoke particles for explosions
+use bevy::prelude::*;
+use bevy_hanabi::prelude::*;
+
+pub struct ParticleEffectsPlugin;
+
+impl Plugin for ParticleEffectsPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_plugins(HanabiPlugin)
+            .add_systems(Startup, setup_particle_effects);
+            //.add_systems(Update, cleanup_finished_particle_effects);
+    }
+}
+
+// Component to track particle effect lifetime
+#[derive(Component)]
+pub struct ParticleEffectLifetime {
+    pub timer: Timer,
+}
+
+// Resource to store particle effect templates
+#[derive(Resource)]
+pub struct ExplosionParticleEffects {
+    pub debris_effect: Handle<EffectAsset>,
+    pub sparks_effect: Handle<EffectAsset>,
+    pub smoke_effect: Handle<EffectAsset>,
+}
+
+fn setup_particle_effects(
+    mut commands: Commands,
+    mut effects: ResMut<Assets<EffectAsset>>,
+) {
+    info!("🎆 Setting up particle effects...");
+
+    // === DEBRIS PARTICLES ===
+    // Physical debris chunks that fly outward
+    let mut color_gradient1 = Gradient::new();
+    color_gradient1.add_key(0.0, Vec4::new(1.0, 0.5, 0.2, 1.0)); // Bright orange
+    color_gradient1.add_key(0.3, Vec4::new(0.8, 0.3, 0.1, 1.0)); // Dark orange
+    color_gradient1.add_key(0.6, Vec4::new(0.3, 0.3, 0.3, 0.8)); // Gray
+    color_gradient1.add_key(1.0, Vec4::new(0.1, 0.1, 0.1, 0.0)); // Fade to black
+
+    let mut size_gradient1 = Gradient::new();
+    size_gradient1.add_key(0.0, Vec2::splat(0.5));
+    size_gradient1.add_key(1.0, Vec2::splat(0.3));
+
+    let writer = ExprWriter::new();
+
+    // Debris: burst of chunks flying outward
+    let init_pos = SetPositionSphereModifier {
+        center: writer.lit(Vec3::ZERO).expr(),
+        radius: writer.lit(1.0).expr(),
+        dimension: ShapeDimension::Volume,
+    };
+
+    let init_vel = SetVelocitySphereModifier {
+        center: writer.lit(Vec3::ZERO).expr(),
+        speed: writer.lit(20.0).uniform(writer.lit(30.0)).expr(),
+    };
+
+    let init_age = SetAttributeModifier::new(Attribute::AGE, writer.lit(0.0).expr());
+    let init_lifetime = SetAttributeModifier::new(Attribute::LIFETIME, writer.lit(2.5).expr());
+    let init_size = SetAttributeModifier::new(Attribute::SIZE, writer.lit(0.5).expr());
+
+    let update_accel = AccelModifier::new(writer.lit(Vec3::new(0.0, -15.0, 0.0)).expr());
+    let update_drag = LinearDragModifier::new(writer.lit(2.0).expr());
+
+    let debris_module = writer.finish();
+
+    let debris_effect = effects.add(
+        EffectAsset::new(vec![32768], Spawner::burst(100.0.into(), 2.0.into()), debris_module)
+            .with_name("explosion_debris")
+            .init(init_pos)
+            .init(init_vel)
+            .init(init_age)
+            .init(init_lifetime)
+            .init(init_size)
+            .update(update_accel)
+            .update(update_drag)
+            .render(ColorOverLifetimeModifier { gradient: color_gradient1 })
+            .render(SizeOverLifetimeModifier { gradient: size_gradient1, screen_space_size: false })
+    );
+
+    // === SPARK PARTICLES ===
+    // Bright, fast-moving sparks
+    let mut color_gradient2 = Gradient::new();
+    color_gradient2.add_key(0.0, Vec4::new(1.0, 1.0, 0.8, 1.0)); // Bright yellow-white
+    color_gradient2.add_key(0.1, Vec4::new(1.0, 0.8, 0.3, 1.0)); // Yellow
+    color_gradient2.add_key(0.3, Vec4::new(1.0, 0.4, 0.1, 0.8)); // Orange
+    color_gradient2.add_key(1.0, Vec4::new(0.5, 0.1, 0.0, 0.0)); // Fade out
+
+    let mut size_gradient2 = Gradient::new();
+    size_gradient2.add_key(0.0, Vec2::splat(0.2));
+    size_gradient2.add_key(1.0, Vec2::splat(0.05));
+
+    let writer2 = ExprWriter::new();
+
+    let init_pos2 = SetPositionSphereModifier {
+        center: writer2.lit(Vec3::ZERO).expr(),
+        radius: writer2.lit(0.5).expr(),
+        dimension: ShapeDimension::Surface,
+    };
+
+    let init_vel2 = SetVelocitySphereModifier {
+        center: writer2.lit(Vec3::ZERO).expr(),
+        speed: writer2.lit(35.0).uniform(writer2.lit(50.0)).expr(),
+    };
+
+    let init_age2 = SetAttributeModifier::new(Attribute::AGE, writer2.lit(0.0).expr());
+    let init_lifetime2 = SetAttributeModifier::new(Attribute::LIFETIME, writer2.lit(1.5).expr());
+    let init_size2 = SetAttributeModifier::new(Attribute::SIZE, writer2.lit(0.2).expr());
+
+    let update_accel2 = AccelModifier::new(writer2.lit(Vec3::new(0.0, -20.0, 0.0)).expr());
+    let update_drag2 = LinearDragModifier::new(writer2.lit(3.0).expr());
+
+    let sparks_module = writer2.finish();
+
+    let sparks_effect = effects.add(
+        EffectAsset::new(vec![32768], Spawner::burst(200.0.into(), 0.5.into()), sparks_module)
+            .with_name("explosion_sparks")
+            .init(init_pos2)
+            .init(init_vel2)
+            .init(init_age2)
+            .init(init_lifetime2)
+            .init(init_size2)
+            .update(update_accel2)
+            .update(update_drag2)
+            .render(ColorOverLifetimeModifier { gradient: color_gradient2 })
+            .render(SizeOverLifetimeModifier { gradient: size_gradient2, screen_space_size: false })
+    );
+
+    // === SMOKE PARTICLES ===
+    // Rising smoke plumes
+    let mut color_gradient3 = Gradient::new();
+    color_gradient3.add_key(0.0, Vec4::new(0.3, 0.3, 0.3, 0.0)); // Start transparent
+    color_gradient3.add_key(0.2, Vec4::new(0.4, 0.4, 0.4, 0.6)); // Fade in
+    color_gradient3.add_key(0.5, Vec4::new(0.35, 0.35, 0.35, 0.5)); // Peak
+    color_gradient3.add_key(1.0, Vec4::new(0.2, 0.2, 0.2, 0.0)); // Fade out
+
+    let mut size_gradient3 = Gradient::new();
+    size_gradient3.add_key(0.0, Vec2::splat(2.0));
+    size_gradient3.add_key(1.0, Vec2::splat(4.0)); // Expand over lifetime
+
+    let writer3 = ExprWriter::new();
+
+    let init_pos3 = SetPositionSphereModifier {
+        center: writer3.lit(Vec3::ZERO).expr(),
+        radius: writer3.lit(2.0).expr(),
+        dimension: ShapeDimension::Volume,
+    };
+
+    let init_vel3 = SetVelocitySphereModifier {
+        center: writer3.lit(Vec3::ZERO).expr(),
+        speed: writer3.lit(5.0).uniform(writer3.lit(10.0)).expr(),
+    };
+
+    let init_age3 = SetAttributeModifier::new(Attribute::AGE, writer3.lit(0.0).expr());
+    let init_lifetime3 = SetAttributeModifier::new(Attribute::LIFETIME, writer3.lit(3.5).expr());
+    let init_size3 = SetAttributeModifier::new(Attribute::SIZE, writer3.lit(2.0).expr());
+
+    let update_accel3 = AccelModifier::new(writer3.lit(Vec3::new(0.0, 3.0, 0.0)).expr());
+    let update_drag3 = LinearDragModifier::new(writer3.lit(1.0).expr());
+
+    let smoke_module = writer3.finish();
+
+    let smoke_effect = effects.add(
+        EffectAsset::new(vec![32768], Spawner::rate(50.0.into()), smoke_module)
+            .with_name("explosion_smoke")
+            .init(init_pos3)
+            .init(init_vel3)
+            .init(init_age3)
+            .init(init_lifetime3)
+            .init(init_size3)
+            .update(update_accel3)
+            .update(update_drag3)
+            .render(ColorOverLifetimeModifier { gradient: color_gradient3 })
+            .render(SizeOverLifetimeModifier { gradient: size_gradient3, screen_space_size: false })
+    );
+
+    commands.insert_resource(ExplosionParticleEffects {
+        debris_effect,
+        sparks_effect,
+        smoke_effect,
+    });
+
+    info!("✅ Particle effects ready!");
+}
+
+/// Spawns a complete particle explosion effect at the given location
+/// This combines debris, sparks, and smoke for a full effect
+pub fn spawn_explosion_particles(
+    commands: &mut Commands,
+    particle_effects: &ExplosionParticleEffects,
+    position: Vec3,
+    scale: f32, // Scale multiplier for the effect
+) {
+    info!("💥 Spawning explosion particles at {:?} with scale {}", position, scale);
+
+    // Spawn debris particles
+    commands.spawn((
+        ParticleEffectBundle {
+            effect: ParticleEffect::new(particle_effects.debris_effect.clone()),
+            transform: Transform::from_translation(position)
+                .with_scale(Vec3::splat(scale)),
+            ..default()
+        },
+        //ParticleEffectLifetime {
+        //    timer: Timer::from_seconds(5.0, TimerMode::Once), // Cleanup after 5 seconds
+        //},
+        Name::new("ExplosionDebris"),
+    ));
+
+    // Spawn sparks particles
+    commands.spawn((
+        ParticleEffectBundle {
+            effect: ParticleEffect::new(particle_effects.sparks_effect.clone()),
+            transform: Transform::from_translation(position)
+                .with_scale(Vec3::splat(scale)),
+            ..default()
+        },
+        //ParticleEffectLifetime {
+        //    timer: Timer::from_seconds(3.0, TimerMode::Once), // Sparks fade faster
+        //},
+        Name::new("ExplosionSparks"),
+    ));
+
+    // Spawn smoke particles (delayed start via spawner)
+    commands.spawn((
+        ParticleEffectBundle {
+            effect: ParticleEffect::new(particle_effects.smoke_effect.clone()),
+            transform: Transform::from_translation(position + Vec3::new(0.0, 2.0 * scale, 0.0))
+                .with_scale(Vec3::splat(scale)),
+            ..default()
+        },
+        ParticleEffectLifetime {
+            timer: Timer::from_seconds(6.0, TimerMode::Once), // Smoke lingers longest
+        },
+        Name::new("ExplosionSmoke"),
+    ));
+}
+
+/// Spawns particles for smaller unit explosions
+/// Uses fewer particles and smaller scale for better performance
+pub fn spawn_unit_explosion_particles(
+    commands: &mut Commands,
+    particle_effects: &ExplosionParticleEffects,
+    position: Vec3,
+) {
+    // Smaller, simpler effect for units - just debris and quick sparks
+    commands.spawn((
+        ParticleEffectBundle {
+            effect: ParticleEffect::new(particle_effects.debris_effect.clone()),
+            transform: Transform::from_translation(position)
+                .with_scale(Vec3::splat(0.3)), // Much smaller
+            ..default()
+        },
+        //ParticleEffectLifetime {
+        //    timer: Timer::from_seconds(3.0, TimerMode::Once), // Smaller explosions cleanup faster
+        //},
+        Name::new("UnitDebris"),
+    ));
+
+    commands.spawn((
+        ParticleEffectBundle {
+            effect: ParticleEffect::new(particle_effects.sparks_effect.clone()),
+            transform: Transform::from_translation(position)
+                .with_scale(Vec3::splat(0.25)),
+            ..default()
+        },
+        //ParticleEffectLifetime {
+        //    timer: Timer::from_seconds(2.0, TimerMode::Once), // Quick sparks
+        //},
+        Name::new("UnitSparks"),
+    ));
+}
+
+/// Spawns particles for tower explosions
+/// Uses full effect with maximum intensity
+pub fn spawn_tower_explosion_particles(
+    commands: &mut Commands,
+    particle_effects: &ExplosionParticleEffects,
+    position: Vec3,
+) {
+    spawn_explosion_particles(commands, particle_effects, position, 4.0); // Large scale for towers
+}
+
+/// System to cleanup particle effects after their lifetime expires
+fn cleanup_finished_particle_effects(
+    mut commands: Commands,
+    mut query: Query<(Entity, &mut ParticleEffectLifetime)>,
+    time: Res<Time>,
+) {
+    for (entity, mut lifetime) in query.iter_mut() {
+        lifetime.timer.tick(time.delta());
+
+        if lifetime.timer.finished() {
+            commands.entity(entity).despawn_recursive();
+        }
+    }
+}

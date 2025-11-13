@@ -4,6 +4,7 @@ use rand::Rng;
 use crate::types::*;
 use crate::constants::*;
 use crate::explosion_shader::*;
+use crate::particles::*;
 use bevy::render::mesh::{Indices, Mesh, PrimitiveTopology};
 use bevy::render::render_asset::RenderAssetUsages;
 
@@ -429,6 +430,7 @@ pub fn tower_destruction_system(
     mut explosion_materials: ResMut<Assets<ExplosionMaterial>>,
     mut images: ResMut<Assets<Image>>,
     explosion_assets: Option<Res<ExplosionAssets>>,
+    particle_effects: Option<Res<ExplosionParticleEffects>>,
     tower_query: Query<(Entity, &Transform, &UplinkTower, &Health), (With<UplinkTower>, Without<PendingExplosion>)>,
     droid_query: Query<(Entity, &Transform, &BattleDroid), With<BattleDroid>>,
     mut game_state: ResMut<GameState>,
@@ -481,6 +483,15 @@ pub fn tower_destruction_system(
             } else {
                 warn!("Cannot spawn tower explosion - ExplosionAssets not loaded");
             }
+
+            // Add particle effects to tower explosion
+            if let Some(particles) = particle_effects.as_ref() {
+                spawn_tower_explosion_particles(
+                    &mut commands,
+                    particles,
+                    tower_transform.translation,
+                );
+            }
             
             // Add PendingExplosion to tower to prevent re-processing
             if let Some(mut entity_commands) = commands.get_entity(tower_entity) {
@@ -505,6 +516,7 @@ pub fn pending_explosion_system(
     mut explosion_materials: ResMut<Assets<ExplosionMaterial>>,
     mut images: ResMut<Assets<Image>>,
     explosion_assets: Option<Res<ExplosionAssets>>,
+    particle_effects: Option<Res<ExplosionParticleEffects>>,
     mut explosion_query: Query<(Entity, &mut PendingExplosion, &Transform, Option<&UplinkTower>), With<PendingExplosion>>,
     time: Res<Time>,
 ) {
@@ -534,7 +546,18 @@ pub fn pending_explosion_system(
             } else {
                 warn!("Cannot spawn unit explosion - ExplosionAssets not loaded");
             }
-            
+
+            // Add particle effects (only for units, not towers - towers already have particles)
+            if tower_component.is_none() {
+                if let Some(particles) = particle_effects.as_ref() {
+                    spawn_unit_explosion_particles(
+                        &mut commands,
+                        particles,
+                        transform.translation,
+                    );
+                }
+            }
+
             // Remove the entity
             commands.entity(entity).despawn_recursive();
         }
