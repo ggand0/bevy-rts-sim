@@ -8,15 +8,17 @@ pub struct ParticleEffectsPlugin;
 impl Plugin for ParticleEffectsPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(HanabiPlugin)
-            .add_systems(Startup, setup_particle_effects);
-            //.add_systems(Update, cleanup_finished_particle_effects);
+            .add_systems(Startup, setup_particle_effects)
+            .add_systems(Update, cleanup_finished_particle_effects);
     }
 }
 
-// Component to track particle effect lifetime
+// Component to mark particle effects for despawn after a fixed duration
+// Uses simple spawn time tracking instead of per-frame timer ticking
 #[derive(Component)]
 pub struct ParticleEffectLifetime {
-    pub timer: Timer,
+    pub spawn_time: f64,
+    pub duration: f32,
 }
 
 // Resource to store particle effect templates
@@ -69,7 +71,7 @@ fn setup_particle_effects(
     let debris_module = writer.finish();
 
     let debris_effect = effects.add(
-        EffectAsset::new(vec![32768], Spawner::burst(100.0.into(), 2.0.into()), debris_module)
+        EffectAsset::new(vec![32768], Spawner::once(100.0.into(), true), debris_module)
             .with_name("explosion_debris")
             .init(init_pos)
             .init(init_vel)
@@ -117,7 +119,7 @@ fn setup_particle_effects(
     let sparks_module = writer2.finish();
 
     let sparks_effect = effects.add(
-        EffectAsset::new(vec![32768], Spawner::burst(200.0.into(), 0.5.into()), sparks_module)
+        EffectAsset::new(vec![32768], Spawner::once(200.0.into(), true), sparks_module)
             .with_name("explosion_sparks")
             .init(init_pos2)
             .init(init_vel2)
@@ -165,7 +167,7 @@ fn setup_particle_effects(
     let smoke_module = writer3.finish();
 
     let smoke_effect = effects.add(
-        EffectAsset::new(vec![32768], Spawner::rate(50.0.into()), smoke_module)
+        EffectAsset::new(vec![32768], Spawner::once(50.0.into(), true), smoke_module)
             .with_name("explosion_smoke")
             .init(init_pos3)
             .init(init_vel3)
@@ -194,10 +196,12 @@ pub fn spawn_explosion_particles(
     particle_effects: &ExplosionParticleEffects,
     position: Vec3,
     scale: f32, // Scale multiplier for the effect
+    current_time: f64, // Current elapsed time from Time resource
 ) {
-    info!("💥 Spawning explosion particles at {:?} with scale {}", position, scale);
+    trace!("💥 PARTICLES: Spawning explosion particles at {:?} with scale {}", position, scale);
 
     // Spawn debris particles
+    // Note: Using Spawner::once() with auto-despawn after particles finish
     commands.spawn((
         ParticleEffectBundle {
             effect: ParticleEffect::new(particle_effects.debris_effect.clone()),
@@ -205,9 +209,10 @@ pub fn spawn_explosion_particles(
                 .with_scale(Vec3::splat(scale)),
             ..default()
         },
-        //ParticleEffectLifetime {
-        //    timer: Timer::from_seconds(5.0, TimerMode::Once), // Cleanup after 5 seconds
-        //},
+        ParticleEffectLifetime {
+            spawn_time: current_time,
+            duration: 5.0, // Cleanup 5s after spawn (particles lifetime is 2.5s)
+        },
         Name::new("ExplosionDebris"),
     ));
 
@@ -219,13 +224,14 @@ pub fn spawn_explosion_particles(
                 .with_scale(Vec3::splat(scale)),
             ..default()
         },
-        //ParticleEffectLifetime {
-        //    timer: Timer::from_seconds(3.0, TimerMode::Once), // Sparks fade faster
-        //},
+        ParticleEffectLifetime {
+            spawn_time: current_time,
+            duration: 3.0, // Cleanup 3s after spawn (particles lifetime is 1.5s)
+        },
         Name::new("ExplosionSparks"),
     ));
 
-    // Spawn smoke particles (delayed start via spawner)
+    // Spawn smoke particles
     commands.spawn((
         ParticleEffectBundle {
             effect: ParticleEffect::new(particle_effects.smoke_effect.clone()),
@@ -234,7 +240,8 @@ pub fn spawn_explosion_particles(
             ..default()
         },
         ParticleEffectLifetime {
-            timer: Timer::from_seconds(6.0, TimerMode::Once), // Smoke lingers longest
+            spawn_time: current_time,
+            duration: 6.0, // Cleanup 6s after spawn (particles lifetime is 3.5s)
         },
         Name::new("ExplosionSmoke"),
     ));
@@ -246,7 +253,10 @@ pub fn spawn_unit_explosion_particles(
     commands: &mut Commands,
     particle_effects: &ExplosionParticleEffects,
     position: Vec3,
+    current_time: f64, // Current elapsed time from Time resource
 ) {
+    trace!("💥 UNIT PARTICLES: Spawning unit explosion particles at {:?}", position);
+
     // Smaller, simpler effect for units - just debris and quick sparks
     commands.spawn((
         ParticleEffectBundle {
@@ -255,9 +265,10 @@ pub fn spawn_unit_explosion_particles(
                 .with_scale(Vec3::splat(0.3)), // Much smaller
             ..default()
         },
-        //ParticleEffectLifetime {
-        //    timer: Timer::from_seconds(3.0, TimerMode::Once), // Smaller explosions cleanup faster
-        //},
+        ParticleEffectLifetime {
+            spawn_time: current_time,
+            duration: 3.0, // Smaller explosions cleanup faster
+        },
         Name::new("UnitDebris"),
     ));
 
@@ -268,9 +279,10 @@ pub fn spawn_unit_explosion_particles(
                 .with_scale(Vec3::splat(0.25)),
             ..default()
         },
-        //ParticleEffectLifetime {
-        //    timer: Timer::from_seconds(2.0, TimerMode::Once), // Quick sparks
-        //},
+        ParticleEffectLifetime {
+            spawn_time: current_time,
+            duration: 2.0, // Quick sparks
+        },
         Name::new("UnitSparks"),
     ));
 }
@@ -281,20 +293,24 @@ pub fn spawn_tower_explosion_particles(
     commands: &mut Commands,
     particle_effects: &ExplosionParticleEffects,
     position: Vec3,
+    current_time: f64, // Current elapsed time from Time resource
 ) {
-    spawn_explosion_particles(commands, particle_effects, position, 4.0); // Large scale for towers
+    spawn_explosion_particles(commands, particle_effects, position, 4.0, current_time); // Large scale for towers
 }
 
 /// System to cleanup particle effects after their lifetime expires
+/// Uses spawn time comparison instead of per-frame timer ticking for better performance
 fn cleanup_finished_particle_effects(
     mut commands: Commands,
-    mut query: Query<(Entity, &mut ParticleEffectLifetime)>,
+    query: Query<(Entity, &ParticleEffectLifetime)>,
     time: Res<Time>,
 ) {
-    for (entity, mut lifetime) in query.iter_mut() {
-        lifetime.timer.tick(time.delta());
+    let current_time = time.elapsed_seconds_f64();
 
-        if lifetime.timer.finished() {
+    for (entity, lifetime) in query.iter() {
+        let elapsed = (current_time - lifetime.spawn_time) as f32;
+
+        if elapsed >= lifetime.duration {
             commands.entity(entity).despawn_recursive();
         }
     }

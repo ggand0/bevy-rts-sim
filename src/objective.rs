@@ -434,6 +434,7 @@ pub fn tower_destruction_system(
     tower_query: Query<(Entity, &Transform, &UplinkTower, &Health), (With<UplinkTower>, Without<PendingExplosion>)>,
     droid_query: Query<(Entity, &Transform, &BattleDroid), With<BattleDroid>>,
     mut game_state: ResMut<GameState>,
+    time: Res<Time>,
 ) {
     for (tower_entity, tower_transform, tower, tower_health) in tower_query.iter() {
         if tower_health.is_dead() {
@@ -455,42 +456,75 @@ pub fn tower_destruction_system(
             }
             
             // Add delayed explosions for dramatic effect
+            // Quantize delays to discrete time slots to ensure multiple explosions per frame
             let explosion_count = units_to_explode.len();
             let mut rng = rand::thread_rng();
+            let mut delay_stats = Vec::new();
             for unit_entity in units_to_explode {
-                let delay = rng.gen_range(EXPLOSION_DELAY_MIN..EXPLOSION_DELAY_MAX);
+                // Generate continuous random delay, then quantize to nearest time slot
+                let raw_delay = rng.gen_range(EXPLOSION_DELAY_MIN..EXPLOSION_DELAY_MAX);
+                let delay = (raw_delay / EXPLOSION_TIME_QUANTUM).round() * EXPLOSION_TIME_QUANTUM;
+                delay_stats.push(delay);
                 // Use try_insert to gracefully handle entities that may have been despawned
                 if let Some(mut entity_commands) = commands.get_entity(unit_entity) {
                     entity_commands.try_insert(PendingExplosion {
                         delay_timer: delay,
                         explosion_power: 1.0,
                     });
+                    debug!("🎲 Unit {:?} assigned explosion delay: {:.3}s (raw: {:.3}s)",
+                           unit_entity.index(), delay, raw_delay);
+                }
+            }
+
+            // Log delay distribution statistics with histogram
+            if !delay_stats.is_empty() {
+                delay_stats.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                let min_delay = delay_stats[0];
+                let max_delay = delay_stats[delay_stats.len() - 1];
+                let avg_delay = delay_stats.iter().sum::<f32>() / delay_stats.len() as f32;
+
+                // Count occurrences of each unique delay value (histogram)
+                use std::collections::HashMap;
+                let mut histogram: HashMap<String, usize> = HashMap::new();
+                for &delay in &delay_stats {
+                    let key = format!("{:.2}", delay);
+                    *histogram.entry(key).or_insert(0) += 1;
+                }
+
+                // Sort histogram by delay value for readability
+                let mut hist_sorted: Vec<_> = histogram.iter().collect();
+                hist_sorted.sort_by(|a, b| a.0.cmp(b.0));
+
+                info!("📈 DELAY STRATEGY: Time quantum = {:.3}s", EXPLOSION_TIME_QUANTUM);
+                info!("📈 Delay distribution: min={:.3}s, max={:.3}s, avg={:.3}s, total={} units",
+                      min_delay, max_delay, avg_delay, delay_stats.len());
+                info!("📊 HISTOGRAM (quantized delays):");
+                for (delay_str, count) in hist_sorted.iter().take(10) {
+                    info!("  {}s: {} units", delay_str, count);
+                }
+                if hist_sorted.len() > 10 {
+                    info!("  ... ({} more time slots)", hist_sorted.len() - 10);
                 }
             }
             
             // Create massive explosion effect at tower location using custom shader
+            // Particle effects are bundled inside spawn_custom_shader_explosion
             if let Some(assets) = explosion_assets.as_ref() {
                 spawn_custom_shader_explosion(
                     &mut commands,
                     &mut meshes,
                     &mut explosion_materials,
                     &assets,
+                    particle_effects.as_ref().map(|p| p.as_ref()),
                     tower_transform.translation,
                     tower.destruction_radius * 0.5, // Scale down the quad size
                     3.0, // High intensity for tower explosion
                     EXPLOSION_EFFECT_DURATION * 2.0, // Tower explosion lasts longer
+                    true, // is_tower
+                    time.elapsed_seconds_f64(),
                 );
             } else {
                 warn!("Cannot spawn tower explosion - ExplosionAssets not loaded");
-            }
-
-            // Add particle effects to tower explosion
-            if let Some(particles) = particle_effects.as_ref() {
-                spawn_tower_explosion_particles(
-                    &mut commands,
-                    particles,
-                    tower_transform.translation,
-                );
             }
             
             // Add PendingExplosion to tower to prevent re-processing
@@ -520,47 +554,104 @@ pub fn pending_explosion_system(
     mut explosion_query: Query<(Entity, &mut PendingExplosion, &Transform, Option<&UplinkTower>), With<PendingExplosion>>,
     time: Res<Time>,
 ) {
+    // Collect all entities that are ready to explode
+    // We use Vec to shuffle the order, preventing sequential explosions
+    let mut ready_to_explode: Vec<(Entity, Vec3, f32, bool, f32)> = Vec::new(); // Added delay_timer for debugging
+    let mut towers_ready: Vec<(Entity, Vec3, f32)> = Vec::new();
+    let mut total_pending = 0;
+
+    // First pass: update all timers and collect ready entities
     for (entity, mut pending, transform, tower_component) in explosion_query.iter_mut() {
+        total_pending += 1;
+        let old_timer = pending.delay_timer;
         pending.delay_timer -= time.delta_seconds();
-        
+
         if pending.delay_timer <= 0.0 {
-            // Determine explosion radius based on entity type
-            let explosion_radius = if tower_component.is_some() {
-                tower_component.unwrap().destruction_radius * 0.5 // Tower explosion
+            let is_tower = tower_component.is_some();
+            let explosion_radius = if is_tower {
+                tower_component.unwrap().destruction_radius * 0.5
             } else {
-                8.0 // Individual unit explosion radius (increased from 5.0)
+                8.0
             };
-            
-            // Create explosion effect using custom shader
-            if let Some(assets) = explosion_assets.as_ref() {
-                spawn_custom_shader_explosion(
-                    &mut commands,
-                    &mut meshes,
-                    &mut explosion_materials,
-                    &assets,
-                    transform.translation,
-                    explosion_radius * 0.1, // Scale down the quad size
-                    pending.explosion_power,
-                    EXPLOSION_EFFECT_DURATION,
-                );
+
+            debug!("⏰ Entity {:?} ready to explode: timer {:.3}s → {:.3}s (delta: {:.3}s), pos: {:?}",
+                   entity.index(), old_timer, pending.delay_timer, time.delta_seconds(), transform.translation);
+
+            if is_tower {
+                towers_ready.push((entity, transform.translation, explosion_radius));
             } else {
-                warn!("Cannot spawn unit explosion - ExplosionAssets not loaded");
+                ready_to_explode.push((entity, transform.translation, explosion_radius, is_tower, old_timer));
             }
-
-            // Add particle effects (only for units, not towers - towers already have particles)
-            if tower_component.is_none() {
-                if let Some(particles) = particle_effects.as_ref() {
-                    spawn_unit_explosion_particles(
-                        &mut commands,
-                        particles,
-                        transform.translation,
-                    );
-                }
-            }
-
-            // Remove the entity
-            commands.entity(entity).despawn_recursive();
         }
+    }
+
+    if total_pending > 0 || !ready_to_explode.is_empty() || !towers_ready.is_empty() {
+        info!("📊 EXPLOSION FRAME: {} total pending, {} units ready, {} towers ready",
+              total_pending, ready_to_explode.len(), towers_ready.len());
+    }
+
+    // Shuffle unit explosions to prevent deterministic sequential order
+    use rand::seq::SliceRandom;
+    let mut rng = rand::thread_rng();
+    ready_to_explode.shuffle(&mut rng);
+
+    // Process towers first (high priority, always immediate)
+    for (entity, position, explosion_radius) in towers_ready {
+        info!("🏰 Processing TOWER explosion at {:?}", position);
+        if let Some(assets) = explosion_assets.as_ref() {
+            spawn_custom_shader_explosion(
+                &mut commands,
+                &mut meshes,
+                &mut explosion_materials,
+                &assets,
+                particle_effects.as_ref().map(|p| p.as_ref()),
+                position,
+                explosion_radius * 0.1,
+                3.0,
+                EXPLOSION_EFFECT_DURATION,
+                true, // is_tower
+                time.elapsed_seconds_f64(),
+            );
+        }
+        commands.entity(entity).despawn_recursive();
+    }
+
+    // Process unit explosions with frame limit (now in random order)
+    let num_to_process = ready_to_explode.len().min(MAX_EXPLOSIONS_PER_FRAME);
+    if num_to_process > 0 {
+        info!("💥 Processing {} unit explosions this frame (limit: {})", num_to_process, MAX_EXPLOSIONS_PER_FRAME);
+    }
+
+    let explosions_to_process = ready_to_explode.iter().take(MAX_EXPLOSIONS_PER_FRAME);
+
+    for (i, (entity, position, explosion_radius, is_tower, old_timer)) in explosions_to_process.enumerate() {
+        debug!("  └─ Explosion {}/{}: Entity {:?} at {:?} (was {:.3}s late)",
+               i+1, num_to_process, entity.index(), position, old_timer.abs());
+
+        if let Some(assets) = explosion_assets.as_ref() {
+            spawn_custom_shader_explosion(
+                &mut commands,
+                &mut meshes,
+                &mut explosion_materials,
+                &assets,
+                particle_effects.as_ref().map(|p| p.as_ref()),
+                *position,
+                explosion_radius * 0.1,
+                1.0,
+                EXPLOSION_EFFECT_DURATION,
+                *is_tower,
+                time.elapsed_seconds_f64(),
+            );
+        } else {
+            warn!("Cannot spawn unit explosion - ExplosionAssets not loaded");
+        }
+
+        commands.entity(*entity).despawn_recursive();
+    }
+
+    // Log if we had to skip explosions
+    if ready_to_explode.len() > MAX_EXPLOSIONS_PER_FRAME {
+        warn!("⚠️ Skipped {} explosions this frame (over limit)", ready_to_explode.len() - MAX_EXPLOSIONS_PER_FRAME);
     }
 }
 
@@ -692,16 +783,52 @@ pub fn debug_explosion_hotkey_system(
                     }
                 }
                 
-                // Add immediate explosions for testing (no delay)
+                // Add delayed explosions with quantization (same logic as tower_destruction_system)
                 let explosion_count = units_to_explode.len();
-                for (i, unit_entity) in units_to_explode.into_iter().enumerate() {
-                    let delay = (i as f32) * 0.1; // Stagger explosions every 0.1 seconds
+                let mut rng = rand::thread_rng();
+                let mut delay_stats = Vec::new();
+                for unit_entity in units_to_explode {
+                    // Generate continuous random delay, then quantize to nearest time slot
+                    let raw_delay = rng.gen_range(EXPLOSION_DELAY_MIN..EXPLOSION_DELAY_MAX);
+                    let delay = (raw_delay / EXPLOSION_TIME_QUANTUM).round() * EXPLOSION_TIME_QUANTUM;
+                    delay_stats.push(delay);
                     // Use try_insert to gracefully handle entities that may have been despawned
                     if let Some(mut entity_commands) = commands.get_entity(unit_entity) {
                         entity_commands.try_insert(PendingExplosion {
                             delay_timer: delay,
                             explosion_power: 1.5,
                         });
+                    }
+                }
+
+                // Log delay distribution statistics with histogram
+                if !delay_stats.is_empty() {
+                    delay_stats.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                    let min_delay = delay_stats[0];
+                    let max_delay = delay_stats[delay_stats.len() - 1];
+                    let avg_delay = delay_stats.iter().sum::<f32>() / delay_stats.len() as f32;
+
+                    // Count occurrences of each unique delay value (histogram)
+                    use std::collections::HashMap;
+                    let mut histogram: HashMap<String, usize> = HashMap::new();
+                    for &delay in &delay_stats {
+                        let key = format!("{:.2}", delay);
+                        *histogram.entry(key).or_insert(0) += 1;
+                    }
+
+                    // Sort histogram by delay value for readability
+                    let mut hist_sorted: Vec<_> = histogram.iter().collect();
+                    hist_sorted.sort_by(|a, b| a.0.cmp(b.0));
+
+                    info!("📈 DEBUG TEST DELAY STRATEGY: Time quantum = {:.3}s", EXPLOSION_TIME_QUANTUM);
+                    info!("📈 Delay distribution: min={:.3}s, max={:.3}s, avg={:.3}s, total={} units",
+                          min_delay, max_delay, avg_delay, delay_stats.len());
+                    info!("📊 HISTOGRAM (quantized delays):");
+                    for (delay_str, count) in hist_sorted.iter().take(10) {
+                        info!("  {}s: {} units", delay_str, count);
+                    }
+                    if hist_sorted.len() > 10 {
+                        info!("  ... ({} more time slots)", hist_sorted.len() - 10);
                     }
                 }
                 
