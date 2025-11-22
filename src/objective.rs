@@ -551,6 +551,7 @@ pub fn pending_explosion_system(
     mut images: ResMut<Assets<Image>>,
     explosion_assets: Option<Res<ExplosionAssets>>,
     particle_effects: Option<Res<ExplosionParticleEffects>>,
+    audio_assets: Res<AudioAssets>,
     mut explosion_query: Query<(Entity, &mut PendingExplosion, &Transform, Option<&UplinkTower>), With<PendingExplosion>>,
     time: Res<Time>,
 ) {
@@ -613,6 +614,13 @@ pub fn pending_explosion_system(
                 time.elapsed_seconds_f64(),
             );
         }
+
+        // Play tower explosion sound
+        commands.spawn(AudioBundle {
+            source: audio_assets.explosion_sound.clone(),
+            settings: PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::new(0.5)),
+        });
+
         commands.entity(entity).despawn_recursive();
     }
 
