@@ -410,13 +410,20 @@ pub fn spawn_custom_shader_explosion(
         Name::new("CustomShaderExplosion"),
     ));
 
-    // Spawn particle effects bundled with billboard explosion
+    // Spawn particle effects bundled with billboard explosion (with probability for performance)
     if let Some(particles) = particle_effects {
-        trace!("🔥 BUNDLING: Spawning particles for explosion at {:?}, is_tower={}", position, is_tower);
-        if is_tower {
-            crate::particles::spawn_tower_explosion_particles(commands, particles, position, current_time);
+        // Towers always spawn particles, units spawn based on probability
+        let should_spawn = is_tower || rand::random::<f32>() < crate::constants::PARTICLE_SPAWN_PROBABILITY;
+
+        if should_spawn {
+            trace!("🔥 BUNDLING: Spawning particles for explosion at {:?}, is_tower={}", position, is_tower);
+            if is_tower {
+                crate::particles::spawn_tower_explosion_particles(commands, particles, position, current_time);
+            } else {
+                crate::particles::spawn_unit_explosion_particles(commands, particles, position, current_time);
+            }
         } else {
-            crate::particles::spawn_unit_explosion_particles(commands, particles, position, current_time);
+            trace!("🎲 SKIP PARTICLES: Probability check failed for unit explosion at {:?}", position);
         }
     } else {
         debug!("⚠️ NO PARTICLES: particle_effects is None at {:?}, is_tower={}", position, is_tower);

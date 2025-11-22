@@ -45,4 +45,5 @@ pub const EXPLOSION_DELAY_MIN: f32 = 0.1; // Minimum delay before unit explodes
 pub const EXPLOSION_DELAY_MAX: f32 = 2.0; // Maximum delay for dramatic cascade effect
 pub const EXPLOSION_TIME_QUANTUM: f32 = 0.05; // Quantize delays to 50ms slots for burst clustering
 pub const EXPLOSION_EFFECT_DURATION: f32 = 2.0; // Visual explosion duration
-pub const MAX_EXPLOSIONS_PER_FRAME: usize = 50; // Limit explosions per frame to prevent stutter 
+pub const MAX_EXPLOSIONS_PER_FRAME: usize = 50; // Limit explosions per frame to prevent stutter
+pub const PARTICLE_SPAWN_PROBABILITY: f32 = 0.3; // Probability (0.0-1.0) that an explosion spawns particles 
