@@ -120,6 +120,7 @@ pub struct CombatUnit {
 #[derive(Resource)]
 pub struct AudioAssets {
     pub laser_sounds: Vec<Handle<AudioSource>>,
+    pub explosion_sound: Handle<AudioSource>,
 }
 
 impl AudioAssets {

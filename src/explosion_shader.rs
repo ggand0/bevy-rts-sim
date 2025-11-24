@@ -354,16 +354,19 @@ pub fn spawn_custom_shader_explosion(
     meshes: &mut ResMut<Assets<Mesh>>,
     explosion_materials: &mut ResMut<Assets<ExplosionMaterial>>,
     explosion_assets: &ExplosionAssets,
+    particle_effects: Option<&crate::particles::ExplosionParticleEffects>,
     position: Vec3,
     radius: f32,
     intensity: f32,
     duration: f32,
+    is_tower: bool,
+    current_time: f64,
 ) {
-    info!("🎭 Spawning CUSTOM SHADER explosion at {} with radius {} intensity {}", position, radius, intensity);
-    
+    trace!("🎭 Spawning CUSTOM SHADER explosion at {} with radius {} intensity {}", position, radius, intensity);
+
     // Create a quad mesh for sprite billboard
     let quad_mesh = meshes.add(Rectangle::new(radius * 2.0, radius * 2.0));
-    
+
     // Choose explosion type based on intensity
     let explosion_type = if intensity > 2.5 {
         ExplosionType::Nuclear
@@ -372,14 +375,14 @@ pub fn spawn_custom_shader_explosion(
     } else {
         ExplosionType::Impact
     };
-    
+
     // Create custom explosion material with frame 0
     let explosion_material = explosion_materials.add(ExplosionMaterial {
         frame_data: Vec4::new(0.0, 0.0, 5.0, 1.0), // frame_x=0, frame_y=0, grid_size=5, alpha=1
         color_data: Vec4::new(1.0, 1.0, 1.0, 2.0), // white tint, emissive=2.0
         sprite_texture: explosion_assets.explosion_flipbook_texture.clone(),
     });
-    
+
     // Spawn custom shader explosion
     commands.spawn((
         MaterialMeshBundle {
@@ -406,8 +409,25 @@ pub fn spawn_custom_shader_explosion(
         NotShadowReceiver, // Prevent this entity from receiving shadows
         Name::new("CustomShaderExplosion"),
     ));
-    
-    // Removed automatic smoke spawning to prevent overlapping explosions
+
+    // Spawn particle effects bundled with billboard explosion (with probability for performance)
+    if let Some(particles) = particle_effects {
+        // Towers always spawn particles, units spawn based on probability
+        let should_spawn = is_tower || rand::random::<f32>() < crate::constants::PARTICLE_SPAWN_PROBABILITY;
+
+        if should_spawn {
+            trace!("🔥 BUNDLING: Spawning particles for explosion at {:?}, is_tower={}", position, is_tower);
+            if is_tower {
+                crate::particles::spawn_tower_explosion_particles(commands, particles, position, current_time);
+            } else {
+                crate::particles::spawn_unit_explosion_particles(commands, particles, position, current_time);
+            }
+        } else {
+            trace!("🎲 SKIP PARTICLES: Probability check failed for unit explosion at {:?}", position);
+        }
+    } else {
+        debug!("⚠️ NO PARTICLES: particle_effects is None at {:?}, is_tower={}", position, is_tower);
+    }
 }
 
 // ===== DEBUG TEST EXPLOSIONS =====
@@ -455,10 +475,13 @@ fn debug_test_explosions(
                 &mut meshes,
                 &mut explosion_materials,
                 &assets,
+                None, // No particles for debug test
                 Vec3::new(0.0, 8.0, 0.0), // Single explosion at battlefield center, elevated
                 8.0,
                 2.0,
                 3.0,
+                false, // Not a tower
+                time.elapsed_seconds_f64(),
             );
             info!("🎭 Single custom shader explosion spawned at center");
         } else {
@@ -643,7 +666,7 @@ fn animate_custom_shader_explosions(
             
             // Debug log first few frames
             if old_frame < 5 {
-                info!("🎞️ Explosion frame update: {} → {}", old_frame, sprite_explosion.current_frame);
+                trace!("🎞️ Explosion frame update: {} → {}", old_frame, sprite_explosion.current_frame);
             }
         }
         

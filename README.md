@@ -10,6 +10,7 @@ A real-time battle simulation built with the Bevy game engine in Rust, demonstra
 - **Massive Scale Combat**: 10,000 autonomous units (5,000 vs 5,000) with real-time combat simulation
 - **Objective-Based Gameplay**: Destroy enemy uplink tower to win, tower destruction triggers cascade explosions
 - **Sprite Sheet Explosions**: Custom shader-based 5×5 flipbook animation system with billboard rendering
+- **GPU Particle Effects**: Bevy Hanabi particle system with debris, sparks, and smoke for enhanced explosions
 - **Squad Formation System**: 50-unit squads with tactical formations and commander promotion
 - **Autonomous Combat**: Units automatically target, fire, and engage enemies within range
 - **Spatial Partitioning**: Grid-based collision optimization reducing complexity from O(n*m) to O(k)
@@ -47,18 +48,23 @@ git lfs pull  # Download LFS assets (explosion textures, audio)
 ```
 
 3. Run the simulation:
+
+**For most systems:**
 ```bash
 cargo run --release
 ```
 
-For development with faster compile times:
-```bash
-cargo run
-```
-
-**AMD GPU Users (Linux):** If you experience segfaults on startup, use:
+**AMD GPU Users (Linux):**
+AMD GPUs on Linux require specific Vulkan loader settings to avoid segfaults:
 ```bash
 VK_LOADER_DEBUG=error VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/radeon_icd.x86_64.json cargo run --release
+```
+
+**Development mode (faster compile times, lower performance):**
+```bash
+cargo run
+# Or for AMD GPU:
+VK_LOADER_DEBUG=error VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/radeon_icd.x86_64.json cargo run
 ```
 
 ## Controls

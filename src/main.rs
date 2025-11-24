@@ -7,7 +7,9 @@ mod setup;
 mod commander;
 mod objective;
 mod explosion_shader;
+mod particles;
 use explosion_shader::ExplosionShaderPlugin;
+use particles::ParticleEffectsPlugin;
 
 use bevy::prelude::*;
 use types::*;
@@ -21,6 +23,7 @@ fn main() {
         .add_plugins(DefaultPlugins)
         .add_plugins(bevy::diagnostic::FrameTimeDiagnosticsPlugin)
         .add_plugins(ExplosionShaderPlugin)
+        .add_plugins(ParticleEffectsPlugin)
         .insert_resource(SpatialGrid::new())
         .insert_resource(SquadManager::new())
         .insert_resource(GameState::default())
