@@ -8,8 +8,11 @@ mod commander;
 mod objective;
 mod explosion_shader;
 mod particles;
+mod wfx_materials;
+mod wfx_spawn;
 use explosion_shader::ExplosionShaderPlugin;
 use particles::ParticleEffectsPlugin;
+use wfx_materials::SmokeScrollMaterial;
 
 use bevy::prelude::*;
 use types::*;
@@ -24,6 +27,7 @@ fn main() {
         .add_plugins(bevy::diagnostic::FrameTimeDiagnosticsPlugin)
         .add_plugins(ExplosionShaderPlugin)
         .add_plugins(ParticleEffectsPlugin)
+        .add_plugins(MaterialPlugin::<SmokeScrollMaterial>::default())
         .insert_resource(SpatialGrid::new())
         .insert_resource(SquadManager::new())
         .insert_resource(GameState::default())
@@ -62,6 +66,8 @@ fn main() {
             win_condition_system,
             update_objective_ui_system,
             debug_explosion_hotkey_system,
+            debug_warfx_test_system,
+            wfx_spawn::update_warfx_explosions,
         ))
         .run();
 }

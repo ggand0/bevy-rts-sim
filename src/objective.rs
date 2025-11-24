@@ -549,9 +549,11 @@ pub fn pending_explosion_system(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut explosion_materials: ResMut<Assets<ExplosionMaterial>>,
     mut images: ResMut<Assets<Image>>,
+    mut smoke_materials: ResMut<Assets<crate::wfx_materials::SmokeScrollMaterial>>,
     explosion_assets: Option<Res<ExplosionAssets>>,
     particle_effects: Option<Res<ExplosionParticleEffects>>,
     audio_assets: Res<AudioAssets>,
+    asset_server: Res<AssetServer>,
     mut explosion_query: Query<(Entity, &mut PendingExplosion, &Transform, Option<&UplinkTower>), With<PendingExplosion>>,
     time: Res<Time>,
 ) {
@@ -620,6 +622,16 @@ pub fn pending_explosion_system(
             source: audio_assets.explosion_sound.clone(),
             settings: PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::new(0.5)),
         });
+
+        // Spawn War FX scrolling smoke explosion
+        crate::wfx_spawn::spawn_warfx_tower_explosion(
+            &mut commands,
+            &mut meshes,
+            &mut smoke_materials,
+            &asset_server,
+            position,
+            2.0, // Large scale for tower
+        );
 
         commands.entity(entity).despawn_recursive();
     }
@@ -857,6 +869,29 @@ pub fn debug_explosion_hotkey_system(
             }
         }
     }
-    
-    // T key and R key functionality removed - use Y/U/I keys in explosion_shader.rs instead
+}
+
+// Debug system to test War FX explosion at map center
+pub fn debug_warfx_test_system(
+    keyboard_input: Res<ButtonInput<KeyCode>>,
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    asset_server: Res<AssetServer>,
+) {
+    if keyboard_input.just_pressed(KeyCode::KeyW) {
+        info!("🎆 DEBUG: War FX test hotkey pressed! Testing StandardMaterial explosion...");
+
+        // Test with StandardMaterial first
+        crate::wfx_spawn::spawn_warfx_tower_explosion_test(
+            &mut commands,
+            &mut meshes,
+            &mut materials,
+            &asset_server,
+            Vec3::new(0.0, 10.0, 0.0),
+            2.0, // Large scale
+        );
+
+        info!("🎆 War FX test explosion spawned at center (0, 10, 0)");
+    }
 } 
