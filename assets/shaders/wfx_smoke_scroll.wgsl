@@ -6,8 +6,7 @@
 #import bevy_pbr::mesh_view_bindings::globals
 
 struct SmokeScrollMaterial {
-    tint_color: vec4<f32>,
-    scroll_speed: f32,
+    tint_color_and_speed: vec4<f32>,  // RGB = tint, A = scroll_speed
 }
 
 @group(2) @binding(0)
@@ -21,26 +20,25 @@ var smoke_sampler: sampler;
 fn fragment(
     in: VertexOutput,
 ) -> @location(0) vec4<f32> {
-    // DEBUG: Output UVs as color to verify shader execution
-    return vec4<f32>(in.uv.x, in.uv.y, 0.0, 1.0);
+    var uv = in.uv;
 
-    // var uv = in.uv;
+    // Extract tint color and scroll speed from uniform
+    let tint_color = material.tint_color_and_speed.rgb;
+    let scroll_speed = material.tint_color_and_speed.a;
 
-    // // Get alpha mask from original UV (before scrolling)
-    // let mask = textureSample(smoke_texture, smoke_sampler, uv).a;
+    // Apply UV scrolling (UPWARD - add to y instead of subtract)
+    var scrolled_uv = uv;
+    scrolled_uv.y += (globals.time * scroll_speed) % 1.0;
 
-    // // Apply UV scrolling (moves texture upward over time)
-    // uv.y -= (globals.time * material.scroll_speed) % 1.0;
+    // Sample scrolled texture
+    var tex = textureSample(smoke_texture, smoke_sampler, scrolled_uv);
 
-    // // Sample scrolled texture
-    // var tex = textureSample(smoke_texture, smoke_sampler, uv);
+    // Use the texture's alpha directly for transparency
+    // Apply tint to color
+    let final_color = vec4<f32>(
+        tex.rgb * tint_color,
+        tex.a  // Use texture alpha directly
+    );
 
-    // // Apply tint and use mask for alpha
-    // let final_color = vec4<f32>(
-    //     tex.rgb * material.tint_color.rgb,
-    //     tex.a * mask
-    // );
-
-    // // Lerp to gray based on mask (creates soft edges)
-    // return mix(vec4<f32>(0.5, 0.5, 0.5, 0.5), final_color, mask);
+    return final_color;
 }

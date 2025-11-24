@@ -876,22 +876,46 @@ pub fn debug_warfx_test_system(
     keyboard_input: Res<ButtonInput<KeyCode>>,
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut additive_materials: ResMut<Assets<crate::wfx_materials::AdditiveMaterial>>,
+    mut smoke_materials: ResMut<Assets<crate::wfx_materials::SmokeScrollMaterial>>,
     asset_server: Res<AssetServer>,
 ) {
-    if keyboard_input.just_pressed(KeyCode::KeyW) {
-        info!("🎆 DEBUG: War FX test hotkey pressed! Testing StandardMaterial explosion...");
+    if keyboard_input.just_pressed(KeyCode::KeyB) {
+        info!("🎆 DEBUG: War FX test hotkey (B) pressed! Spawning full explosion (flame + glow + smoke)...");
 
-        // Test with StandardMaterial first
-        crate::wfx_spawn::spawn_warfx_tower_explosion_test(
+        let position = Vec3::new(0.0, 10.0, 0.0);
+        let scale = 2.0;
+
+        // Spawn flame burst billboards
+        crate::wfx_spawn::spawn_warfx_flame_burst(
             &mut commands,
             &mut meshes,
-            &mut materials,
+            &mut additive_materials,
             &asset_server,
-            Vec3::new(0.0, 10.0, 0.0),
-            2.0, // Large scale
+            position,
+            scale,
         );
 
-        info!("🎆 War FX test explosion spawned at center (0, 10, 0)");
+        // Spawn center glow billboards
+        crate::wfx_spawn::spawn_warfx_center_glow(
+            &mut commands,
+            &mut meshes,
+            &mut additive_materials,
+            &asset_server,
+            position,
+            scale,
+        );
+
+        // Spawn smoke column billboards
+        crate::wfx_spawn::spawn_warfx_smoke_column(
+            &mut commands,
+            &mut meshes,
+            &mut smoke_materials,
+            &asset_server,
+            position,
+            scale,
+        );
+
+        info!("🔥 War FX full explosion spawned at center (0, 10, 0): flames + glow + smoke");
     }
 } 
