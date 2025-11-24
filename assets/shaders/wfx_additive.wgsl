@@ -34,9 +34,9 @@ fn fragment(
         discard;
     }
 
-    // Apply 2x brightness multiplier (like Unity shader)
+    // Apply 4x brightness multiplier (Unity shader does 2.0 * 2.0)
     // Use luminance as alpha for proper masking
-    let brightness = 2.0;
+    let brightness = 4.0;
     let final_color = vec4<f32>(
         tex.rgb * tint.rgb * brightness,
         luminance * tint.a

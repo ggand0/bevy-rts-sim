@@ -168,10 +168,9 @@ pub fn spawn_warfx_flame_burst(
                 max_lifetime: lifetime,
             },
             AnimatedBillboard {
-                initial_scale: 1.0,
-                target_scale: 2.0,
-                initial_alpha: 1.0,
-                target_alpha: 0.0,
+                scale_curve: AnimationCurve::linear(1.0, 2.0),
+                alpha_curve: AnimationCurve::linear(1.0, 0.0),
+                color_curve: ColorCurve::constant(Vec3::ONE), // White
                 velocity,
                 rotation_speed,
                 base_rotation: 0.0,
@@ -197,51 +196,75 @@ pub fn spawn_warfx_center_glow(
 
     info!("💡 WAR FX: Spawning center glow billboards at {:?}", position);
 
-    let mut rng = rand::thread_rng();
-
-    // Spawn 2-3 large glow billboards
-    let glow_count = rng.gen_range(2..=3);
+    // Match Unity WFX_ExplosiveSmoke_Big2 configuration exactly
+    // Unity spawns exactly 2 particles: 1 at t=0, 1 at t=0.1s
+    let glow_count = 2;
 
     for i in 0..glow_count {
-        // Small position offset (tighter than flames)
-        let offset = Vec3::new(
-            rng.gen_range(-0.5..0.5) * scale,
-            rng.gen_range(-0.2..0.2) * scale,
-            rng.gen_range(-0.5..0.5) * scale,
-        );
+        // No position offset - Unity spawns at exact position
+        let offset = Vec3::ZERO;
 
-        // White-orange tint
-        let tint_r = 1.0;
-        let tint_g = rng.gen_range(0.8..1.0);
-        let tint_b = rng.gen_range(0.5..0.7);
-
+        // White tint (Unity default)
         let glow_material = additive_materials.add(AdditiveMaterial {
-            tint_color: Vec4::new(tint_r, tint_g, tint_b, 0.7), // Slightly transparent
+            tint_color: Vec4::new(1.0, 1.0, 1.0, 1.0), // Full white, alpha controlled by curve
             particle_texture: glow_texture.clone(),
         });
 
-        // Larger sizes than flames
-        let quad_size = rng.gen_range(5.0..8.0) * scale;
+        // Base quad size (Unity starts at 0.3 scale, so smaller base)
+        let quad_size = 4.0 * scale;
         let quad_mesh = meshes.add(Rectangle::new(quad_size, quad_size));
 
-        // Longer lifetimes (0.5-1.0 seconds)
-        let lifetime = rng.gen_range(0.5..1.0);
+        // Unity WFX_ExplosiveSmoke_Big2 lifetime: 0.7s constant
+        let lifetime = 0.7;
 
-        // Minimal velocity (glow stays at center)
-        let velocity = Vec3::new(
-            rng.gen_range(-0.5..0.5),
-            rng.gen_range(0.0..0.5),
-            rng.gen_range(-0.5..0.5),
-        ) * scale;
+        // Unity: Start Speed = 0.4 (minimal movement)
+        let velocity = Vec3::new(0.0, 0.4, 0.0) * scale;
 
-        // Slower rotation than flames
-        let rotation_speed = rng.gen_range(-0.5..0.5); // radians per second
+        // Unity: Start Rotation = 45° fixed (not spinning)
+        let rotation_speed = 0.0;
+
+        // Unity Size Over Lifetime curve (4 keyframes):
+        // t=0.0 → 0.3, t=0.2 → 0.7, t=0.6 → 1.0, t=1.0 → 0.5
+        let scale_curve = AnimationCurve {
+            keyframes: vec![
+                (0.0, 0.3),
+                (0.2, 0.7),
+                (0.6, 1.0),
+                (1.0, 0.5),
+            ],
+        };
+
+        // Unity Alpha Over Lifetime curve (4 keyframes):
+        // Fade in, sustain, fade out
+        // t=0.0 → 0.0, t=0.15 → 1.0, t=0.8 → 1.0, t=1.0 → 0.0
+        let alpha_curve = AnimationCurve {
+            keyframes: vec![
+                (0.0, 0.0),   // Start invisible
+                (0.15, 1.0),  // Fade in quickly
+                (0.8, 1.0),   // Sustain brightness
+                (1.0, 0.0),   // Fade out at end
+            ],
+        };
+
+        // Unity Color Over Lifetime curve (warm fire colors):
+        // Based on "Glow sparkles" emitter analysis
+        // t=0.0 → Warm yellow-white
+        // t=0.5 → Orange-red
+        // t=1.0 → Dark red-brown
+        let color_curve = ColorCurve {
+            keyframes: vec![
+                (0.0, Vec3::new(1.0, 0.9, 0.6)),   // Warm yellow-white
+                (0.5, Vec3::new(1.0, 0.6, 0.3)),   // Orange-red
+                (1.0, Vec3::new(0.6, 0.3, 0.2)),   // Dark red-brown
+            ],
+        };
 
         commands.spawn((
             MaterialMeshBundle {
                 mesh: quad_mesh,
                 material: glow_material,
-                transform: Transform::from_translation(position + offset),
+                transform: Transform::from_translation(position + offset)
+                    .with_rotation(Quat::from_rotation_z(45.0_f32.to_radians())), // Unity: 45° rotation
                 visibility: Visibility::Visible,
                 ..Default::default()
             },
@@ -252,10 +275,9 @@ pub fn spawn_warfx_center_glow(
                 max_lifetime: lifetime,
             },
             AnimatedBillboard {
-                initial_scale: 4.0,
-                target_scale: 0.5,
-                initial_alpha: 0.7,
-                target_alpha: 0.0,
+                scale_curve,
+                alpha_curve,
+                color_curve,
                 velocity,
                 rotation_speed,
                 base_rotation: 0.0,
@@ -361,13 +383,96 @@ pub struct WarFXExplosion {
     pub max_lifetime: f32,
 }
 
+/// Animation curve with keyframes for non-linear interpolation
+#[derive(Clone)]
+pub struct AnimationCurve {
+    pub keyframes: Vec<(f32, f32)>, // (time, value) pairs
+}
+
+impl AnimationCurve {
+    /// Evaluate curve at given time (0.0 to 1.0)
+    pub fn evaluate(&self, t: f32) -> f32 {
+        if self.keyframes.is_empty() {
+            return 0.0;
+        }
+        if self.keyframes.len() == 1 {
+            return self.keyframes[0].1;
+        }
+
+        let t = t.clamp(0.0, 1.0);
+
+        // Find the two keyframes to interpolate between
+        for i in 0..self.keyframes.len() - 1 {
+            let (t0, v0) = self.keyframes[i];
+            let (t1, v1) = self.keyframes[i + 1];
+
+            if t >= t0 && t <= t1 {
+                // Linear interpolation between keyframes
+                let local_t = (t - t0) / (t1 - t0);
+                return v0 + (v1 - v0) * local_t;
+            }
+        }
+
+        // If we're past the last keyframe, return last value
+        self.keyframes.last().unwrap().1
+    }
+
+    /// Create a simple linear curve (for backward compatibility)
+    pub fn linear(start: f32, end: f32) -> Self {
+        Self {
+            keyframes: vec![(0.0, start), (1.0, end)],
+        }
+    }
+}
+
+/// Color curve with RGB keyframes for color transitions over lifetime
+#[derive(Clone)]
+pub struct ColorCurve {
+    pub keyframes: Vec<(f32, Vec3)>, // (time, RGB) pairs
+}
+
+impl ColorCurve {
+    /// Evaluate curve at given time (0.0 to 1.0) and return RGB color
+    pub fn evaluate(&self, t: f32) -> Vec3 {
+        if self.keyframes.is_empty() {
+            return Vec3::ONE; // Default to white
+        }
+        if self.keyframes.len() == 1 {
+            return self.keyframes[0].1;
+        }
+
+        let t = t.clamp(0.0, 1.0);
+
+        // Find the two keyframes to interpolate between
+        for i in 0..self.keyframes.len() - 1 {
+            let (t0, c0) = self.keyframes[i];
+            let (t1, c1) = self.keyframes[i + 1];
+
+            if t >= t0 && t <= t1 {
+                // Linear interpolation between color keyframes
+                let local_t = (t - t0) / (t1 - t0);
+                return c0 + (c1 - c0) * local_t;
+            }
+        }
+
+        // If we're past the last keyframe, return last color
+        self.keyframes.last().unwrap().1
+    }
+
+    /// Create a constant color curve
+    pub fn constant(color: Vec3) -> Self {
+        Self {
+            keyframes: vec![(0.0, color), (1.0, color)],
+        }
+    }
+}
+
 /// Component for billboard animation over lifetime (for AdditiveMaterial)
-#[derive(Component)]
+#[derive(Component, Clone)]
 pub struct AnimatedBillboard {
-    pub initial_scale: f32,
-    pub target_scale: f32,
-    pub initial_alpha: f32,
-    pub target_alpha: f32,
+    pub scale_curve: AnimationCurve,
+    pub alpha_curve: AnimationCurve,
+    pub color_curve: ColorCurve,
     pub velocity: Vec3,
     pub rotation_speed: f32, // Radians per second
     pub base_rotation: f32,  // Current rotation accumulator
@@ -441,18 +546,24 @@ pub fn animate_warfx_billboards(
         // Calculate progress through lifetime (0.0 to 1.0)
         let progress = (explosion.lifetime / explosion.max_lifetime).clamp(0.0, 1.0);
 
-        // Interpolate scale
-        let current_scale =
-            billboard.initial_scale + (billboard.target_scale - billboard.initial_scale) * progress;
+        // Evaluate scale curve
+        let current_scale = billboard.scale_curve.evaluate(progress);
         transform.scale = Vec3::splat(current_scale);
 
-        // Interpolate alpha
-        let current_alpha =
-            billboard.initial_alpha + (billboard.target_alpha - billboard.initial_alpha) * progress;
+        // Evaluate alpha curve
+        let current_alpha = billboard.alpha_curve.evaluate(progress);
 
-        // Update material tint color with new alpha
+        // Evaluate color curve
+        let current_color = billboard.color_curve.evaluate(progress);
+
+        // Update material tint color with new RGB and alpha
         if let Some(material) = additive_materials.get_mut(material_handle) {
-            material.tint_color.w = current_alpha;
+            material.tint_color = Vec4::new(
+                current_color.x,
+                current_color.y,
+                current_color.z,
+                current_alpha,
+            );
         }
 
         // Apply velocity (smoke rises, flames burst outward)

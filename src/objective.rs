@@ -881,20 +881,20 @@ pub fn debug_warfx_test_system(
     asset_server: Res<AssetServer>,
 ) {
     if keyboard_input.just_pressed(KeyCode::KeyB) {
-        info!("🎆 DEBUG: War FX test hotkey (B) pressed! Spawning full explosion (flame + glow + smoke)...");
+        info!("🎆 DEBUG: War FX test hotkey (B) pressed! Spawning glow...");
 
         let position = Vec3::new(0.0, 10.0, 0.0);
         let scale = 2.0;
 
-        // Spawn flame burst billboards
-        crate::wfx_spawn::spawn_warfx_flame_burst(
-            &mut commands,
-            &mut meshes,
-            &mut additive_materials,
-            &asset_server,
-            position,
-            scale,
-        );
+        // Flames disabled - focusing on glow first
+        // crate::wfx_spawn::spawn_warfx_flame_burst(
+        //     &mut commands,
+        //     &mut meshes,
+        //     &mut additive_materials,
+        //     &asset_server,
+        //     position,
+        //     scale,
+        // );
 
         // Spawn center glow billboards
         crate::wfx_spawn::spawn_warfx_center_glow(
@@ -906,16 +906,16 @@ pub fn debug_warfx_test_system(
             scale,
         );
 
-        // Spawn smoke column billboards
-        crate::wfx_spawn::spawn_warfx_smoke_column(
-            &mut commands,
-            &mut meshes,
-            &mut smoke_materials,
-            &asset_server,
-            position,
-            scale,
-        );
+        // Smoke disabled for now - focusing on core explosion
+        // crate::wfx_spawn::spawn_warfx_smoke_column(
+        //     &mut commands,
+        //     &mut meshes,
+        //     &mut smoke_materials,
+        //     &asset_server,
+        //     position,
+        //     scale,
+        // );
 
-        info!("🔥 War FX full explosion spawned at center (0, 10, 0): flames + glow + smoke");
+        info!("💡 War FX glow spawned at center (0, 10, 0)");
     }
 } 
