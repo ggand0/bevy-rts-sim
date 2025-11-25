@@ -1,6 +1,7 @@
 // Scene setup and army spawning module
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+use bevy::core_pipeline::prepass::DepthPrepass;
 use rand::Rng;
 use std::f32::consts::PI;
 use crate::types::*;
@@ -99,6 +100,7 @@ pub fn setup_scene(
             pitch: initial_pitch,
             distance: initial_distance,
         },
+        DepthPrepass,  // Enable depth prepass for soft particles
     ));
 
     // Load audio assets - all 5 laser sound variations

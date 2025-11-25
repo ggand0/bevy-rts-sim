@@ -133,6 +133,7 @@ pub fn spawn_warfx_flame_burst(
 
         let flame_material = additive_materials.add(AdditiveMaterial {
             tint_color: Vec4::new(tint_r, tint_g, tint_b, 1.0),
+            soft_particles_fade: Vec4::new(1.0, 0.0, 0.0, 0.0),  // Unity default InvFade = 1.0
             particle_texture: flame_texture.clone(),
         });
 
@@ -207,6 +208,7 @@ pub fn spawn_warfx_center_glow(
         // White tint (Unity default)
         let glow_material = additive_materials.add(AdditiveMaterial {
             tint_color: Vec4::new(1.0, 1.0, 1.0, 1.0), // Full white, alpha controlled by curve
+            soft_particles_fade: Vec4::new(1.0, 0.0, 0.0, 0.0),  // Unity default InvFade = 1.0
             particle_texture: glow_texture.clone(),
         });
 
