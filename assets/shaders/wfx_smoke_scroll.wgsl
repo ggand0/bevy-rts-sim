@@ -31,20 +31,34 @@ fn fragment(
     let scroll_speed = floor(packed_w);
     let particle_alpha = fract(packed_w);
 
-    // Sample texture alpha
+    // Sample texture alpha - it's actually LOW at center, HIGH at edges
     let tex_alpha = textureSample(smoke_texture, smoke_sampler, uv).a;
 
-    // INVERT the texture alpha - this gave us bright core, dark rim
-    let mask = (1.0 - tex_alpha) * particle_alpha;
+    // INVERT to get spatial mask: HIGH at center, LOW at edges
+    let spatial_mask = 1.0 - tex_alpha;
 
-    // For multiply blend: values > 0.5 brighten, < 0.5 darken
-    // Boost tint toward white to ensure values > 0.5
-    let white_amount = mask * 0.7;
-    var bright_color = mix(tint_color, vec3<f32>(1.0), white_amount);
-    bright_color = max(bright_color, vec3<f32>(0.6));
+    // particle_alpha controls the flame→smoke transition over lifetime:
+    // High alpha (start, ~1.0) = bright flame (values > 0.5 brighten)
+    // Low alpha (end, ~0.0) = dark smoke (values < 0.5 darken)
 
-    // Unity lerp formula: mix(0.5, color, mask)
-    let final_rgb = mix(vec3<f32>(0.5), bright_color, mask);
+    // Bright flame color for the start
+    var bright_color = mix(tint_color, vec3<f32>(1.0), 0.8);
+    bright_color = max(bright_color, vec3<f32>(0.85));
 
-    return vec4<f32>(final_rgb, mask);
+    // Dark smoke color for the end (below 0.5 causes darkening in multiply blend)
+    let smoke_color = vec3<f32>(0.3);
+
+    // Transition from bright flame to dark smoke based on particle lifetime
+    let lifetime_color = mix(smoke_color, bright_color, particle_alpha);
+
+    // Apply spatial mask: center gets the color, edges get neutral 0.5
+    let final_rgb = mix(vec3<f32>(0.5), lifetime_color, spatial_mask);
+
+    // For multiply blend, we want the effect to stay visible as smoke
+    // Keep alpha relatively high but fade at edges
+    // Use particle_alpha^0.3 to keep it visible longer (slower fade)
+    let fade_alpha = pow(particle_alpha, 0.3);
+    let final_alpha = spatial_mask * fade_alpha;
+
+    return vec4<f32>(final_rgb, final_alpha);
 }
