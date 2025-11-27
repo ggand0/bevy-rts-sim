@@ -280,13 +280,16 @@ pub fn spawn_warfx_center_glow(
         };
 
         // Unity Alpha Over Lifetime curve (from EMBEDDED_GLOW_EMITTER_DETAILS.md):
-        // Quick flash: fast fade-in (10%), brief hold (25%), long fade-out
+        // 0% → 0.0, 10% → 1.0, 25% → 1.0, 100% → 0.0
+        // Quick fade-in (0-10%), brief hold (10-25%), long gradual fade-out (25-100%)
+        // End at 98% to ensure fade completes before despawn at 100%
         let alpha_curve = AnimationCurve {
             keyframes: vec![
                 (0.0, 0.0),    // Start invisible
-                (0.10, 1.0),   // Fast fade-in (10% of lifetime)
-                (0.25, 1.0),   // Brief hold at full brightness
-                (1.0, 0.0),    // Long gradual fade-out
+                (0.10, 1.0),   // Fade in by 10%
+                (0.25, 1.0),   // Hold bright until 25%
+                (0.98, 0.0),   // Fade out to 0 just before end
+                (1.0, 0.0),    // Stay at 0
             ],
         };
 
@@ -369,12 +372,13 @@ pub fn spawn_glow_sparkles(
 
     for (delay, count) in bursts {
         for _ in 0..count {
-            // Random direction within sphere (Unity: radius 2, angle 50°)
-            let theta = rng.gen_range(0.0..std::f32::consts::TAU);
-            let phi = rng.gen_range(0.0..(50.0_f32).to_radians()); // 50° cone
+            // Random direction - wider spread (70°) for more horizontal spray
+            // phi measured from vertical (Y axis), so 70° gives good horizontal coverage
+            let theta = rng.gen_range(0.0..std::f32::consts::TAU); // Full circle around Y
+            let phi = rng.gen_range(0.0..(70.0_f32).to_radians()); // 70° cone from vertical
             let dir = Vec3::new(
                 phi.sin() * theta.cos(),
-                phi.cos(), // Bias upward initially
+                phi.cos(), // Y component (upward bias decreases with larger phi)
                 phi.sin() * theta.sin(),
             ).normalize();
 
@@ -392,11 +396,12 @@ pub fn spawn_glow_sparkles(
             let size_mult = rng.gen_range(0.5..1.0);
 
             // Size curve: grow from 40% to full size
+            // Include global scale factor so sparkles scale with explosion
             let scale_curve = AnimationCurve {
                 keyframes: vec![
-                    (0.0, 0.399 * size_mult),
-                    (0.347, 0.764 * size_mult),
-                    (1.0, 0.990 * size_mult),
+                    (0.0, 0.399 * size_mult * scale),
+                    (0.347, 0.764 * size_mult * scale),
+                    (1.0, 0.990 * size_mult * scale),
                 ],
             };
 
@@ -866,14 +871,15 @@ pub fn spawn_explosion_flames(
 
     for (delay, count) in bursts {
         for i in 0..count {
-            // Random position within sphere (Unity: radius 2.0, angle 5°)
-            let radius = 2.0 * base_scale;
+            // Random position within sphere - increased spread for better visual distribution
+            // Unity spec has tight 5° but we want more scattered appearance
+            let radius = 2.5 * base_scale;
             let angle = rng.gen_range(0.0..std::f32::consts::TAU);
-            let spread = rng.gen_range(0.0..0.087); // ~5 degrees in radians
-            let vertical_spread = rng.gen_range(-0.5..0.5) * spread;
+            let spread = rng.gen_range(0.3..1.0); // More aggressive spread (was 0.0..0.087)
+            let vertical_spread = rng.gen_range(-0.3..0.5); // Slight upward bias
             let offset = Vec3::new(
                 radius * spread * angle.cos(),
-                vertical_spread * radius,
+                vertical_spread * radius * spread,
                 radius * spread * angle.sin(),
             );
 
@@ -1279,7 +1285,7 @@ pub fn update_warfx_explosions(
         let angle = direction_xz.x.atan2(direction_xz.z);
         transform.rotation = Quat::from_rotation_y(angle);
 
-        // Despawn when finished
+        // Despawn after lifetime completes
         if explosion.lifetime >= explosion.max_lifetime {
             commands.entity(entity).despawn_recursive();
         }

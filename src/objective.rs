@@ -967,7 +967,7 @@ pub fn debug_warfx_test_system(
         info!("💥 DEBUG: War FX COMBINED explosion hotkey (5) pressed!");
 
         let position = Vec3::new(0.0, 10.0, 0.0);
-        let scale = 2.0; // Adjustable scale parameter
+        let scale = 4.0; // Adjustable scale parameter
 
         crate::wfx_spawn::spawn_combined_explosion(
             &mut commands,

@@ -33,8 +33,10 @@ fn fragment(
     // Combine luminance-based alpha with soft falloff and tint alpha
     let final_alpha = luminance * soft_alpha * tint_color.a;
 
+    // RGB must also fade with tint_color.a for additive blending to work correctly
+    // Otherwise the glow remains visible even when alpha is 0
     let final_color = vec4<f32>(
-        tex.rgb * tint_color.rgb * brightness * soft_alpha,
+        tex.rgb * tint_color.rgb * brightness * soft_alpha * tint_color.a,
         final_alpha
     );
 
