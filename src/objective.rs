@@ -568,6 +568,9 @@ pub fn update_objective_ui_system(
 #[derive(Component)]
 pub struct ObjectiveUI;
 
+#[derive(Component)]
+pub struct DebugModeUI;
+
 pub fn spawn_objective_ui(mut commands: Commands) {
     commands.spawn((
         TextBundle::from_section(
@@ -585,6 +588,25 @@ pub fn spawn_objective_ui(mut commands: Commands) {
             ..default()
         }),
         ObjectiveUI,
+    ));
+
+    // Debug mode indicator (hidden by default)
+    commands.spawn((
+        TextBundle::from_section(
+            "",
+            TextStyle {
+                font_size: 16.0,
+                color: Color::srgb(1.0, 0.8, 0.2), // Yellow/gold color
+                ..default()
+            },
+        )
+        .with_style(Style {
+            position_type: PositionType::Absolute,
+            bottom: Val::Px(10.0),
+            left: Val::Px(10.0),
+            ..default()
+        }),
+        DebugModeUI,
     ));
 }
 
@@ -690,6 +712,28 @@ pub fn debug_explosion_hotkey_system(
     }
 }
 
+/// Resource to track explosion debug mode (key 0 toggles, then 1-6 spawn emitters)
+#[derive(Resource, Default)]
+pub struct ExplosionDebugMode(pub bool);
+
+/// System to update debug mode UI indicator
+pub fn update_debug_mode_ui(
+    debug_mode: Res<ExplosionDebugMode>,
+    mut ui_query: Query<&mut Text, With<DebugModeUI>>,
+) {
+    if !debug_mode.is_changed() {
+        return;
+    }
+
+    for mut text in ui_query.iter_mut() {
+        if debug_mode.0 {
+            text.sections[0].value = "[0] EXPLOSION DEBUG: 1=glow 2=flames 3=smoke 4=sparkles 5=combined 6=dots".to_string();
+        } else {
+            text.sections[0].value = String::new();
+        }
+    }
+}
+
 // Debug system to test War FX explosion at map center
 pub fn debug_warfx_test_system(
     keyboard_input: Res<ButtonInput<KeyCode>>,
@@ -699,7 +743,19 @@ pub fn debug_warfx_test_system(
     mut smoke_materials: ResMut<Assets<crate::wfx_materials::SmokeScrollMaterial>>,
     mut smoke_only_materials: ResMut<Assets<crate::wfx_materials::SmokeOnlyMaterial>>,
     asset_server: Res<AssetServer>,
+    mut debug_mode: ResMut<ExplosionDebugMode>,
 ) {
+    // 0 key: Toggle explosion debug mode
+    if keyboard_input.just_pressed(KeyCode::Digit0) {
+        debug_mode.0 = !debug_mode.0;
+        return;
+    }
+
+    // Only process 1-6 keys when debug mode is active
+    if !debug_mode.0 {
+        return;
+    }
+
     // 1 key: Spawn center glow billboards
     if keyboard_input.just_pressed(KeyCode::Digit1) {
         info!("🎆 DEBUG: War FX test hotkey (1) pressed! Spawning glow...");
