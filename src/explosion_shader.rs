@@ -69,127 +69,43 @@ pub struct ExplosionTimer {
 
 #[derive(Component)]
 pub struct SpriteExplosion {
-    pub explosion_type: ExplosionType,
-    pub current_phase: ExplosionPhase,
     pub frame_count: usize,
     pub current_frame: usize,
     pub frame_duration: f32,
     pub frame_timer: f32,
-    pub scale: f32,
-    pub fade_alpha: f32,
-    pub phase_transition_timer: f32,
-}
-
-#[derive(Component)]
-pub struct AnimatedSpriteExplosion {
-    pub explosion_type: ExplosionType,
-    pub current_phase: ExplosionPhase,
-    pub frame_count: usize,
-    pub current_frame: usize,
-    pub frame_duration: f32,
-    pub frame_timer: f32,
-    pub scale: f32,
     pub fade_alpha: f32,
 }
 
 #[derive(Component)]
 pub struct CustomShaderExplosion {
-    pub explosion_type: ExplosionType,
-    pub current_phase: ExplosionPhase,
     pub frame_count: usize,
     pub current_frame: usize,
     pub frame_duration: f32,
     pub frame_timer: f32,
-    pub scale: f32,
     pub fade_alpha: f32,
-}
-
-#[derive(PartialEq, Clone)]
-pub enum ExplosionType {
-    Fire,
-    Smoke,
-    Nuclear,
-    Impact,
-}
-
-#[derive(PartialEq, Clone)]
-pub enum ExplosionPhase {
-    Initial,    // normal+ - bright intense phase
-    Secondary,  // normal- - dimmer cooling phase  
-    Smoke,      // smoke - aftermath
 }
 
 #[derive(Resource)]
 pub struct ExplosionAssets {
-    // New 5x5 flipbook explosion texture
     pub explosion_flipbook_texture: Handle<Image>,
-    
-    // TextureAtlas layout for 5x5 grid (25 frames)
-    pub explosion_atlas: Handle<TextureAtlasLayout>,
-    
-    // Materials for different phases (using same texture but different settings)
-    pub explosion_bright_material: Handle<StandardMaterial>,
-    pub explosion_dim_material: Handle<StandardMaterial>,
-    pub smoke_material: Handle<StandardMaterial>,
 }
 
 // ===== SETUP EXPLOSION ASSETS =====
 
 fn setup_explosion_assets(
     mut commands: Commands,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    mut texture_atlas_layouts: ResMut<Assets<TextureAtlasLayout>>,
     asset_server: Res<AssetServer>,
 ) {
-    // Load the new 5x5 flipbook texture
     let explosion_flipbook_texture = asset_server.load("textures/Explosion02HD_5x5.tga");
     info!("🎨 Loading explosion texture: textures/Explosion02HD_5x5.tga");
-    
-    // Create TextureAtlas layout for 5x5 sprite grid (25 frames total)
-    let atlas_layout = TextureAtlasLayout::from_grid(UVec2::splat(5), 5, 5, None, None);
-    let explosion_atlas = texture_atlas_layouts.add(atlas_layout);
-    
-    // Create materials that use the flipbook texture
-    let explosion_bright_material = materials.add(StandardMaterial {
-        base_color: Color::srgba(1.0, 1.0, 1.0, 0.95),
-        emissive: Color::srgb(2.0, 1.5, 0.8).into(),
-        alpha_mode: AlphaMode::Blend,
-        unlit: true, // Disable lighting for shadows
-        cull_mode: None, // Disable backface culling for billboards
-        ..default()
-    });
-    
-    let explosion_dim_material = materials.add(StandardMaterial {
-        base_color: Color::srgba(1.0, 1.0, 1.0, 0.85),
-        emissive: Color::srgb(1.0, 0.8, 0.4).into(),
-        alpha_mode: AlphaMode::Blend,
-        unlit: true,
-        cull_mode: None,
-        ..default()
-    });
-    
-    let smoke_material = materials.add(StandardMaterial {
-        base_color: Color::srgba(1.0, 1.0, 1.0, 0.7),
-        alpha_mode: AlphaMode::Blend,
-        unlit: true,
-        cull_mode: None,
-        ..default()
-    });
 
     commands.insert_resource(ExplosionAssets {
         explosion_flipbook_texture,
-        explosion_atlas,
-        explosion_bright_material,
-        explosion_dim_material,
-        smoke_material,
     });
-    
-    info!("🎨 New 5x5 flipbook explosion assets loaded!");
 }
 
 // ===== MAIN EXPLOSION SPAWNING FUNCTIONS =====
 
-// NEW: Real animated sprite explosion function
 pub fn spawn_animated_sprite_explosion(
     commands: &mut Commands,
     meshes: &mut ResMut<Assets<Mesh>>,
@@ -197,158 +113,47 @@ pub fn spawn_animated_sprite_explosion(
     explosion_assets: &ExplosionAssets,
     position: Vec3,
     radius: f32,
-    intensity: f32,
+    _intensity: f32,
     duration: f32,
 ) {
-    info!("🎬 Spawning ANIMATED sprite explosion at {} with radius {} intensity {}", position, radius, intensity);
-    
-    // Create a quad mesh for sprite billboard
+    info!("🎬 Spawning ANIMATED sprite explosion at {} with radius {}", position, radius);
+
     let quad_mesh = meshes.add(Rectangle::new(radius * 2.0, radius * 2.0));
-    
-    // Choose explosion type based on intensity
-    let explosion_type = if intensity > 2.5 {
-        ExplosionType::Nuclear
-    } else if intensity > 1.5 {
-        ExplosionType::Fire
-    } else {
-        ExplosionType::Impact
-    };
-    
-    // Create material with the actual sprite sheet texture
+
     let sprite_material = materials.add(StandardMaterial {
         base_color_texture: Some(explosion_assets.explosion_flipbook_texture.clone()),
         base_color: Color::srgba(1.0, 1.0, 1.0, 0.95),
         emissive: Color::srgb(2.0, 1.5, 0.8).into(),
         alpha_mode: AlphaMode::Blend,
-        unlit: true, // Disable lighting to remove shadows
+        unlit: true,
         cull_mode: None,
         ..default()
     });
-    
-    // Spawn animated sprite explosion
-    commands.spawn((
-        PbrBundle {
-            mesh: quad_mesh.clone(),
-            material: sprite_material,
-            transform: Transform::from_translation(position)
-                .with_scale(Vec3::splat(1.0)),
-            ..default()
-        },
-        ExplosionTimer {
-            timer: Timer::new(Duration::from_secs_f32(duration * 0.8), TimerMode::Once), // Faster animation
-        },
-        SpriteExplosion {
-            explosion_type: explosion_type.clone(),
-            current_phase: ExplosionPhase::Initial,
-            frame_count: 25, // 5x5 grid
-            current_frame: 0,
-            frame_duration: (duration * 0.8) / 25.0, // Faster frame duration
-            frame_timer: 0.0,
-            scale: radius,
-            fade_alpha: 1.0,
-            phase_transition_timer: 0.0,
-        },
-        NotShadowCaster, // Prevent this entity from casting shadows
-        NotShadowReceiver, // Prevent this entity from receiving shadows
-        Name::new("AnimatedSpriteExplosion"),
-    ));
-    
-    // Removed automatic smoke spawning to prevent overlapping explosions
-}
 
-// DEBUG: Colored quad explosion function (keeping for debugging)
-pub fn spawn_debug_explosion_effect(
-    commands: &mut Commands,
-    meshes: &mut ResMut<Assets<Mesh>>,
-    materials: &mut ResMut<Assets<StandardMaterial>>,
-    position: Vec3,
-    radius: f32,
-    intensity: f32,
-    duration: f32,
-) {
-    info!("🔧 Spawning DEBUG colored explosion at {} with radius {} intensity {}", position, radius, intensity);
-    
-    // Create a quad mesh for debug billboard
-    let quad_mesh = meshes.add(Rectangle::new(radius * 0.3, radius * 0.3));
-    
-    // Choose explosion type based on intensity
-    let explosion_type = if intensity > 2.5 {
-        ExplosionType::Nuclear
-    } else if intensity > 1.5 {
-        ExplosionType::Fire
-    } else {
-        ExplosionType::Impact
-    };
-    
-    // Create debug colored material (NO texture)
-    let debug_material = materials.add(StandardMaterial {
-        base_color: Color::srgba(1.0, 1.0, 1.0, 0.95),
-        emissive: Color::srgb(2.0, 1.5, 0.8).into(),
-        alpha_mode: AlphaMode::Blend,
-        unlit: true, // Disable lighting to remove shadows
-        cull_mode: None,
-        ..default()
-    });
-    
-    // Spawn debug explosion with old component
     commands.spawn((
         PbrBundle {
-            mesh: quad_mesh.clone(),
-            material: debug_material,
-            transform: Transform::from_translation(position)
-                .with_scale(Vec3::splat(0.01)),
+            mesh: quad_mesh,
+            material: sprite_material,
+            transform: Transform::from_translation(position),
             ..default()
         },
         ExplosionTimer {
-            timer: Timer::new(Duration::from_secs_f32(duration), TimerMode::Once),
+            timer: Timer::new(Duration::from_secs_f32(duration * 0.8), TimerMode::Once),
         },
         SpriteExplosion {
-            explosion_type: explosion_type.clone(),
-            current_phase: ExplosionPhase::Initial,
             frame_count: 25,
             current_frame: 0,
-            frame_duration: duration / 25.0,
+            frame_duration: (duration * 0.8) / 25.0,
             frame_timer: 0.0,
-            scale: radius,
             fade_alpha: 1.0,
-            phase_transition_timer: 0.0,
         },
-        NotShadowCaster, // Prevent this entity from casting shadows
-        NotShadowReceiver, // Prevent this entity from receiving shadows
-        Name::new("DebugColoredExplosion"),
+        NotShadowCaster,
+        NotShadowReceiver,
+        Name::new("AnimatedSpriteExplosion"),
     ));
 }
 
-// Backward compatibility function - needs ExplosionAssets to work properly
-pub fn spawn_explosion_effect(
-    commands: &mut Commands,
-    meshes: &mut ResMut<Assets<Mesh>>,
-    materials: &mut ResMut<Assets<StandardMaterial>>,
-    _images: &mut ResMut<Assets<Image>>,
-    position: Vec3,
-    radius: f32,
-    intensity: f32,
-    duration: f32,
-) {
-    // This is a stub that creates invisible explosions
-    // The actual tower explosion system should use spawn_animated_sprite_explosion instead
-    info!("⚠️ spawn_explosion_effect called without ExplosionAssets - creating placeholder");
-    info!("   Position: {}, Radius: {}, Intensity: {}", position, radius, intensity);
-}
-
-pub fn spawn_explosion(
-    commands: &mut Commands,
-    explosion_assets: &ExplosionAssets,
-    position: Vec3,
-    radius: f32,
-    intensity: f32,
-) {
-    info!("🔥 Real sprite explosion with TextureAtlas at {} with radius {} intensity {}", position, radius, intensity);
-    // TODO: Implement TextureAtlas-based spawning here
-    // This would create entities with TextureAtlas components for proper frame animation
-}
-
-// NEW: Custom shader animated sprite exdddddddplosion function
+/// Custom shader explosion with flipbook animation (used for unit explosions)
 pub fn spawn_custom_shader_explosion(
     commands: &mut Commands,
     meshes: &mut ResMut<Assets<Mesh>>,
@@ -357,76 +162,53 @@ pub fn spawn_custom_shader_explosion(
     particle_effects: Option<&crate::particles::ExplosionParticleEffects>,
     position: Vec3,
     radius: f32,
-    intensity: f32,
+    _intensity: f32,
     duration: f32,
     is_tower: bool,
     current_time: f64,
 ) {
-    trace!("🎭 Spawning CUSTOM SHADER explosion at {} with radius {} intensity {}", position, radius, intensity);
+    trace!("🎭 Spawning CUSTOM SHADER explosion at {} with radius {}", position, radius);
 
-    // Create a quad mesh for sprite billboard
     let quad_mesh = meshes.add(Rectangle::new(radius * 2.0, radius * 2.0));
 
-    // Choose explosion type based on intensity
-    let explosion_type = if intensity > 2.5 {
-        ExplosionType::Nuclear
-    } else if intensity > 1.5 {
-        ExplosionType::Fire
-    } else {
-        ExplosionType::Impact
-    };
-
-    // Create custom explosion material with frame 0
     let explosion_material = explosion_materials.add(ExplosionMaterial {
-        frame_data: Vec4::new(0.0, 0.0, 5.0, 1.0), // frame_x=0, frame_y=0, grid_size=5, alpha=1
-        color_data: Vec4::new(1.0, 1.0, 1.0, 2.0), // white tint, emissive=2.0
+        frame_data: Vec4::new(0.0, 0.0, 5.0, 1.0),
+        color_data: Vec4::new(1.0, 1.0, 1.0, 2.0),
         sprite_texture: explosion_assets.explosion_flipbook_texture.clone(),
     });
 
-    // Spawn custom shader explosion
     commands.spawn((
         MaterialMeshBundle {
-            mesh: quad_mesh.clone(),
+            mesh: quad_mesh,
             material: explosion_material,
-            transform: Transform::from_translation(position)
-                .with_scale(Vec3::splat(1.0)),
+            transform: Transform::from_translation(position),
             ..default()
         },
         ExplosionTimer {
-            timer: Timer::new(Duration::from_secs_f32(duration * 0.8), TimerMode::Once), // Faster animation
+            timer: Timer::new(Duration::from_secs_f32(duration * 0.8), TimerMode::Once),
         },
         CustomShaderExplosion {
-            explosion_type: explosion_type.clone(),
-            current_phase: ExplosionPhase::Initial,
-            frame_count: 25, // 5x5 grid
+            frame_count: 25,
             current_frame: 0,
-            frame_duration: (duration * 0.8) / 25.0, // Faster frame duration
+            frame_duration: (duration * 0.8) / 25.0,
             frame_timer: 0.0,
-            scale: radius,
             fade_alpha: 1.0,
         },
-        NotShadowCaster, // Prevent this entity from casting shadows
-        NotShadowReceiver, // Prevent this entity from receiving shadows
+        NotShadowCaster,
+        NotShadowReceiver,
         Name::new("CustomShaderExplosion"),
     ));
 
-    // Spawn particle effects bundled with billboard explosion (with probability for performance)
+    // Spawn particle effects (towers always, units probabilistic)
     if let Some(particles) = particle_effects {
-        // Towers always spawn particles, units spawn based on probability
         let should_spawn = is_tower || rand::random::<f32>() < crate::constants::PARTICLE_SPAWN_PROBABILITY;
-
         if should_spawn {
-            trace!("🔥 BUNDLING: Spawning particles for explosion at {:?}, is_tower={}", position, is_tower);
             if is_tower {
                 crate::particles::spawn_tower_explosion_particles(commands, particles, position, current_time);
             } else {
                 crate::particles::spawn_unit_explosion_particles(commands, particles, position, current_time);
             }
-        } else {
-            trace!("🎲 SKIP PARTICLES: Probability check failed for unit explosion at {:?}", position);
         }
-    } else {
-        debug!("⚠️ NO PARTICLES: particle_effects is None at {:?}, is_tower={}", position, is_tower);
     }
 }
 
@@ -437,55 +219,44 @@ fn debug_test_explosions(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut explosion_materials: ResMut<Assets<ExplosionMaterial>>,
-    mut images: ResMut<Assets<Image>>,
     explosion_assets: Option<Res<ExplosionAssets>>,
     time: Res<Time>,
     keyboard: Res<ButtonInput<KeyCode>>,
 ) {
-    // T key functionality removed - no longer needed since U key works perfectly
-    
-    // Y key = animated sprite explosions (single explosion for easy observation)
+    // Y key = animated sprite explosions
     if keyboard.just_pressed(KeyCode::KeyY) {
         if let Some(assets) = explosion_assets.as_ref() {
-            info!("🎬 DEBUG: Y key pressed - spawning single ANIMATED sprite test explosion!");
-            
             spawn_animated_sprite_explosion(
                 &mut commands,
                 &mut meshes,
                 &mut materials,
                 &assets,
-                Vec3::new(0.0, 8.0, 0.0), // Single explosion at battlefield center, elevated
+                Vec3::new(0.0, 8.0, 0.0),
                 8.0,
                 2.0,
                 3.0,
             );
-            info!("🎬 Single animated sprite explosion spawned at center");
-        } else {
-            info!("⚠️ Explosion assets not loaded yet - cannot spawn animated explosions");
+            info!("🎬 Y: Animated sprite explosion spawned");
         }
     }
-    
-    // U key = custom shader explosions (single explosion for easy observation)
+
+    // U key = custom shader explosions
     if keyboard.just_pressed(KeyCode::KeyU) {
         if let Some(assets) = explosion_assets.as_ref() {
-            info!("🎭 DEBUG: U key pressed - spawning single CUSTOM SHADER test explosion!");
-            
             spawn_custom_shader_explosion(
                 &mut commands,
                 &mut meshes,
                 &mut explosion_materials,
                 &assets,
-                None, // No particles for debug test
-                Vec3::new(0.0, 8.0, 0.0), // Single explosion at battlefield center, elevated
+                None,
+                Vec3::new(0.0, 8.0, 0.0),
                 8.0,
                 2.0,
                 3.0,
-                false, // Not a tower
+                false,
                 time.elapsed_seconds_f64(),
             );
-            info!("🎭 Single custom shader explosion spawned at center");
-        } else {
-            info!("⚠️ Explosion assets not loaded yet - cannot spawn custom shader explosions");
+            info!("🎭 U: Custom shader explosion spawned");
         }
     }
 
@@ -527,11 +298,9 @@ fn debug_test_explosions(
 
 // ===== ANIMATION SYSTEMS =====
 
-// Original colored quad animation system (for debugging)
 fn animate_sprite_explosions(
     mut query: Query<(&mut Transform, &mut Handle<StandardMaterial>, &mut SpriteExplosion, &ExplosionTimer)>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    explosion_assets: Option<Res<ExplosionAssets>>,
     camera_query: Query<&Transform, (With<RtsCamera>, Without<SpriteExplosion>)>,
     time: Res<Time>,
 ) {
@@ -542,7 +311,7 @@ fn animate_sprite_explosions(
         Vec3::ZERO // Fallback if no camera found
     };
     
-    for (mut transform, mut material_handle, mut sprite_explosion, timer) in query.iter_mut() {
+    for (mut transform, material_handle, mut sprite_explosion, timer) in query.iter_mut() {
         let progress = timer.timer.elapsed_secs() / timer.timer.duration().as_secs_f32();
         let progress = progress.clamp(0.0, 1.0);
         
@@ -633,11 +402,9 @@ fn cleanup_finished_explosions(
     }
 }
 
-// Custom shader sprite animation system for real animated explosions
 fn animate_custom_shader_explosions(
-    mut query: Query<(&mut Transform, &mut Handle<ExplosionMaterial>, &mut CustomShaderExplosion, &ExplosionTimer)>,
+    mut query: Query<(&mut Transform, &Handle<ExplosionMaterial>, &mut CustomShaderExplosion, &ExplosionTimer)>,
     mut explosion_materials: ResMut<Assets<ExplosionMaterial>>,
-    explosion_assets: Option<Res<ExplosionAssets>>,
     camera_query: Query<&Transform, (With<RtsCamera>, Without<CustomShaderExplosion>)>,
     time: Res<Time>,
 ) {
