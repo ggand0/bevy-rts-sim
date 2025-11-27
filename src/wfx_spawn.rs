@@ -378,11 +378,259 @@ pub fn spawn_warfx_smoke_column(
     info!("✅ WAR FX: Spawned {} smoke billboards", smoke_count);
 }
 
+/// Spawns explosion effect billboards using UV-scrolling smoke texture
+/// Unity emitter: "Explosion" - creates both flame bursts AND smoke from single system
+///
+/// Key insight: Uses randomized start colors from gradient (orange→brown)
+/// - Orange particles look like flames initially, then gray out
+/// - Brown particles look like smoke from the start
+///
+/// Total: 38 particles in 4 staggered bursts (15+10+8+5)
+pub fn spawn_explosion_flames(
+    commands: &mut Commands,
+    meshes: &mut ResMut<Assets<Mesh>>,
+    smoke_materials: &mut ResMut<Assets<SmokeScrollMaterial>>,
+    asset_server: &Res<AssetServer>,
+    position: Vec3,
+    base_scale: f32,
+) {
+    // Use smoke texture with UV scrolling (creates morphing appearance)
+    let smoke_texture = asset_server.load("textures/wfx/WFX_T_SmokeLoopAlpha.tga");
+
+    info!("🔥 WAR FX: Spawning explosion at {:?} (38 particles in 4 bursts)", position);
+
+    let mut rng = rand::thread_rng();
+
+    // Burst configuration from Unity: (delay_seconds, particle_count)
+    let bursts = [
+        (0.00_f32, 15_u32),
+        (0.10_f32, 10_u32),
+        (0.20_f32, 8_u32),
+        (0.30_f32, 5_u32),
+    ];
+
+    // Start color gradient from Unity (particles spawn with random color from this gradient)
+    // 0%: rgb(1.0, 0.922, 0.827) - Cream/pale orange
+    // 9%: rgb(1.0, 0.522, 0.2)   - Bright orange (FLAME)
+    // 42%: rgb(0.663, 0.235, 0.184) - Dark red/brown (SMOKE)
+    // 100%: rgb(0.996, 0.741, 0.498) - Tan
+    let start_colors = [
+        Vec3::new(1.0, 0.922, 0.827),   // Cream
+        Vec3::new(1.0, 0.522, 0.2),     // Bright orange
+        Vec3::new(0.663, 0.235, 0.184), // Dark brown
+        Vec3::new(0.996, 0.741, 0.498), // Tan
+    ];
+
+    // Create shared quad mesh (Unity: start size 4-6)
+    let quad_size = 5.0 * base_scale;
+    let quad_mesh = meshes.add(Rectangle::new(quad_size, quad_size));
+
+    let mut total_spawned = 0;
+
+    for (delay, count) in bursts {
+        for i in 0..count {
+            // Random position within sphere (Unity: radius 2.0, angle 5°)
+            let radius = 2.0 * base_scale;
+            let angle = rng.gen_range(0.0..std::f32::consts::TAU);
+            let spread = rng.gen_range(0.0..0.087); // ~5 degrees in radians
+            let vertical_spread = rng.gen_range(-0.5..0.5) * spread;
+            let offset = Vec3::new(
+                radius * spread * angle.cos(),
+                vertical_spread * radius,
+                radius * spread * angle.sin(),
+            );
+
+            // Random lifetime (Unity: 3s to 4s)
+            let lifetime = rng.gen_range(3.0..4.0);
+
+            // Random initial rotation (Unity: 0° to 360°)
+            let initial_rotation = rng.gen_range(0.0..std::f32::consts::TAU);
+
+            // Random start size multiplier (Unity: 4 to 6, normalized)
+            let size_mult = rng.gen_range(0.8..1.2);
+
+            // Random start color from gradient (simulating Unity's gradient sampling)
+            // Weight toward orange (flame) for visual impact
+            let color_index = rng.gen_range(0..4);
+            let start_color = start_colors[color_index];
+
+            // Create smoke scroll material with random start color
+            // scroll_speed = 10.0 (from Unity .mat file)
+            // W component packs scroll_speed (integer) + alpha (decimal): 10.0 + 0.999 = 10.999
+            // Initial alpha = 0.999 (nearly 1.0, clamped to avoid floor collision)
+            let scroll_speed = 10.0_f32;
+            let initial_alpha = 0.999_f32; // Start fully opaque
+            let packed_w = scroll_speed + initial_alpha;
+            let smoke_material = smoke_materials.add(SmokeScrollMaterial {
+                tint_color_and_speed: Vec4::new(
+                    start_color.x,
+                    start_color.y,
+                    start_color.z,
+                    packed_w,
+                ),
+                smoke_texture: smoke_texture.clone(),
+            });
+
+            // Unity Size Over Lifetime curve (rapid "pop" effect):
+            // t=0.0: 0.396, t=0.046: 0.814 (rapid expand), t=1.0: 1.0 (slow grow)
+            let scale_curve = AnimationCurve {
+                keyframes: vec![
+                    (0.0, 0.396 * size_mult),
+                    (0.046, 0.814 * size_mult),  // Rapid pop in first 5%
+                    (1.0, 1.0 * size_mult),
+                ],
+            };
+
+            // Alpha curve from Unity: 100%→100%→57.6%→0%
+            let alpha_curve = AnimationCurve {
+                keyframes: vec![
+                    (0.0, 1.0),    // Full opacity
+                    (0.3, 1.0),    // Stay opaque
+                    (0.6, 0.576),  // Start fading
+                    (1.0, 0.0),    // Fully transparent
+                ],
+            };
+
+            // Color over lifetime from Unity: grayscale multiplier applied to start color
+            // Unity ColorOverLifetime multiplies the start color by these grayscale values:
+            // t=0%: 1.0 (full brightness), t=20%: 0.694, t=41%: 0.404, t=100%: 0.596
+            // This maintains the color hue while transitioning to a darker shade
+            let color_curve = ColorCurve {
+                keyframes: vec![
+                    (0.0, start_color),                        // Full brightness
+                    (0.2, start_color * 0.694),                // 69.4% brightness
+                    (0.41, start_color * 0.404),               // 40.4% brightness
+                    (1.0, start_color * 0.596),                // 59.6% brightness (keeps hue)
+                ],
+            };
+
+            // Velocity (Unity: X:4, Y:8, Z:4 - upward bias)
+            let velocity = Vec3::new(
+                rng.gen_range(-4.0..4.0),   // X: random spread
+                rng.gen_range(4.0..8.0),    // Y: upward (Unity: 8)
+                rng.gen_range(-4.0..4.0),   // Z: random spread
+            ) * base_scale * 0.5;  // Scale down velocity for longer lifetime
+
+            // Rotation speed (Unity: 90°/sec = 1.5707963 rad/s)
+            let rotation_speed = rng.gen_range(-1.57..1.57);
+
+            // Determine if this particle is active immediately or delayed
+            let is_active = delay == 0.0;
+
+            commands.spawn((
+                MaterialMeshBundle {
+                    mesh: quad_mesh.clone(),
+                    material: smoke_material,
+                    transform: Transform::from_translation(position + offset)
+                        .with_rotation(Quat::from_rotation_z(initial_rotation))
+                        .with_scale(if is_active { Vec3::splat(0.396 * size_mult) } else { Vec3::ZERO }),
+                    visibility: if is_active { Visibility::Visible } else { Visibility::Hidden },
+                    ..Default::default()
+                },
+                bevy::pbr::NotShadowCaster,
+                bevy::pbr::NotShadowReceiver,
+                WarFXExplosion {
+                    lifetime: 0.0,
+                    max_lifetime: lifetime,
+                },
+                WarFxFlame {
+                    spawn_delay: delay,
+                    active: is_active,
+                },
+                AnimatedExplosionBillboard {
+                    scale_curve,
+                    alpha_curve,
+                    color_curve,
+                    velocity,
+                    rotation_speed,
+                    base_rotation: initial_rotation,
+                },
+                Name::new(format!("WFX_Explosion_{}_{}", delay as i32 * 100, i)),
+            ));
+
+            total_spawned += 1;
+        }
+    }
+
+    info!("✅ WAR FX: Spawned {} explosion billboards", total_spawned);
+}
+
+/// Component for explosion billboard animation (for SmokeScrollMaterial)
+/// Handles scale, alpha, and color curves plus velocity/rotation
+#[derive(Component, Clone)]
+pub struct AnimatedExplosionBillboard {
+    pub scale_curve: AnimationCurve,
+    pub alpha_curve: AnimationCurve,
+    pub color_curve: ColorCurve,
+    pub velocity: Vec3,
+    pub rotation_speed: f32,
+    pub base_rotation: f32,
+}
+
+/// System to animate explosion billboards (scale, color, velocity, rotation) over lifetime
+pub fn animate_explosion_billboards(
+    mut query: Query<
+        (
+            &mut Transform,
+            &mut AnimatedExplosionBillboard,
+            &WarFXExplosion,
+            &Handle<SmokeScrollMaterial>,
+        ),
+        With<AnimatedExplosionBillboard>,
+    >,
+    mut smoke_materials: ResMut<Assets<SmokeScrollMaterial>>,
+    time: Res<Time>,
+) {
+    for (mut transform, mut billboard, explosion, material_handle) in query.iter_mut() {
+        // Calculate progress through lifetime (0.0 to 1.0)
+        let progress = (explosion.lifetime / explosion.max_lifetime).clamp(0.0, 1.0);
+
+        // Evaluate scale curve (rapid "pop" effect)
+        let current_scale = billboard.scale_curve.evaluate(progress);
+        transform.scale = Vec3::splat(current_scale);
+
+        // Evaluate alpha and color curves
+        let current_alpha = billboard.alpha_curve.evaluate(progress);
+        let current_color = billboard.color_curve.evaluate(progress);
+
+        // Update material tint color (RGB) and pack alpha with scroll_speed (W)
+        // SmokeScrollMaterial: (R, G, B, packed_scroll_alpha)
+        // Packed format: scroll_speed.floor() + alpha (where alpha is 0.0-1.0)
+        // This avoids premultiplying alpha into color which darkens flames prematurely
+        if let Some(material) = smoke_materials.get_mut(material_handle) {
+            // Extract scroll_speed from packed value (integer part)
+            let scroll_speed = material.tint_color_and_speed.w.floor();
+            // Pack scroll_speed (integer) + alpha (decimal) into w component
+            let packed_w = scroll_speed + current_alpha.clamp(0.0, 0.999);
+            material.tint_color_and_speed = Vec4::new(
+                current_color.x,
+                current_color.y,
+                current_color.z,
+                packed_w,
+            );
+        }
+
+        // Apply velocity (particles drift upward and outward)
+        transform.translation += billboard.velocity * time.delta_seconds();
+
+        // Apply rotation animation
+        billboard.base_rotation += billboard.rotation_speed * time.delta_seconds();
+    }
+}
+
 /// Component to track War FX explosion lifetime
 #[derive(Component)]
 pub struct WarFXExplosion {
     pub lifetime: f32,
     pub max_lifetime: f32,
+}
+
+/// Component for flame particles with spawn delay support
+/// Used for staggered burst spawning (Unity burst timing: t=0s, t=0.1s, t=0.2s, t=0.3s)
+#[derive(Component)]
+pub struct WarFxFlame {
+    pub spawn_delay: f32,    // Seconds until this flame activates
+    pub active: bool,        // Whether delay has elapsed
 }
 
 /// Animation curve with keyframes for non-linear interpolation
@@ -493,9 +741,10 @@ pub struct AnimatedSmokeBillboard {
 }
 
 /// System to update War FX explosions (billboard rotation + lifetime)
+/// Note: Skips inactive flames (those with spawn_delay > 0) to prevent premature lifetime expiration
 pub fn update_warfx_explosions(
     mut commands: Commands,
-    mut query: Query<(Entity, &mut Transform, &mut WarFXExplosion, &Name)>,
+    mut query: Query<(Entity, &mut Transform, &mut WarFXExplosion, &Name, Option<&WarFxFlame>)>,
     camera_query: Query<&GlobalTransform, With<Camera>>,
     time: Res<Time>,
 ) {
@@ -506,7 +755,15 @@ pub fn update_warfx_explosions(
         return; // No camera, can't billboard
     };
 
-    for (entity, mut transform, mut explosion, name) in query.iter_mut() {
+    for (entity, mut transform, mut explosion, name, maybe_flame) in query.iter_mut() {
+        // Skip inactive flames - they shouldn't update lifetime until activated
+        // This prevents delayed flames from expiring before they even appear
+        if let Some(flame) = maybe_flame {
+            if !flame.active {
+                continue;
+            }
+        }
+
         // Update lifetime
         explosion.lifetime += time.delta_seconds();
 
@@ -524,7 +781,6 @@ pub fn update_warfx_explosions(
 
         // Despawn when finished
         if explosion.lifetime >= explosion.max_lifetime {
-            info!("🧹 Despawning War FX explosion '{}' after {:.1}s", name.as_str(), explosion.lifetime);
             commands.entity(entity).despawn_recursive();
         }
     }
@@ -619,5 +875,40 @@ pub fn animate_warfx_smoke_billboards(
 
         // Apply rotation animation
         billboard.base_rotation += billboard.rotation_speed * time.delta_seconds();
+    }
+}
+
+/// System to handle spawn delay for explosion flames
+/// Flames with spawn_delay > 0 are hidden until their delay elapses
+/// Once active, the animate_warfx_billboards system handles animation
+pub fn animate_explosion_flames(
+    mut query: Query<(
+        &mut WarFxFlame,
+        &mut WarFXExplosion,
+        &mut Transform,
+        &mut Visibility,
+    )>,
+    time: Res<Time>,
+) {
+    let delta = time.delta_seconds();
+
+    for (mut flame, mut explosion, mut transform, mut visibility) in query.iter_mut() {
+        // Handle spawn delay for inactive flames
+        if !flame.active {
+            flame.spawn_delay -= delta;
+
+            if flame.spawn_delay <= 0.0 {
+                // Activate this flame
+                flame.active = true;
+                *visibility = Visibility::Visible;
+                // Reset explosion lifetime to start animation from beginning
+                explosion.lifetime = 0.0;
+            }
+            // Keep hidden and don't update lifetime while inactive
+            continue;
+        }
+
+        // Active flames: update lifetime (animation handled by animate_warfx_billboards)
+        // The WarFXExplosion lifetime is updated by update_warfx_explosions system
     }
 }

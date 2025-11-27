@@ -41,7 +41,8 @@ impl Material for SmokeScrollMaterial {
 
     fn alpha_mode(&self) -> AlphaMode {
         // Unity uses: Blend DstColor SrcAlpha (multiply blend)
-        // Bevy's Multiply is: Dst * Src
+        // When particles with values > 0.5 overlap, they brighten (fuse together)
+        // This creates the bright core effect where flames overlap
         AlphaMode::Multiply
     }
 

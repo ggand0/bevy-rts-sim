@@ -23,34 +23,53 @@ fn fragment(
 ) -> @location(0) vec4<f32> {
     var uv = in.uv;
 
-    // Extract tint color and scroll speed from uniform
+    // Extract tint color from uniform RGB
     let tint_color = material.tint_color_and_speed.rgb;
-    let scroll_speed = material.tint_color_and_speed.a;
+
+    // Extract scroll_speed (integer part) and particle_alpha (decimal part) from w component
+    // Packed as: scroll_speed.floor() + particle_alpha (where alpha is 0.0-1.0)
+    let packed_w = material.tint_color_and_speed.a;
+    let scroll_speed = floor(packed_w);
+    let particle_alpha = fract(packed_w);
 
     // Unity shader: float mask = tex2D(_MainTex, i.uv).a * i.color.a;
-    // Get alpha mask BEFORE scrolling (this gives the particle shape)
-    let mask = textureSample(smoke_texture, smoke_sampler, uv).a;
+    // Get alpha mask BEFORE scrolling, modulated by particle alpha
+    let tex_alpha = textureSample(smoke_texture, smoke_sampler, uv).a;
+    let mask = tex_alpha * particle_alpha;
 
     // Unity shader: i.uv.y -= fmod(_Time*_ScrollSpeed,1);
     // Apply UV scrolling (creates morphing/billowing effect)
+    // TEMPORARILY DISABLED to debug twitching
     var scrolled_uv = uv;
-    scrolled_uv.y -= (globals.time * scroll_speed) % 1.0;
+    // scrolled_uv.y -= fract(globals.time * scroll_speed);
 
     // Unity shader: fixed4 tex = tex2D(_MainTex, i.uv);
     // Sample scrolled texture for RGB
     let tex = textureSample(smoke_texture, smoke_sampler, scrolled_uv);
 
-    // Unity shader: tex.rgb *= i.color.rgb * _TintColor.rgb;
-    // Tint the color
-    var tinted_rgb = tex.rgb * tint_color;
+    // Unity shader logic for multiply blend (Blend DstColor SrcAlpha):
+    // tex.rgb *= i.color.rgb * _TintColor.rgb;
+    // tex = lerp(fixed4(0.5,0.5,0.5,0.5), tex, mask);
+    //
+    // For multiply blend: output > 0.5 brightens the scene, output < 0.5 darkens
+    // Overlapping particles with high values "fuse" and create bright white cores
 
-    // Unity shader: tex = lerp(fixed4(0.5,0.5,0.5,0.5), tex, mask);
-    // Lerp to gray (0.5) based on mask - this is critical for multiply blend
-    // Where mask=0: output gray (neutral for multiply)
-    // Where mask=1: output tinted color
-    let gray = vec3<f32>(0.5, 0.5, 0.5);
-    let final_rgb = mix(gray, tinted_rgb, mask);
-    let final_alpha = mix(0.5, mask, mask);
+    // Texture RGB is grayscale ~0.52-0.69, we need values > 0.5 to brighten
+    // Unity tints the texture by particle color (orange for flames, brown for smoke)
+    // The key is that the FINAL color after tinting must be > 0.5 for bright areas
 
-    return vec4<f32>(final_rgb, final_alpha);
+    // Boost base texture brightness first (0.52 * 1.6 = 0.83)
+    let boosted_tex = tex.rgb * 1.6;
+
+    // Then apply tint color
+    var tinted_rgb = boosted_tex * tint_color;
+
+    // Clamp to valid range
+    tinted_rgb = clamp(tinted_rgb, vec3<f32>(0.0), vec3<f32>(1.0));
+
+    // Unity: tex = lerp(fixed4(0.5,0.5,0.5,0.5), tex, mask);
+    // Blend between neutral gray and tinted color based on mask
+    let final_rgb = mix(vec3<f32>(0.5), tinted_rgb, mask);
+
+    return vec4<f32>(final_rgb, mask);
 }

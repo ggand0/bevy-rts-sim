@@ -880,21 +880,12 @@ pub fn debug_warfx_test_system(
     mut smoke_materials: ResMut<Assets<crate::wfx_materials::SmokeScrollMaterial>>,
     asset_server: Res<AssetServer>,
 ) {
-    if keyboard_input.just_pressed(KeyCode::KeyB) {
-        info!("🎆 DEBUG: War FX test hotkey (B) pressed! Spawning glow...");
+    // 1 key: Spawn center glow billboards
+    if keyboard_input.just_pressed(KeyCode::Digit1) {
+        info!("🎆 DEBUG: War FX test hotkey (1) pressed! Spawning glow...");
 
         let position = Vec3::new(0.0, 10.0, 0.0);
         let scale = 2.0;
-
-        // Flames disabled - focusing on glow first
-        // crate::wfx_spawn::spawn_warfx_flame_burst(
-        //     &mut commands,
-        //     &mut meshes,
-        //     &mut additive_materials,
-        //     &asset_server,
-        //     position,
-        //     scale,
-        // );
 
         // Spawn center glow billboards
         crate::wfx_spawn::spawn_warfx_center_glow(
@@ -906,16 +897,38 @@ pub fn debug_warfx_test_system(
             scale,
         );
 
-        // Smoke disabled for now - focusing on core explosion
-        // crate::wfx_spawn::spawn_warfx_smoke_column(
-        //     &mut commands,
-        //     &mut meshes,
-        //     &mut smoke_materials,
-        //     &asset_server,
-        //     position,
-        //     scale,
-        // );
-
         info!("💡 War FX glow spawned at center (0, 10, 0)");
+    }
+
+    // 2 key: Spawn COMPLETE explosion (center glow + smoke particles)
+    // This matches Unity's WFX_ExplosiveSmoke_Big prefab which has multiple emitters
+    if keyboard_input.just_pressed(KeyCode::Digit2) {
+        info!("🔥 DEBUG: War FX explosion hotkey (2) pressed! Spawning complete explosion...");
+
+        let position = Vec3::new(0.0, 10.0, 0.0);
+        let scale = 2.0;
+
+        // 1. Spawn bright center glow (WFX_ExplosiveSmoke_Big2 emitter - additive blend)
+        // This creates the bright white/yellow core that "fuses"
+        crate::wfx_spawn::spawn_warfx_center_glow(
+            &mut commands,
+            &mut meshes,
+            &mut additive_materials,
+            &asset_server,
+            position,
+            scale,
+        );
+
+        // 2. Spawn smoke/flame particles (Explosion emitter)
+        crate::wfx_spawn::spawn_explosion_flames(
+            &mut commands,
+            &mut meshes,
+            &mut smoke_materials,
+            &asset_server,
+            position,
+            scale,
+        );
+
+        info!("🔥 War FX complete explosion spawned at center (0, 10, 0)");
     }
 } 

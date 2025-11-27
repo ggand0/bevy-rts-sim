@@ -69,8 +69,10 @@ fn main() {
             debug_explosion_hotkey_system,
             debug_warfx_test_system,
             wfx_spawn::update_warfx_explosions,
+            wfx_spawn::animate_explosion_flames,
             wfx_spawn::animate_warfx_billboards,
             wfx_spawn::animate_warfx_smoke_billboards,
+            wfx_spawn::animate_explosion_billboards,
         ))
         .run();
 }
