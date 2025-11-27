@@ -908,18 +908,7 @@ pub fn debug_warfx_test_system(
         let position = Vec3::new(0.0, 10.0, 0.0);
         let scale = 2.0;
 
-        // 1. Spawn bright center glow (WFX_ExplosiveSmoke_Big2 emitter - additive blend)
-        // This creates the bright white/yellow core that "fuses"
-        crate::wfx_spawn::spawn_warfx_center_glow(
-            &mut commands,
-            &mut meshes,
-            &mut additive_materials,
-            &asset_server,
-            position,
-            scale,
-        );
-
-        // 2. Spawn smoke/flame particles (Explosion emitter)
+        // Spawn smoke/flame particles only (Explosion emitter)
         crate::wfx_spawn::spawn_explosion_flames(
             &mut commands,
             &mut meshes,

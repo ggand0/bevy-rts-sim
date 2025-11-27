@@ -1,7 +1,43 @@
 // War FX explosion spawner with UV-scrolling billboards
 use bevy::prelude::*;
+use bevy::render::mesh::{Indices, PrimitiveTopology};
+use bevy::render::render_asset::RenderAssetUsages;
 use crate::wfx_materials::{SmokeScrollMaterial, AdditiveMaterial};
 use rand::Rng;
+
+/// Create a quad mesh with proper UVs for texture sampling
+fn create_quad_mesh(size: f32) -> Mesh {
+    let half = size / 2.0;
+
+    let vertices = vec![
+        [-half, -half, 0.0], // bottom-left
+        [ half, -half, 0.0], // bottom-right
+        [ half,  half, 0.0], // top-right
+        [-half,  half, 0.0], // top-left
+    ];
+
+    let normals = vec![
+        [0.0, 0.0, 1.0],
+        [0.0, 0.0, 1.0],
+        [0.0, 0.0, 1.0],
+        [0.0, 0.0, 1.0],
+    ];
+
+    let uvs = vec![
+        [0.0, 1.0], // bottom-left (UV origin is top-left in most textures)
+        [1.0, 1.0], // bottom-right
+        [1.0, 0.0], // top-right
+        [0.0, 0.0], // top-left
+    ];
+
+    let indices = Indices::U32(vec![0, 1, 2, 0, 2, 3]);
+
+    Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::RENDER_WORLD)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, vertices)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
+        .with_inserted_indices(indices)
+}
 
 // Temporary test function using StandardMaterial
 pub fn spawn_warfx_tower_explosion_test(
@@ -421,9 +457,9 @@ pub fn spawn_explosion_flames(
         Vec3::new(0.996, 0.741, 0.498), // Tan
     ];
 
-    // Create shared quad mesh (Unity: start size 4-6)
+    // Create shared quad mesh with explicit UVs (Unity: start size 4-6)
     let quad_size = 5.0 * base_scale;
-    let quad_mesh = meshes.add(Rectangle::new(quad_size, quad_size));
+    let quad_mesh = meshes.add(create_quad_mesh(quad_size));
 
     let mut total_spawned = 0;
 
