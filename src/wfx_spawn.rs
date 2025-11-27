@@ -839,16 +839,17 @@ pub fn spawn_explosion_flames(
     // Use smoke texture with UV scrolling (creates morphing appearance)
     let smoke_texture = asset_server.load("textures/wfx/WFX_T_SmokeLoopAlpha.tga");
 
-    info!("🔥 WAR FX: Spawning explosion at {:?} (38 particles in 4 bursts)", position);
+    info!("🔥 WAR FX: Spawning explosion at {:?} (57 particles in 4 bursts)", position);
 
     let mut rng = rand::thread_rng();
 
-    // Burst configuration from Unity: (delay_seconds, particle_count)
+    // Burst configuration: 57 particles total (1.5x Unity's 38)
+    // Front-loaded to create initial impact
     let bursts = [
-        (0.00_f32, 15_u32),
-        (0.10_f32, 10_u32),
-        (0.20_f32, 8_u32),
-        (0.30_f32, 5_u32),
+        (0.00_f32, 23_u32),  // 15 * 1.5
+        (0.10_f32, 15_u32),  // 10 * 1.5
+        (0.20_f32, 12_u32),  // 8 * 1.5
+        (0.30_f32, 7_u32),   // 5 * 1.5
     ];
 
     // Start color gradient from Unity (particles spawn with random color from this gradient)
@@ -871,16 +872,15 @@ pub fn spawn_explosion_flames(
 
     for (delay, count) in bursts {
         for i in 0..count {
-            // Random position within sphere - increased spread for better visual distribution
-            // Unity spec has tight 5° but we want more scattered appearance
-            let radius = 2.5 * base_scale;
-            let angle = rng.gen_range(0.0..std::f32::consts::TAU);
-            let spread = rng.gen_range(0.3..1.0); // More aggressive spread (was 0.0..0.087)
-            let vertical_spread = rng.gen_range(-0.3..0.5); // Slight upward bias
+            // Random position on sphere surface - full spherical distribution
+            // Use spherical coordinates to scatter particles around glow center
+            let radius = rng.gen_range(1.5..3.5) * base_scale;
+            let theta = rng.gen_range(0.0..std::f32::consts::TAU); // Horizontal angle (0 to 360°)
+            let phi = rng.gen_range(0.3..std::f32::consts::PI); // Vertical angle (covers top to bottom)
             let offset = Vec3::new(
-                radius * spread * angle.cos(),
-                vertical_spread * radius * spread,
-                radius * spread * angle.sin(),
+                radius * phi.sin() * theta.cos(),
+                radius * phi.cos(), // Y from cos(phi): +1 at top, -1 at bottom
+                radius * phi.sin() * theta.sin(),
             );
 
             // Random lifetime (Unity: 3s to 4s)
