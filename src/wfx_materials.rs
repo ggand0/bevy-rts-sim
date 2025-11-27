@@ -133,3 +133,68 @@ impl Default for AdditiveMaterial {
         }
     }
 }
+
+/// Smoke-only material for pure gray smoke (no flame blending)
+/// Used by "Smoke" emitter - lingering smoke trail after explosion
+/// Uses same blend mode as SmokeScrollMaterial but simpler shader
+#[derive(Asset, TypePath, AsBindGroup, Debug, Clone)]
+pub struct SmokeOnlyMaterial {
+    /// RGB = tint color (gray), A = scroll speed
+    #[uniform(0)]
+    pub tint_color_and_speed: Vec4,
+
+    #[texture(1)]
+    #[sampler(2)]
+    pub smoke_texture: Handle<Image>,
+}
+
+impl Material for SmokeOnlyMaterial {
+    fn fragment_shader() -> ShaderRef {
+        "shaders/wfx_smoke_only.wgsl".into()
+    }
+
+    fn alpha_mode(&self) -> AlphaMode {
+        AlphaMode::Multiply
+    }
+
+    fn opaque_render_method(&self) -> bevy::pbr::OpaqueRendererMethod {
+        bevy::pbr::OpaqueRendererMethod::Forward
+    }
+
+    fn specialize(
+        _pipeline: &MaterialPipeline<Self>,
+        descriptor: &mut bevy::render::render_resource::RenderPipelineDescriptor,
+        _layout: &MeshVertexBufferLayoutRef,
+        _key: MaterialPipelineKey<Self>,
+    ) -> Result<(), SpecializedMeshPipelineError> {
+        // Override blend state to match Unity's "Blend DstColor SrcAlpha"
+        // Same as SmokeScrollMaterial
+        if let Some(ref mut fragment) = descriptor.fragment {
+            for target in fragment.targets.iter_mut().flatten() {
+                target.blend = Some(BlendState {
+                    color: BlendComponent {
+                        src_factor: BlendFactor::Dst,
+                        dst_factor: BlendFactor::SrcAlpha,
+                        operation: BlendOperation::Add,
+                    },
+                    alpha: BlendComponent {
+                        src_factor: BlendFactor::One,
+                        dst_factor: BlendFactor::OneMinusSrcAlpha,
+                        operation: BlendOperation::Add,
+                    },
+                });
+            }
+        }
+        Ok(())
+    }
+}
+
+impl Default for SmokeOnlyMaterial {
+    fn default() -> Self {
+        Self {
+            // RGB = gray tint, A = scroll speed of 10.0
+            tint_color_and_speed: Vec4::new(0.725, 0.725, 0.725, 10.0),
+            smoke_texture: Handle::default(),
+        }
+    }
+}

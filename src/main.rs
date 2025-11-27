@@ -12,7 +12,7 @@ mod wfx_materials;
 mod wfx_spawn;
 use explosion_shader::ExplosionShaderPlugin;
 use particles::ParticleEffectsPlugin;
-use wfx_materials::{SmokeScrollMaterial, AdditiveMaterial};
+use wfx_materials::{SmokeScrollMaterial, AdditiveMaterial, SmokeOnlyMaterial};
 
 use bevy::prelude::*;
 use types::*;
@@ -29,6 +29,7 @@ fn main() {
         .add_plugins(ParticleEffectsPlugin)
         .add_plugins(MaterialPlugin::<SmokeScrollMaterial>::default())
         .add_plugins(MaterialPlugin::<AdditiveMaterial>::default())
+        .add_plugins(MaterialPlugin::<SmokeOnlyMaterial>::default())
         .insert_resource(SpatialGrid::new())
         .insert_resource(SquadManager::new())
         .insert_resource(GameState::default())
@@ -73,6 +74,7 @@ fn main() {
             wfx_spawn::animate_warfx_billboards,
             wfx_spawn::animate_warfx_smoke_billboards,
             wfx_spawn::animate_explosion_billboards,
+            wfx_spawn::animate_smoke_only_billboards,
         ))
         .run();
 }

@@ -878,6 +878,7 @@ pub fn debug_warfx_test_system(
     mut meshes: ResMut<Assets<Mesh>>,
     mut additive_materials: ResMut<Assets<crate::wfx_materials::AdditiveMaterial>>,
     mut smoke_materials: ResMut<Assets<crate::wfx_materials::SmokeScrollMaterial>>,
+    mut smoke_only_materials: ResMut<Assets<crate::wfx_materials::SmokeOnlyMaterial>>,
     asset_server: Res<AssetServer>,
 ) {
     // 1 key: Spawn center glow billboards
@@ -919,5 +920,26 @@ pub fn debug_warfx_test_system(
         );
 
         info!("🔥 War FX complete explosion spawned at center (0, 10, 0)");
+    }
+
+    // 3 key: Spawn smoke emitter (lingering smoke trail)
+    // This is the second phase of the Unity WFX_ExplosiveSmoke_Big effect
+    if keyboard_input.just_pressed(KeyCode::Digit3) {
+        info!("💨 DEBUG: War FX smoke hotkey (3) pressed! Spawning smoke emitter...");
+
+        let position = Vec3::new(0.0, 10.0, 0.0);
+        let scale = 2.0;
+
+        // Spawn smoke emitter (delayed start, continuous emission)
+        crate::wfx_spawn::spawn_smoke_emitter(
+            &mut commands,
+            &mut meshes,
+            &mut smoke_only_materials,
+            &asset_server,
+            position,
+            scale,
+        );
+
+        info!("💨 War FX smoke emitter spawned at center (0, 10, 0)");
     }
 } 
