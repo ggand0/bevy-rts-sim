@@ -1,6 +1,7 @@
 // War FX Scrolling Smoke Shader
 // Converted from Unity shader: WFX_S Smoke Scroll
-// Creates rising smoke effect via UV scrolling
+// Blend mode: DstColor SrcAlpha (multiply blend)
+// Creates volumetric smoke effect via UV scrolling
 
 #import bevy_pbr::forward_io::VertexOutput
 #import bevy_pbr::mesh_view_bindings::globals
@@ -26,19 +27,30 @@ fn fragment(
     let tint_color = material.tint_color_and_speed.rgb;
     let scroll_speed = material.tint_color_and_speed.a;
 
-    // Apply UV scrolling (UPWARD - add to y instead of subtract)
+    // Unity shader: float mask = tex2D(_MainTex, i.uv).a * i.color.a;
+    // Get alpha mask BEFORE scrolling (this gives the particle shape)
+    let mask = textureSample(smoke_texture, smoke_sampler, uv).a;
+
+    // Unity shader: i.uv.y -= fmod(_Time*_ScrollSpeed,1);
+    // Apply UV scrolling (creates morphing/billowing effect)
     var scrolled_uv = uv;
-    scrolled_uv.y += (globals.time * scroll_speed) % 1.0;
+    scrolled_uv.y -= (globals.time * scroll_speed) % 1.0;
 
-    // Sample scrolled texture
-    var tex = textureSample(smoke_texture, smoke_sampler, scrolled_uv);
+    // Unity shader: fixed4 tex = tex2D(_MainTex, i.uv);
+    // Sample scrolled texture for RGB
+    let tex = textureSample(smoke_texture, smoke_sampler, scrolled_uv);
 
-    // Use the texture's alpha directly for transparency
-    // Apply tint to color
-    let final_color = vec4<f32>(
-        tex.rgb * tint_color,
-        tex.a  // Use texture alpha directly
-    );
+    // Unity shader: tex.rgb *= i.color.rgb * _TintColor.rgb;
+    // Tint the color
+    var tinted_rgb = tex.rgb * tint_color;
 
-    return final_color;
+    // Unity shader: tex = lerp(fixed4(0.5,0.5,0.5,0.5), tex, mask);
+    // Lerp to gray (0.5) based on mask - this is critical for multiply blend
+    // Where mask=0: output gray (neutral for multiply)
+    // Where mask=1: output tinted color
+    let gray = vec3<f32>(0.5, 0.5, 0.5);
+    let final_rgb = mix(gray, tinted_rgb, mask);
+    let final_alpha = mix(0.5, mask, mask);
+
+    return vec4<f32>(final_rgb, final_alpha);
 }

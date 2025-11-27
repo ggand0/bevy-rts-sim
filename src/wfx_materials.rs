@@ -40,7 +40,9 @@ impl Material for SmokeScrollMaterial {
     }
 
     fn alpha_mode(&self) -> AlphaMode {
-        AlphaMode::Blend
+        // Unity uses: Blend DstColor SrcAlpha (multiply blend)
+        // Bevy's Multiply is: Dst * Src
+        AlphaMode::Multiply
     }
 
     fn opaque_render_method(&self) -> bevy::pbr::OpaqueRendererMethod {
@@ -69,10 +71,6 @@ impl Material for AdditiveMaterial {
 
     fn opaque_render_method(&self) -> bevy::pbr::OpaqueRendererMethod {
         bevy::pbr::OpaqueRendererMethod::Forward
-    }
-
-    fn prepass_fragment_shader() -> ShaderRef {
-        "shaders/wfx_additive.wgsl".into()
     }
 }
 
