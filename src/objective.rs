@@ -506,28 +506,8 @@ pub fn tower_destruction_system(
                     info!("  ... ({} more time slots)", hist_sorted.len() - 10);
                 }
             }
-            
-            // Create massive explosion effect at tower location using custom shader
-            // Particle effects are bundled inside spawn_custom_shader_explosion
-            if let Some(assets) = explosion_assets.as_ref() {
-                spawn_custom_shader_explosion(
-                    &mut commands,
-                    &mut meshes,
-                    &mut explosion_materials,
-                    &assets,
-                    particle_effects.as_ref().map(|p| p.as_ref()),
-                    tower_transform.translation,
-                    tower.destruction_radius * 0.5, // Scale down the quad size
-                    3.0, // High intensity for tower explosion
-                    EXPLOSION_EFFECT_DURATION * 2.0, // Tower explosion lasts longer
-                    true, // is_tower
-                    time.elapsed_seconds_f64(),
-                );
-            } else {
-                warn!("Cannot spawn tower explosion - ExplosionAssets not loaded");
-            }
-            
-            // Add PendingExplosion to tower to prevent re-processing
+
+            // Add PendingExplosion to tower - the actual WFX explosion is spawned in pending_explosion_system
             if let Some(mut entity_commands) = commands.get_entity(tower_entity) {
                 entity_commands.try_insert(PendingExplosion {
                     delay_timer: 0.1, // Very short delay before removing tower
@@ -549,9 +529,13 @@ pub fn pending_explosion_system(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut explosion_materials: ResMut<Assets<ExplosionMaterial>>,
     mut images: ResMut<Assets<Image>>,
+    mut smoke_materials: ResMut<Assets<crate::wfx_materials::SmokeScrollMaterial>>,
+    mut additive_materials: ResMut<Assets<crate::wfx_materials::AdditiveMaterial>>,
+    mut smoke_only_materials: ResMut<Assets<crate::wfx_materials::SmokeOnlyMaterial>>,
     explosion_assets: Option<Res<ExplosionAssets>>,
     particle_effects: Option<Res<ExplosionParticleEffects>>,
     audio_assets: Res<AudioAssets>,
+    asset_server: Res<AssetServer>,
     mut explosion_query: Query<(Entity, &mut PendingExplosion, &Transform, Option<&UplinkTower>), With<PendingExplosion>>,
     time: Res<Time>,
 ) {
@@ -597,29 +581,26 @@ pub fn pending_explosion_system(
     ready_to_explode.shuffle(&mut rng);
 
     // Process towers first (high priority, always immediate)
-    for (entity, position, explosion_radius) in towers_ready {
+    for (entity, position, _explosion_radius) in towers_ready {
         info!("🏰 Processing TOWER explosion at {:?}", position);
-        if let Some(assets) = explosion_assets.as_ref() {
-            spawn_custom_shader_explosion(
-                &mut commands,
-                &mut meshes,
-                &mut explosion_materials,
-                &assets,
-                particle_effects.as_ref().map(|p| p.as_ref()),
-                position,
-                explosion_radius * 0.1,
-                3.0,
-                EXPLOSION_EFFECT_DURATION,
-                true, // is_tower
-                time.elapsed_seconds_f64(),
-            );
-        }
 
         // Play tower explosion sound
         commands.spawn(AudioBundle {
             source: audio_assets.explosion_sound.clone(),
             settings: PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::new(0.5)),
         });
+
+        // Spawn combined WFX explosion (glow + flames + smoke + sparkles)
+        crate::wfx_spawn::spawn_combined_explosion(
+            &mut commands,
+            &mut meshes,
+            &mut additive_materials,
+            &mut smoke_materials,
+            &mut smoke_only_materials,
+            &asset_server,
+            position,
+            4.0, // Large scale for tower
+        );
 
         commands.entity(entity).despawn_recursive();
     }
@@ -857,6 +838,147 @@ pub fn debug_explosion_hotkey_system(
             }
         }
     }
-    
-    // T key and R key functionality removed - use Y/U/I keys in explosion_shader.rs instead
+}
+
+// Debug system to test War FX explosion at map center
+pub fn debug_warfx_test_system(
+    keyboard_input: Res<ButtonInput<KeyCode>>,
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut additive_materials: ResMut<Assets<crate::wfx_materials::AdditiveMaterial>>,
+    mut smoke_materials: ResMut<Assets<crate::wfx_materials::SmokeScrollMaterial>>,
+    mut smoke_only_materials: ResMut<Assets<crate::wfx_materials::SmokeOnlyMaterial>>,
+    asset_server: Res<AssetServer>,
+) {
+    // 1 key: Spawn center glow billboards
+    if keyboard_input.just_pressed(KeyCode::Digit1) {
+        info!("🎆 DEBUG: War FX test hotkey (1) pressed! Spawning glow...");
+
+        let position = Vec3::new(0.0, 10.0, 0.0);
+        let scale = 2.0;
+
+        // Spawn center glow billboards
+        crate::wfx_spawn::spawn_warfx_center_glow(
+            &mut commands,
+            &mut meshes,
+            &mut additive_materials,
+            &asset_server,
+            position,
+            scale,
+        );
+
+        info!("💡 War FX glow spawned at center (0, 10, 0)");
+    }
+
+    // 2 key: Spawn COMPLETE explosion (center glow + smoke particles)
+    // This matches Unity's WFX_ExplosiveSmoke_Big prefab which has multiple emitters
+    if keyboard_input.just_pressed(KeyCode::Digit2) {
+        info!("🔥 DEBUG: War FX explosion hotkey (2) pressed! Spawning complete explosion...");
+
+        let position = Vec3::new(0.0, 10.0, 0.0);
+        let scale = 2.0;
+
+        // Spawn smoke/flame particles only (Explosion emitter)
+        crate::wfx_spawn::spawn_explosion_flames(
+            &mut commands,
+            &mut meshes,
+            &mut smoke_materials,
+            &asset_server,
+            position,
+            scale,
+        );
+
+        info!("🔥 War FX complete explosion spawned at center (0, 10, 0)");
+    }
+
+    // 3 key: Spawn smoke emitter (lingering smoke trail)
+    // This is the second phase of the Unity WFX_ExplosiveSmoke_Big effect
+    if keyboard_input.just_pressed(KeyCode::Digit3) {
+        info!("💨 DEBUG: War FX smoke hotkey (3) pressed! Spawning smoke emitter...");
+
+        let position = Vec3::new(0.0, 10.0, 0.0);
+        let scale = 2.0;
+
+        // Spawn smoke emitter (delayed start, continuous emission)
+        crate::wfx_spawn::spawn_smoke_emitter(
+            &mut commands,
+            &mut meshes,
+            &mut smoke_only_materials,
+            &asset_server,
+            position,
+            scale,
+        );
+
+        info!("💨 War FX smoke emitter spawned at center (0, 10, 0)");
+    }
+
+    // 4 key: Spawn glow sparkles (fast-moving embers with gravity)
+    if keyboard_input.just_pressed(KeyCode::Digit4) {
+        info!("✨ DEBUG: War FX sparkles hotkey (4) pressed! Spawning glow sparkles...");
+
+        let position = Vec3::new(0.0, 10.0, 0.0);
+        let scale = 2.0;
+
+        crate::wfx_spawn::spawn_glow_sparkles(
+            &mut commands,
+            &mut meshes,
+            &mut additive_materials,
+            &asset_server,
+            position,
+            scale,
+        );
+
+        info!("✨ War FX glow sparkles spawned at center (0, 10, 0)");
+    }
+
+    // 5 key: Spawn combined explosion (all 4 emitters together)
+    if keyboard_input.just_pressed(KeyCode::Digit5) {
+        info!("💥 DEBUG: War FX COMBINED explosion hotkey (5) pressed!");
+
+        let position = Vec3::new(0.0, 10.0, 0.0);
+        let scale = 4.0; // Adjustable scale parameter
+
+        crate::wfx_spawn::spawn_combined_explosion(
+            &mut commands,
+            &mut meshes,
+            &mut additive_materials,
+            &mut smoke_materials,
+            &mut smoke_only_materials,
+            &asset_server,
+            position,
+            scale,
+        );
+
+        info!("💥 War FX COMBINED explosion spawned at center (0, 10, 0) with scale {}", scale);
+    }
+
+    // 6 key: Spawn dot sparkles (both regular and vertical)
+    if keyboard_input.just_pressed(KeyCode::Digit6) {
+        info!("🔶 DEBUG: War FX dot sparkles hotkey (6) pressed!");
+
+        let position = Vec3::new(0.0, 10.0, 0.0);
+        let scale = 2.0;
+
+        // Regular dot sparkles (75 particles, gravity-affected)
+        crate::wfx_spawn::spawn_dot_sparkles(
+            &mut commands,
+            &mut meshes,
+            &mut additive_materials,
+            &asset_server,
+            position,
+            scale,
+        );
+
+        // Vertical dot sparkles (15 particles, float upward)
+        crate::wfx_spawn::spawn_dot_sparkles_vertical(
+            &mut commands,
+            &mut meshes,
+            &mut additive_materials,
+            &asset_server,
+            position,
+            scale,
+        );
+
+        info!("🔶 War FX dot sparkles (75 + 15) spawned at center (0, 10, 0)");
+    }
 } 
