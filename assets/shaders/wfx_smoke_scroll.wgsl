@@ -38,18 +38,41 @@ fn fragment(
     // Unity formula: mask = tex_alpha * vertex_alpha (for visibility)
     let mask = tex_alpha * particle_alpha;
 
-    // Spatial color blending:
-    // - Center (high tex_alpha): bright flame color
-    // - Edges (low tex_alpha): dark smoke color
-    // - Over lifetime: edges get darker while center stays bright longer
-    var flame_color = mix(tint_color, vec3<f32>(1.0), 0.8);
-    flame_color = max(flame_color, vec3<f32>(0.85));
-    let smoke_color = vec3<f32>(0.3);
+    // Unity Start Color Gradient colors (from EXPLOSION_EMITTER_DETAILS.md):
+    // - Bright orange flame: rgb(1.0, 0.522, 0.2)
+    // - Dark red/brown smoke: rgb(0.663, 0.235, 0.184)
+    let base_flame_color = vec3<f32>(1.0, 0.522, 0.2) * tint_color;
+    let base_smoke_color = vec3<f32>(0.663, 0.235, 0.184);
 
-    // Use tex_alpha to blend spatially: center=flame, edges=smoke
-    // Also factor in lifetime: as particle ages, even center darkens slightly
-    let spatial_blend = tex_alpha * (0.5 + 0.5 * particle_alpha);  // center stays bright longer
-    let pixel_color = mix(smoke_color, flame_color, spatial_blend);
+    // Unity Color Over Lifetime multiplier:
+    // - 0%: 1.0 (white), 20%: 0.694, 41%: 0.404, 100%: 0.596
+    // Approximate with: starts white, dips to ~0.4 mid-life, recovers slightly
+    // particle_alpha: 1.0 at spawn → 0.0 at death
+    let lifetime_t = 1.0 - particle_alpha;  // 0.0 at spawn → 1.0 at death
+    // Piecewise approximation of Unity's curve
+    let lifetime_mult = select(
+        mix(1.0, 0.694, lifetime_t / 0.2),  // 0-20%: 1.0 → 0.694
+        select(
+            mix(0.694, 0.404, (lifetime_t - 0.2) / 0.21),  // 20-41%: 0.694 → 0.404
+            mix(0.404, 0.596, (lifetime_t - 0.41) / 0.59),  // 41-100%: 0.404 → 0.596
+            lifetime_t > 0.41
+        ),
+        lifetime_t > 0.2
+    );
+
+    // Apply lifetime darkening to base colors
+    let darkened_flame = base_flame_color * lifetime_mult;
+    let darkened_smoke = base_smoke_color * lifetime_mult;
+
+    // For bright fusing cores: blend toward white at center (high tex_alpha)
+    // Multiply blend needs rgb + alpha > 1.0 to brighten
+    // Orange (1.0, 0.522, 0.2) only brightens red, so we boost toward white at centers
+    let center_boost = tex_alpha * particle_alpha;  // strongest at center + start of life
+    let bright_flame = mix(darkened_flame, vec3<f32>(1.0, 0.95, 0.85), center_boost * 0.7);
+
+    // Spatial blend: center=bright flame, edges=dark smoke
+    let spatial_blend = tex_alpha * (0.5 + 0.5 * particle_alpha);
+    let pixel_color = mix(darkened_smoke, bright_flame, spatial_blend);
 
     // Unity's key formula: lerp(0.5, color, mask) for RGB
     let final_rgb = mix(vec3<f32>(0.5), pixel_color, mask);
