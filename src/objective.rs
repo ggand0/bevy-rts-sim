@@ -506,28 +506,8 @@ pub fn tower_destruction_system(
                     info!("  ... ({} more time slots)", hist_sorted.len() - 10);
                 }
             }
-            
-            // Create massive explosion effect at tower location using custom shader
-            // Particle effects are bundled inside spawn_custom_shader_explosion
-            if let Some(assets) = explosion_assets.as_ref() {
-                spawn_custom_shader_explosion(
-                    &mut commands,
-                    &mut meshes,
-                    &mut explosion_materials,
-                    &assets,
-                    particle_effects.as_ref().map(|p| p.as_ref()),
-                    tower_transform.translation,
-                    tower.destruction_radius * 0.5, // Scale down the quad size
-                    3.0, // High intensity for tower explosion
-                    EXPLOSION_EFFECT_DURATION * 2.0, // Tower explosion lasts longer
-                    true, // is_tower
-                    time.elapsed_seconds_f64(),
-                );
-            } else {
-                warn!("Cannot spawn tower explosion - ExplosionAssets not loaded");
-            }
-            
-            // Add PendingExplosion to tower to prevent re-processing
+
+            // Add PendingExplosion to tower - the actual WFX explosion is spawned in pending_explosion_system
             if let Some(mut entity_commands) = commands.get_entity(tower_entity) {
                 entity_commands.try_insert(PendingExplosion {
                     delay_timer: 0.1, // Very short delay before removing tower
@@ -550,6 +530,8 @@ pub fn pending_explosion_system(
     mut explosion_materials: ResMut<Assets<ExplosionMaterial>>,
     mut images: ResMut<Assets<Image>>,
     mut smoke_materials: ResMut<Assets<crate::wfx_materials::SmokeScrollMaterial>>,
+    mut additive_materials: ResMut<Assets<crate::wfx_materials::AdditiveMaterial>>,
+    mut smoke_only_materials: ResMut<Assets<crate::wfx_materials::SmokeOnlyMaterial>>,
     explosion_assets: Option<Res<ExplosionAssets>>,
     particle_effects: Option<Res<ExplosionParticleEffects>>,
     audio_assets: Res<AudioAssets>,
@@ -599,23 +581,8 @@ pub fn pending_explosion_system(
     ready_to_explode.shuffle(&mut rng);
 
     // Process towers first (high priority, always immediate)
-    for (entity, position, explosion_radius) in towers_ready {
+    for (entity, position, _explosion_radius) in towers_ready {
         info!("🏰 Processing TOWER explosion at {:?}", position);
-        if let Some(assets) = explosion_assets.as_ref() {
-            spawn_custom_shader_explosion(
-                &mut commands,
-                &mut meshes,
-                &mut explosion_materials,
-                &assets,
-                particle_effects.as_ref().map(|p| p.as_ref()),
-                position,
-                explosion_radius * 0.1,
-                3.0,
-                EXPLOSION_EFFECT_DURATION,
-                true, // is_tower
-                time.elapsed_seconds_f64(),
-            );
-        }
 
         // Play tower explosion sound
         commands.spawn(AudioBundle {
@@ -623,14 +590,16 @@ pub fn pending_explosion_system(
             settings: PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::new(0.5)),
         });
 
-        // Spawn War FX scrolling smoke explosion
-        crate::wfx_spawn::spawn_warfx_tower_explosion(
+        // Spawn combined WFX explosion (glow + flames + smoke + sparkles)
+        crate::wfx_spawn::spawn_combined_explosion(
             &mut commands,
             &mut meshes,
+            &mut additive_materials,
             &mut smoke_materials,
+            &mut smoke_only_materials,
             &asset_server,
             position,
-            2.0, // Large scale for tower
+            4.0, // Large scale for tower
         );
 
         commands.entity(entity).despawn_recursive();
