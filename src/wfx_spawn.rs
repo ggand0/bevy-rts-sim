@@ -248,52 +248,56 @@ pub fn spawn_warfx_center_glow(
             particle_texture: glow_texture.clone(),
         });
 
-        // Base quad size (Unity starts at 0.3 scale, so smaller base)
-        let quad_size = 4.0 * scale;
+        // Base quad size: Unity start size = 9 (much larger than other emitters)
+        let quad_size = 9.0 * scale;
         let quad_mesh = meshes.add(Rectangle::new(quad_size, quad_size));
 
         // Unity WFX_ExplosiveSmoke_Big2 lifetime: 0.7s constant
         let lifetime = 0.7;
 
-        // Unity: Start Speed = 0.4 (minimal movement)
-        let velocity = Vec3::new(0.0, 0.4, 0.0) * scale;
+        // Glow stays centered at explosion origin (no drift)
+        let velocity = Vec3::ZERO;
 
         // Unity: Start Rotation = 45° fixed (not spinning)
         let rotation_speed = 0.0;
 
-        // Unity Size Over Lifetime curve (4 keyframes):
-        // t=0.0 → 0.3, t=0.2 → 0.7, t=0.6 → 1.0, t=1.0 → 0.5
+        // Unity Size Over Lifetime curve - grow then shrink (fireball expansion/contraction)
+        // Original has curved tangents; using more keyframes to approximate the shape:
+        // - Fast initial growth (smooth acceleration)
+        // - Peak at 60%
+        // - Steep shrink at end (steep -3.32 tangent)
         let scale_curve = AnimationCurve {
             keyframes: vec![
-                (0.0, 0.3),
-                (0.2, 0.7),
-                (0.6, 1.0),
-                (1.0, 0.5),
+                (0.0, 0.3),    // Start small (30%)
+                (0.10, 0.5),   // Quick initial growth
+                (0.20, 0.7),   // Continue growing
+                (0.50, 0.95),  // Near peak
+                (0.60, 1.0),   // Peak at full size
+                (0.75, 0.8),   // Start shrinking
+                (0.90, 0.6),   // Continue shrinking (steep)
+                (1.0, 0.5),    // End at 50%
             ],
         };
 
-        // Unity Alpha Over Lifetime curve (4 keyframes):
-        // Fade in, sustain, fade out
-        // t=0.0 → 0.0, t=0.15 → 1.0, t=0.8 → 1.0, t=1.0 → 0.0
+        // Unity Alpha Over Lifetime curve (from EMBEDDED_GLOW_EMITTER_DETAILS.md):
+        // Quick flash: fast fade-in (10%), brief hold (25%), long fade-out
         let alpha_curve = AnimationCurve {
             keyframes: vec![
-                (0.0, 0.0),   // Start invisible
-                (0.15, 1.0),  // Fade in quickly
-                (0.8, 1.0),   // Sustain brightness
-                (1.0, 0.0),   // Fade out at end
+                (0.0, 0.0),    // Start invisible
+                (0.10, 1.0),   // Fast fade-in (10% of lifetime)
+                (0.25, 1.0),   // Brief hold at full brightness
+                (1.0, 0.0),    // Long gradual fade-out
             ],
         };
 
-        // Unity Color Over Lifetime curve (warm fire colors):
-        // Based on "Glow sparkles" emitter analysis
-        // t=0.0 → Warm yellow-white
-        // t=0.5 → Orange-red
-        // t=1.0 → Dark red-brown
+        // Unity Color Over Lifetime curve (from EMBEDDED_GLOW_EMITTER_DETAILS.md):
+        // t=0%: rgb(0.976, 0.753, 0.714) - Pink/coral
+        // t=50%: rgb(1.0, 0.478, 0.478) - Salmon/red (holds to end)
         let color_curve = ColorCurve {
             keyframes: vec![
-                (0.0, Vec3::new(1.0, 0.9, 0.6)),   // Warm yellow-white
-                (0.5, Vec3::new(1.0, 0.6, 0.3)),   // Orange-red
-                (1.0, Vec3::new(0.6, 0.3, 0.2)),   // Dark red-brown
+                (0.0, Vec3::new(0.976, 0.753, 0.714)),  // Pink/coral - warm heat
+                (0.5, Vec3::new(1.0, 0.478, 0.478)),    // Salmon - saturated red
+                (1.0, Vec3::new(1.0, 0.478, 0.478)),    // Hold salmon to end
             ],
         };
 

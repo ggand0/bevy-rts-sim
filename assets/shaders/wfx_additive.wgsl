@@ -23,16 +23,19 @@ fn fragment(
     // Unity "A8" textures use RGB luminance as alpha mask
     let luminance = dot(tex.rgb, vec3<f32>(0.299, 0.587, 0.114));
 
-    // Discard very dark pixels (black background)
-    if (luminance < 0.05) {
-        discard;
-    }
+    // Soft falloff instead of hard discard - preserves gaussian-like edges
+    // Use smoothstep for gradual fade at low luminance values
+    let soft_alpha = smoothstep(0.0, 0.3, luminance);
 
-    // Apply 4x brightness multiplier (Unity shader does 2.0 * 2.0)
+    // Apply brightness multiplier (Unity shader does 2.0 * 2.0)
     let brightness = 4.0;
+
+    // Combine luminance-based alpha with soft falloff and tint alpha
+    let final_alpha = luminance * soft_alpha * tint_color.a;
+
     let final_color = vec4<f32>(
-        tex.rgb * tint_color.rgb * brightness,
-        luminance * tint_color.a
+        tex.rgb * tint_color.rgb * brightness * soft_alpha,
+        final_alpha
     );
 
     return final_color;
