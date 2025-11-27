@@ -35,27 +35,28 @@ fn fragment(
     // Try WITHOUT inversion first - use exactly like Unity
     let tex_alpha = textureSample(smoke_texture, smoke_sampler, uv).a;
 
-    // Unity formula: mask = tex_alpha * vertex_alpha
+    // Unity formula: mask = tex_alpha * vertex_alpha (for visibility)
     let mask = tex_alpha * particle_alpha;
 
-    // Unity blend equation: result = dst * (src.rgb + src.a)
-    // For neutral (no change to scene): src.rgb + src.a = 1.0
-    // Unity's lerp(0.5, color, mask) gives:
-    //   At edges (mask=0): rgb=0.5, alpha=0.5 → factor = 0.5 + 0.5 = 1.0 (neutral!)
-    //   At center (mask=1): rgb=color, alpha=color.a → factor = color + alpha
-
-    // Bright flame color for the start, dark smoke for the end
+    // Spatial color blending:
+    // - Center (high tex_alpha): bright flame color
+    // - Edges (low tex_alpha): dark smoke color
+    // - Over lifetime: edges get darker while center stays bright longer
     var flame_color = mix(tint_color, vec3<f32>(1.0), 0.8);
     flame_color = max(flame_color, vec3<f32>(0.85));
     let smoke_color = vec3<f32>(0.3);
 
-    // Transition from bright flame to dark smoke based on particle lifetime
-    let lifetime_color = mix(smoke_color, flame_color, particle_alpha);
+    // Use tex_alpha to blend spatially: center=flame, edges=smoke
+    // Also factor in lifetime: as particle ages, even center darkens slightly
+    let spatial_blend = tex_alpha * (0.5 + 0.5 * particle_alpha);  // center stays bright longer
+    let pixel_color = mix(smoke_color, flame_color, spatial_blend);
 
-    // Unity's key formula: lerp(0.5, color, mask) for BOTH rgb AND alpha
-    // This ensures edges are perfectly neutral (0.5 + 0.5 = 1.0)
-    let final_rgb = mix(vec3<f32>(0.5), lifetime_color, mask);
-    let final_alpha = mix(0.5, 1.0, mask);
+    // Unity's key formula: lerp(0.5, color, mask) for RGB
+    let final_rgb = mix(vec3<f32>(0.5), pixel_color, mask);
+
+    // Alpha tied to color for proper brighten/darken blend math
+    let target_alpha = pixel_color.r;
+    let final_alpha = mix(0.5, target_alpha, mask);
 
     return vec4<f32>(final_rgb, final_alpha);
 }
