@@ -1,13 +1,13 @@
 // War FX Scrolling Smoke Shader
 // Converted from Unity shader: WFX_S Smoke Scroll
-// Blend mode: DstColor SrcAlpha (multiply blend)
+// Blend mode: DstColor SrcAlpha (Unity's exact blend equation)
 // Creates volumetric smoke effect via UV scrolling
 
 #import bevy_pbr::forward_io::VertexOutput
 #import bevy_pbr::mesh_view_bindings::globals
 
 struct SmokeScrollMaterial {
-    tint_color_and_speed: vec4<f32>,  // RGB = tint, A = scroll_speed
+    tint_color_and_speed: vec4<f32>,  // RGB = tint, A = packed(scroll_speed + particle_alpha)
 }
 
 @group(2) @binding(0)
@@ -31,34 +31,31 @@ fn fragment(
     let scroll_speed = floor(packed_w);
     let particle_alpha = fract(packed_w);
 
-    // Sample texture alpha - it's actually LOW at center, HIGH at edges
+    // Sample texture alpha directly (HIGH at center, LOW at edges in the file)
+    // Try WITHOUT inversion first - use exactly like Unity
     let tex_alpha = textureSample(smoke_texture, smoke_sampler, uv).a;
 
-    // INVERT to get spatial mask: HIGH at center, LOW at edges
-    let spatial_mask = 1.0 - tex_alpha;
+    // Unity formula: mask = tex_alpha * vertex_alpha
+    let mask = tex_alpha * particle_alpha;
 
-    // particle_alpha controls the flame→smoke transition over lifetime:
-    // High alpha (start, ~1.0) = bright flame (values > 0.5 brighten)
-    // Low alpha (end, ~0.0) = dark smoke (values < 0.5 darken)
+    // Unity blend equation: result = dst * (src.rgb + src.a)
+    // For neutral (no change to scene): src.rgb + src.a = 1.0
+    // Unity's lerp(0.5, color, mask) gives:
+    //   At edges (mask=0): rgb=0.5, alpha=0.5 → factor = 0.5 + 0.5 = 1.0 (neutral!)
+    //   At center (mask=1): rgb=color, alpha=color.a → factor = color + alpha
 
-    // Bright flame color for the start
-    var bright_color = mix(tint_color, vec3<f32>(1.0), 0.8);
-    bright_color = max(bright_color, vec3<f32>(0.85));
-
-    // Dark smoke color for the end (below 0.5 causes darkening in multiply blend)
+    // Bright flame color for the start, dark smoke for the end
+    var flame_color = mix(tint_color, vec3<f32>(1.0), 0.8);
+    flame_color = max(flame_color, vec3<f32>(0.85));
     let smoke_color = vec3<f32>(0.3);
 
     // Transition from bright flame to dark smoke based on particle lifetime
-    let lifetime_color = mix(smoke_color, bright_color, particle_alpha);
+    let lifetime_color = mix(smoke_color, flame_color, particle_alpha);
 
-    // Apply spatial mask: center gets the color, edges get neutral 0.5
-    let final_rgb = mix(vec3<f32>(0.5), lifetime_color, spatial_mask);
-
-    // For multiply blend, we want the effect to stay visible as smoke
-    // Keep alpha relatively high but fade at edges
-    // Use particle_alpha^0.3 to keep it visible longer (slower fade)
-    let fade_alpha = pow(particle_alpha, 0.3);
-    let final_alpha = spatial_mask * fade_alpha;
+    // Unity's key formula: lerp(0.5, color, mask) for BOTH rgb AND alpha
+    // This ensures edges are perfectly neutral (0.5 + 0.5 = 1.0)
+    let final_rgb = mix(vec3<f32>(0.5), lifetime_color, mask);
+    let final_alpha = mix(0.5, 1.0, mask);
 
     return vec4<f32>(final_rgb, final_alpha);
 }
