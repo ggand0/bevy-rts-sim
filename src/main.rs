@@ -7,6 +7,7 @@ mod setup;
 mod commander;
 mod objective;
 mod explosion_shader;
+mod explosion_system;
 mod particles;
 mod wfx_materials;
 mod wfx_spawn;
@@ -33,6 +34,7 @@ fn main() {
         .insert_resource(SpatialGrid::new())
         .insert_resource(SquadManager::new())
         .insert_resource(GameState::default())
+        .insert_resource(ExplosionDebugMode::default())
         .add_systems(Startup, (setup::setup_scene, setup::spawn_army_with_squads, spawn_uplink_towers, spawn_objective_ui))
         .add_systems(Update, (
             // Formation and squad management systems run first
@@ -67,6 +69,7 @@ fn main() {
             explosion_effect_system,
             win_condition_system,
             update_objective_ui_system,
+            update_debug_mode_ui,
             debug_explosion_hotkey_system,
             debug_warfx_test_system,
             wfx_spawn::update_warfx_explosions,
