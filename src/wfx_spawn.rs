@@ -466,6 +466,267 @@ pub fn spawn_glow_sparkles(
     info!("✅ WAR FX: Spawned 35 glow sparkles");
 }
 
+/// Spawns dot sparkles emitter - dense shower of bright sparks
+/// Unity emitter: "Dot Sparkles" - fast-moving sparks that spray outward with gravity
+///
+/// Key characteristics:
+/// - Random high speed: 12-24 units/sec (varied spread)
+/// - Moderate gravity: 2 units/sec² (gentler arcs than glow sparkles)
+/// - Short lifetime: 0.2-0.3 seconds
+/// - 75 particles total in 3 equal bursts (25×3)
+/// - Fire color gradient: white → yellow → orange → red
+/// - Narrower spread: 25° cone (more focused than glow sparkles)
+pub fn spawn_dot_sparkles(
+    commands: &mut Commands,
+    meshes: &mut ResMut<Assets<Mesh>>,
+    additive_materials: &mut ResMut<Assets<AdditiveMaterial>>,
+    asset_server: &Res<AssetServer>,
+    position: Vec3,
+    scale: f32,
+) {
+    // Use GlowCircle instead of SmallDots - SmallDots is a multi-dot atlas that doesn't work well
+    let dot_texture = asset_server.load("textures/wfx/WFX_T_GlowCircle A8.png");
+
+    info!("✨ WAR FX: Spawning dot sparkles at {:?} (75 particles)", position);
+
+    let mut rng = rand::thread_rng();
+
+    // Burst configuration: 75 particles total in 3 equal bursts
+    let bursts = [
+        (0.00_f32, 25_u32),
+        (0.12_f32, 25_u32),
+        (0.25_f32, 25_u32),
+    ];
+
+    // Small dot size - slightly larger than Unity for visibility
+    let base_size = 0.2 * scale;
+    let quad_mesh = meshes.add(Rectangle::new(base_size, base_size));
+
+    for (delay, count) in bursts {
+        for _ in 0..count {
+            // Random direction - 25° cone (narrower than glow sparkles' 70°)
+            // But allow full hemisphere spread for more visible effect
+            let theta = rng.gen_range(0.0..std::f32::consts::TAU);
+            let phi = rng.gen_range(0.0..(50.0_f32).to_radians()); // Wider than Unity's 25° for visibility
+            let dir = Vec3::new(
+                phi.sin() * theta.cos(),
+                phi.cos(),
+                phi.sin() * theta.sin(),
+            ).normalize();
+
+            // Random offset from center (Unity radius: 1.6)
+            let spawn_offset = dir * rng.gen_range(0.0..1.6) * scale;
+
+            // Random speed between 12-24 (creates varied spread)
+            let speed = rng.gen_range(12.0..24.0) * scale;
+            let initial_velocity = dir * speed;
+
+            // Random lifetime (Unity: 0.2 to 0.3 seconds)
+            let lifetime = rng.gen_range(0.2..0.3);
+
+            // Random size multiplier
+            let size_mult = rng.gen_range(0.5..1.0);
+
+            // Size curve: grow from 40% to full size
+            let scale_curve = AnimationCurve {
+                keyframes: vec![
+                    (0.0, 0.399 * size_mult * scale),
+                    (0.347, 0.764 * size_mult * scale),
+                    (1.0, 0.990 * size_mult * scale),
+                ],
+            };
+
+            // Alpha curve: stay bright for 60%, then fade
+            let alpha_curve = AnimationCurve {
+                keyframes: vec![
+                    (0.0, 1.0),
+                    (0.6, 1.0),
+                    (1.0, 0.0),
+                ],
+            };
+
+            // Fire color gradient (same as glow sparkles)
+            let color_curve = ColorCurve {
+                keyframes: vec![
+                    (0.0, Vec3::new(1.0, 1.0, 1.0)),           // White
+                    (0.20, Vec3::new(1.0, 0.984, 0.843)),      // Warm white
+                    (0.40, Vec3::new(1.0, 0.945, 0.471)),      // Yellow
+                    (0.50, Vec3::new(1.0, 0.796, 0.420)),      // Orange
+                    (0.75, Vec3::new(0.718, 0.196, 0.0)),      // Dark red
+                ],
+            };
+
+            let sparkle_material = additive_materials.add(AdditiveMaterial {
+                tint_color: Vec4::new(1.0, 1.0, 1.0, 1.0),
+                soft_particles_fade: Vec4::new(1.0, 0.0, 0.0, 0.0),
+                particle_texture: dot_texture.clone(),
+            });
+
+            commands.spawn((
+                MaterialMeshBundle {
+                    mesh: quad_mesh.clone(),
+                    material: sparkle_material,
+                    transform: Transform::from_translation(position + spawn_offset)
+                        .with_scale(Vec3::splat(0.399 * size_mult)),
+                    visibility: if delay == 0.0 { Visibility::Visible } else { Visibility::Hidden },
+                    ..Default::default()
+                },
+                bevy::pbr::NotShadowCaster,
+                bevy::pbr::NotShadowReceiver,
+                WarFXExplosion {
+                    lifetime: 0.0,
+                    max_lifetime: lifetime,
+                },
+                WarFxFlame {
+                    spawn_delay: delay,
+                    active: delay == 0.0,
+                },
+                AnimatedSparkle {
+                    scale_curve,
+                    alpha_curve,
+                    color_curve,
+                    velocity: initial_velocity,
+                    gravity: 2.0 * scale, // Lower gravity than glow sparkles (2 vs 4)
+                },
+                Name::new("WFX_DotSparkle"),
+            ));
+        }
+    }
+
+    info!("✅ WAR FX: Spawned 75 dot sparkles");
+}
+
+/// Spawns vertical dot sparkles emitter - upward-floating sparks
+/// Unity emitter: "Dot Sparkles Vertical" - sparks that rise without gravity
+///
+/// Key characteristics:
+/// - Slower speed: 6-12 units/sec (half of regular dot sparkles)
+/// - Zero gravity: sparks float upward, don't fall
+/// - Very short lifetime: 0.1-0.3 seconds
+/// - 15 particles total in 3 small bursts (5×3)
+/// - Same fire color gradient
+/// - Primarily upward direction
+pub fn spawn_dot_sparkles_vertical(
+    commands: &mut Commands,
+    meshes: &mut ResMut<Assets<Mesh>>,
+    additive_materials: &mut ResMut<Assets<AdditiveMaterial>>,
+    asset_server: &Res<AssetServer>,
+    position: Vec3,
+    scale: f32,
+) {
+    // Use GlowCircle instead of SmallDots - SmallDots is a multi-dot atlas that doesn't work well
+    let dot_texture = asset_server.load("textures/wfx/WFX_T_GlowCircle A8.png");
+
+    info!("⬆️ WAR FX: Spawning vertical dot sparkles at {:?} (15 particles)", position);
+
+    let mut rng = rand::thread_rng();
+
+    // Burst configuration: 15 particles total in 3 small bursts
+    let bursts = [
+        (0.00_f32, 5_u32),
+        (0.15_f32, 5_u32),
+        (0.30_f32, 5_u32),
+    ];
+
+    // Small dot size - slightly larger than Unity for visibility
+    let base_size = 0.2 * scale;
+    let quad_mesh = meshes.add(Rectangle::new(base_size, base_size));
+
+    for (delay, count) in bursts {
+        for _ in 0..count {
+            // Primarily upward direction with some X/Z variation
+            // Approximates mesh emission with narrow arc
+            let y = rng.gen_range(0.7..1.0); // Mostly up but with more spread
+            let x = rng.gen_range(-0.3..0.3);
+            let z = rng.gen_range(-0.3..0.3);
+            let dir = Vec3::new(x, y, z).normalize();
+
+            // Small random offset from center
+            let spawn_offset = Vec3::new(
+                rng.gen_range(-0.5..0.5) * scale,
+                rng.gen_range(0.0..0.5) * scale,
+                rng.gen_range(-0.5..0.5) * scale,
+            );
+
+            // Slower speed than regular dot sparkles (6-12 vs 12-24)
+            let speed = rng.gen_range(6.0..12.0) * scale;
+            let initial_velocity = dir * speed;
+
+            // Very short lifetime (Unity: 0.1 to 0.3 seconds)
+            let lifetime = rng.gen_range(0.1..0.3);
+
+            // Random size multiplier
+            let size_mult = rng.gen_range(0.5..1.0);
+
+            // Size curve: grow from 40% to full size
+            let scale_curve = AnimationCurve {
+                keyframes: vec![
+                    (0.0, 0.399 * size_mult * scale),
+                    (0.347, 0.764 * size_mult * scale),
+                    (1.0, 0.990 * size_mult * scale),
+                ],
+            };
+
+            // Alpha curve: stay bright for 60%, then fade
+            let alpha_curve = AnimationCurve {
+                keyframes: vec![
+                    (0.0, 1.0),
+                    (0.6, 1.0),
+                    (1.0, 0.0),
+                ],
+            };
+
+            // Fire color gradient (same as other sparkles)
+            let color_curve = ColorCurve {
+                keyframes: vec![
+                    (0.0, Vec3::new(1.0, 1.0, 1.0)),           // White
+                    (0.20, Vec3::new(1.0, 0.984, 0.843)),      // Warm white
+                    (0.40, Vec3::new(1.0, 0.945, 0.471)),      // Yellow
+                    (0.50, Vec3::new(1.0, 0.796, 0.420)),      // Orange
+                    (0.75, Vec3::new(0.718, 0.196, 0.0)),      // Dark red
+                ],
+            };
+
+            let sparkle_material = additive_materials.add(AdditiveMaterial {
+                tint_color: Vec4::new(1.0, 1.0, 1.0, 1.0),
+                soft_particles_fade: Vec4::new(1.0, 0.0, 0.0, 0.0),
+                particle_texture: dot_texture.clone(),
+            });
+
+            commands.spawn((
+                MaterialMeshBundle {
+                    mesh: quad_mesh.clone(),
+                    material: sparkle_material,
+                    transform: Transform::from_translation(position + spawn_offset)
+                        .with_scale(Vec3::splat(0.399 * size_mult)),
+                    visibility: if delay == 0.0 { Visibility::Visible } else { Visibility::Hidden },
+                    ..Default::default()
+                },
+                bevy::pbr::NotShadowCaster,
+                bevy::pbr::NotShadowReceiver,
+                WarFXExplosion {
+                    lifetime: 0.0,
+                    max_lifetime: lifetime,
+                },
+                WarFxFlame {
+                    spawn_delay: delay,
+                    active: delay == 0.0,
+                },
+                AnimatedSparkle {
+                    scale_curve,
+                    alpha_curve,
+                    color_curve,
+                    velocity: initial_velocity,
+                    gravity: 0.0, // No gravity - sparks float upward
+                },
+                Name::new("WFX_DotSparkleVertical"),
+            ));
+        }
+    }
+
+    info!("✅ WAR FX: Spawned 15 vertical dot sparkles");
+}
+
 /// Component for sparkle animation with gravity
 #[derive(Component, Clone)]
 pub struct AnimatedSparkle {
@@ -524,11 +785,13 @@ pub fn animate_glow_sparkles(
     }
 }
 
-/// Spawns a complete explosion effect combining all 4 emitters:
+/// Spawns a complete explosion effect combining all 6 emitters:
 /// 1. Embedded glow (central flash)
 /// 2. Explosion flames (fire/smoke billboards)
 /// 3. Smoke emitter (lingering smoke trail, delayed 0.5s)
 /// 4. Glow sparkles (fast-moving embers with gravity)
+/// 5. Dot sparkles (dense shower of bright sparks)
+/// 6. Dot sparkles vertical (upward-floating sparks)
 ///
 /// This creates the full Unity WFX_ExplosiveSmoke_Big effect.
 pub fn spawn_combined_explosion(
@@ -553,7 +816,7 @@ pub fn spawn_combined_explosion(
         scale,
     );
 
-    // 2. Explosion flames/smoke billboards (38 particles in bursts)
+    // 2. Explosion flames/smoke billboards (57 particles in bursts)
     spawn_explosion_flames(
         commands,
         meshes,
@@ -583,7 +846,27 @@ pub fn spawn_combined_explosion(
         scale,
     );
 
-    info!("✅ WAR FX: Combined explosion complete - 4 emitters spawned");
+    // 5. Dot sparkles (75 dense sparks with moderate gravity)
+    spawn_dot_sparkles(
+        commands,
+        meshes,
+        additive_materials,
+        asset_server,
+        position,
+        scale,
+    );
+
+    // 6. Dot sparkles vertical (15 upward-floating sparks)
+    spawn_dot_sparkles_vertical(
+        commands,
+        meshes,
+        additive_materials,
+        asset_server,
+        position,
+        scale,
+    );
+
+    info!("✅ WAR FX: Combined explosion complete - 6 emitters spawned");
 }
 
 /// Spawns War FX smoke column using scrolling smoke billboards with SmokeScrollMaterial

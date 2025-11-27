@@ -951,4 +951,34 @@ pub fn debug_warfx_test_system(
 
         info!("💥 War FX COMBINED explosion spawned at center (0, 10, 0) with scale {}", scale);
     }
+
+    // 6 key: Spawn dot sparkles (both regular and vertical)
+    if keyboard_input.just_pressed(KeyCode::Digit6) {
+        info!("🔶 DEBUG: War FX dot sparkles hotkey (6) pressed!");
+
+        let position = Vec3::new(0.0, 10.0, 0.0);
+        let scale = 2.0;
+
+        // Regular dot sparkles (75 particles, gravity-affected)
+        crate::wfx_spawn::spawn_dot_sparkles(
+            &mut commands,
+            &mut meshes,
+            &mut additive_materials,
+            &asset_server,
+            position,
+            scale,
+        );
+
+        // Vertical dot sparkles (15 particles, float upward)
+        crate::wfx_spawn::spawn_dot_sparkles_vertical(
+            &mut commands,
+            &mut meshes,
+            &mut additive_materials,
+            &asset_server,
+            position,
+            scale,
+        );
+
+        info!("🔶 War FX dot sparkles (75 + 15) spawned at center (0, 10, 0)");
+    }
 } 
