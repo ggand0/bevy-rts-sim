@@ -7,6 +7,7 @@ mod setup;
 mod commander;
 mod objective;
 mod explosion_shader;
+mod explosion_system;
 mod particles;
 mod wfx_materials;
 mod wfx_spawn;

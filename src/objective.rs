@@ -3,8 +3,6 @@ use bevy::prelude::*;
 use rand::Rng;
 use crate::types::*;
 use crate::constants::*;
-use crate::explosion_shader::*;
-use crate::particles::*;
 use bevy::render::mesh::{Indices, Mesh, PrimitiveTopology};
 use bevy::render::render_asset::RenderAssetUsages;
 
@@ -425,16 +423,9 @@ pub fn tower_targeting_system(
 
 pub fn tower_destruction_system(
     mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    mut explosion_materials: ResMut<Assets<ExplosionMaterial>>,
-    mut images: ResMut<Assets<Image>>,
-    explosion_assets: Option<Res<ExplosionAssets>>,
-    particle_effects: Option<Res<ExplosionParticleEffects>>,
     tower_query: Query<(Entity, &Transform, &UplinkTower, &Health), (With<UplinkTower>, Without<PendingExplosion>)>,
     droid_query: Query<(Entity, &Transform, &BattleDroid), With<BattleDroid>>,
     mut game_state: ResMut<GameState>,
-    time: Res<Time>,
 ) {
     for (tower_entity, tower_transform, tower, tower_health) in tower_query.iter() {
         if tower_health.is_dead() {
@@ -521,147 +512,9 @@ pub fn tower_destruction_system(
     }
 }
 
-// ===== DELAYED EXPLOSION SYSTEM =====
-
-pub fn pending_explosion_system(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    mut explosion_materials: ResMut<Assets<ExplosionMaterial>>,
-    mut images: ResMut<Assets<Image>>,
-    mut smoke_materials: ResMut<Assets<crate::wfx_materials::SmokeScrollMaterial>>,
-    mut additive_materials: ResMut<Assets<crate::wfx_materials::AdditiveMaterial>>,
-    mut smoke_only_materials: ResMut<Assets<crate::wfx_materials::SmokeOnlyMaterial>>,
-    explosion_assets: Option<Res<ExplosionAssets>>,
-    particle_effects: Option<Res<ExplosionParticleEffects>>,
-    audio_assets: Res<AudioAssets>,
-    asset_server: Res<AssetServer>,
-    mut explosion_query: Query<(Entity, &mut PendingExplosion, &Transform, Option<&UplinkTower>), With<PendingExplosion>>,
-    time: Res<Time>,
-) {
-    // Collect all entities that are ready to explode
-    // We use Vec to shuffle the order, preventing sequential explosions
-    let mut ready_to_explode: Vec<(Entity, Vec3, f32, bool, f32)> = Vec::new(); // Added delay_timer for debugging
-    let mut towers_ready: Vec<(Entity, Vec3, f32)> = Vec::new();
-    let mut total_pending = 0;
-
-    // First pass: update all timers and collect ready entities
-    for (entity, mut pending, transform, tower_component) in explosion_query.iter_mut() {
-        total_pending += 1;
-        let old_timer = pending.delay_timer;
-        pending.delay_timer -= time.delta_seconds();
-
-        if pending.delay_timer <= 0.0 {
-            let is_tower = tower_component.is_some();
-            let explosion_radius = if is_tower {
-                tower_component.unwrap().destruction_radius * 0.5
-            } else {
-                8.0
-            };
-
-            debug!("⏰ Entity {:?} ready to explode: timer {:.3}s → {:.3}s (delta: {:.3}s), pos: {:?}",
-                   entity.index(), old_timer, pending.delay_timer, time.delta_seconds(), transform.translation);
-
-            if is_tower {
-                towers_ready.push((entity, transform.translation, explosion_radius));
-            } else {
-                ready_to_explode.push((entity, transform.translation, explosion_radius, is_tower, old_timer));
-            }
-        }
-    }
-
-    if total_pending > 0 || !ready_to_explode.is_empty() || !towers_ready.is_empty() {
-        info!("📊 EXPLOSION FRAME: {} total pending, {} units ready, {} towers ready",
-              total_pending, ready_to_explode.len(), towers_ready.len());
-    }
-
-    // Shuffle unit explosions to prevent deterministic sequential order
-    use rand::seq::SliceRandom;
-    let mut rng = rand::thread_rng();
-    ready_to_explode.shuffle(&mut rng);
-
-    // Process towers first (high priority, always immediate)
-    for (entity, position, _explosion_radius) in towers_ready {
-        info!("🏰 Processing TOWER explosion at {:?}", position);
-
-        // Play tower explosion sound
-        commands.spawn(AudioBundle {
-            source: audio_assets.explosion_sound.clone(),
-            settings: PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::new(0.5)),
-        });
-
-        // Spawn combined WFX explosion (glow + flames + smoke + sparkles)
-        crate::wfx_spawn::spawn_combined_explosion(
-            &mut commands,
-            &mut meshes,
-            &mut additive_materials,
-            &mut smoke_materials,
-            &mut smoke_only_materials,
-            &asset_server,
-            position,
-            4.0, // Large scale for tower
-        );
-
-        commands.entity(entity).despawn_recursive();
-    }
-
-    // Process unit explosions with frame limit (now in random order)
-    let num_to_process = ready_to_explode.len().min(MAX_EXPLOSIONS_PER_FRAME);
-    if num_to_process > 0 {
-        info!("💥 Processing {} unit explosions this frame (limit: {})", num_to_process, MAX_EXPLOSIONS_PER_FRAME);
-    }
-
-    let explosions_to_process = ready_to_explode.iter().take(MAX_EXPLOSIONS_PER_FRAME);
-
-    for (i, (entity, position, explosion_radius, is_tower, old_timer)) in explosions_to_process.enumerate() {
-        debug!("  └─ Explosion {}/{}: Entity {:?} at {:?} (was {:.3}s late)",
-               i+1, num_to_process, entity.index(), position, old_timer.abs());
-
-        if let Some(assets) = explosion_assets.as_ref() {
-            spawn_custom_shader_explosion(
-                &mut commands,
-                &mut meshes,
-                &mut explosion_materials,
-                &assets,
-                particle_effects.as_ref().map(|p| p.as_ref()),
-                *position,
-                explosion_radius * 0.1,
-                1.0,
-                EXPLOSION_EFFECT_DURATION,
-                *is_tower,
-                time.elapsed_seconds_f64(),
-            );
-        } else {
-            warn!("Cannot spawn unit explosion - ExplosionAssets not loaded");
-        }
-
-        commands.entity(*entity).despawn_recursive();
-    }
-
-    // Log if we had to skip explosions
-    if ready_to_explode.len() > MAX_EXPLOSIONS_PER_FRAME {
-        warn!("⚠️ Skipped {} explosions this frame (over limit)", ready_to_explode.len() - MAX_EXPLOSIONS_PER_FRAME);
-    }
-}
-
-// ===== EXPLOSION VISUAL EFFECTS =====
-
-pub fn explosion_effect_system(
-    mut commands: Commands,
-    mut explosion_query: Query<(Entity, &mut ExplosionEffect, &Transform), With<ExplosionEffect>>,
-    time: Res<Time>,
-) {
-    for (entity, mut effect, _transform) in explosion_query.iter_mut() {
-        effect.timer += time.delta_seconds();
-        
-        // TODO: Update visual effect (scale, alpha, particle systems)
-        // For now, just manage lifetime
-        
-        if effect.timer >= effect.max_time {
-            commands.entity(entity).despawn();
-        }
-    }
-}
+// Explosion systems moved to src/explosion_system.rs
+// Re-export for backwards compatibility
+pub use crate::explosion_system::{pending_explosion_system, explosion_effect_system, PendingExplosion};
 
 // ===== WIN CONDITION SYSTEM =====
 
@@ -740,9 +593,6 @@ pub fn spawn_objective_ui(mut commands: Commands) {
 pub fn debug_explosion_hotkey_system(
     keyboard_input: Res<ButtonInput<KeyCode>>,
     mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    mut images: ResMut<Assets<Image>>,
     mut tower_query: Query<(Entity, &Transform, &UplinkTower, &mut Health), With<UplinkTower>>,
     droid_query: Query<(Entity, &Transform, &BattleDroid), With<BattleDroid>>,
     mut game_state: ResMut<GameState>,

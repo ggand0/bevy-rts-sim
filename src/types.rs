@@ -298,22 +298,7 @@ pub struct ObjectiveTarget {
     pub is_primary: bool, // Primary objectives end the game when destroyed
 }
 
-#[derive(Component)]
-pub struct PendingExplosion {
-    pub delay_timer: f32,
-    pub explosion_power: f32,
-}
-
-// TODO: Update visual effect (scale, alpha, particle systems)
-// For now, just manage lifetime
-
-#[derive(Component)]
-pub struct ExplosionEffect {
-    pub timer: f32,
-    pub max_time: f32,
-    pub radius: f32,
-    pub intensity: f32,
-}
+// PendingExplosion and ExplosionEffect moved to src/explosion_system.rs
 
 // Game state management
 #[derive(Resource, Default)]
