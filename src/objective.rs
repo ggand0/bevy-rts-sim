@@ -961,4 +961,25 @@ pub fn debug_warfx_test_system(
 
         info!("✨ War FX glow sparkles spawned at center (0, 10, 0)");
     }
+
+    // 5 key: Spawn combined explosion (all 4 emitters together)
+    if keyboard_input.just_pressed(KeyCode::Digit5) {
+        info!("💥 DEBUG: War FX COMBINED explosion hotkey (5) pressed!");
+
+        let position = Vec3::new(0.0, 10.0, 0.0);
+        let scale = 2.0; // Adjustable scale parameter
+
+        crate::wfx_spawn::spawn_combined_explosion(
+            &mut commands,
+            &mut meshes,
+            &mut additive_materials,
+            &mut smoke_materials,
+            &mut smoke_only_materials,
+            &asset_server,
+            position,
+            scale,
+        );
+
+        info!("💥 War FX COMBINED explosion spawned at center (0, 10, 0) with scale {}", scale);
+    }
 } 

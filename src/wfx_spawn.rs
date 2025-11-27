@@ -519,6 +519,68 @@ pub fn animate_glow_sparkles(
     }
 }
 
+/// Spawns a complete explosion effect combining all 4 emitters:
+/// 1. Embedded glow (central flash)
+/// 2. Explosion flames (fire/smoke billboards)
+/// 3. Smoke emitter (lingering smoke trail, delayed 0.5s)
+/// 4. Glow sparkles (fast-moving embers with gravity)
+///
+/// This creates the full Unity WFX_ExplosiveSmoke_Big effect.
+pub fn spawn_combined_explosion(
+    commands: &mut Commands,
+    meshes: &mut ResMut<Assets<Mesh>>,
+    additive_materials: &mut ResMut<Assets<AdditiveMaterial>>,
+    smoke_scroll_materials: &mut ResMut<Assets<SmokeScrollMaterial>>,
+    smoke_only_materials: &mut ResMut<Assets<SmokeOnlyMaterial>>,
+    asset_server: &Res<AssetServer>,
+    position: Vec3,
+    scale: f32,
+) {
+    info!("💥 WAR FX: Spawning COMBINED explosion at {:?} (scale: {})", position, scale);
+
+    // 1. Central glow flash (instant, 0.7s lifetime)
+    spawn_warfx_center_glow(
+        commands,
+        meshes,
+        additive_materials,
+        asset_server,
+        position,
+        scale,
+    );
+
+    // 2. Explosion flames/smoke billboards (38 particles in bursts)
+    spawn_explosion_flames(
+        commands,
+        meshes,
+        smoke_scroll_materials,
+        asset_server,
+        position,
+        scale,
+    );
+
+    // 3. Smoke emitter (30 particles, delayed 0.5s start)
+    spawn_smoke_emitter(
+        commands,
+        meshes,
+        smoke_only_materials,
+        asset_server,
+        position,
+        scale,
+    );
+
+    // 4. Glow sparkles (35 fast-moving embers with gravity)
+    spawn_glow_sparkles(
+        commands,
+        meshes,
+        additive_materials,
+        asset_server,
+        position,
+        scale,
+    );
+
+    info!("✅ WAR FX: Combined explosion complete - 4 emitters spawned");
+}
+
 /// Spawns War FX smoke column using scrolling smoke billboards with SmokeScrollMaterial
 /// Creates rising smoke with UV scrolling animation
 pub fn spawn_warfx_smoke_column(
