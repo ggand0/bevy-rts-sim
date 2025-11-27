@@ -331,6 +331,194 @@ pub fn spawn_warfx_center_glow(
     info!("✅ WAR FX: Spawned {} glow billboards", glow_count);
 }
 
+/// Spawns glow sparkles emitter - fast-moving ember particles with gravity
+/// Unity emitter: "Glow sparkles" - bright sparks that shoot outward and fall
+///
+/// Key characteristics:
+/// - High speed: 24 units/sec (vs 0.4 for smoke)
+/// - Strong gravity: 4 units/sec² creates arcing trajectories
+/// - Short lifetime: 0.25-0.35 seconds
+/// - Fire color gradient: white → yellow → orange → red
+/// - Additive blending for glow effect
+/// - Front-loaded bursts: 20+10+5 particles in 0.1 seconds
+pub fn spawn_glow_sparkles(
+    commands: &mut Commands,
+    meshes: &mut ResMut<Assets<Mesh>>,
+    additive_materials: &mut ResMut<Assets<AdditiveMaterial>>,
+    asset_server: &Res<AssetServer>,
+    position: Vec3,
+    scale: f32,
+) {
+    let glow_texture = asset_server.load("textures/wfx/WFX_T_GlowCircle A8.png");
+
+    info!("✨ WAR FX: Spawning glow sparkles at {:?} (35 particles)", position);
+
+    let mut rng = rand::thread_rng();
+
+    // Burst configuration from Unity: (delay_seconds, particle_count)
+    // Front-loaded: 20+10+5 = 35 particles over 0.1 seconds
+    let bursts = [
+        (0.00_f32, 20_u32),
+        (0.05_f32, 10_u32),
+        (0.10_f32, 5_u32),
+    ];
+
+    // Tiny sparkle size (Unity: 0.05 to 0.1)
+    let base_size = 0.15 * scale; // Slightly larger for visibility
+    let quad_mesh = meshes.add(Rectangle::new(base_size, base_size));
+
+    for (delay, count) in bursts {
+        for _ in 0..count {
+            // Random direction within sphere (Unity: radius 2, angle 50°)
+            let theta = rng.gen_range(0.0..std::f32::consts::TAU);
+            let phi = rng.gen_range(0.0..(50.0_f32).to_radians()); // 50° cone
+            let dir = Vec3::new(
+                phi.sin() * theta.cos(),
+                phi.cos(), // Bias upward initially
+                phi.sin() * theta.sin(),
+            ).normalize();
+
+            // Small random offset from center (Unity radius: 2)
+            let spawn_offset = dir * rng.gen_range(0.0..2.0) * scale;
+
+            // High initial velocity (Unity: speed 24)
+            let speed = 24.0 * scale;
+            let initial_velocity = dir * speed;
+
+            // Random lifetime (Unity: 0.25 to 0.35 seconds)
+            let lifetime = rng.gen_range(0.25..0.35);
+
+            // Random size multiplier (Unity: 0.05 to 0.1, normalized)
+            let size_mult = rng.gen_range(0.5..1.0);
+
+            // Size curve: grow from 40% to full size
+            let scale_curve = AnimationCurve {
+                keyframes: vec![
+                    (0.0, 0.399 * size_mult),
+                    (0.347, 0.764 * size_mult),
+                    (1.0, 0.990 * size_mult),
+                ],
+            };
+
+            // Alpha curve: stay bright, quick fade at end
+            let alpha_curve = AnimationCurve {
+                keyframes: vec![
+                    (0.0, 1.0),
+                    (0.8, 1.0),
+                    (1.0, 0.0),
+                ],
+            };
+
+            // Color gradient: white → yellow → orange → dark red
+            let color_curve = ColorCurve {
+                keyframes: vec![
+                    (0.0, Vec3::new(1.0, 1.0, 1.0)),           // White (hottest)
+                    (0.076, Vec3::new(1.0, 0.973, 0.843)),     // Warm white
+                    (0.25, Vec3::new(1.0, 0.945, 0.471)),      // Yellow
+                    (0.515, Vec3::new(1.0, 0.796, 0.420)),     // Orange
+                    (0.779, Vec3::new(0.718, 0.196, 0.0)),     // Dark red/ember
+                ],
+            };
+
+            // Create additive material (same as embedded glow)
+            let sparkle_material = additive_materials.add(AdditiveMaterial {
+                tint_color: Vec4::new(1.0, 1.0, 1.0, 1.0),
+                soft_particles_fade: Vec4::new(1.0, 0.0, 0.0, 0.0),
+                particle_texture: glow_texture.clone(),
+            });
+
+            commands.spawn((
+                MaterialMeshBundle {
+                    mesh: quad_mesh.clone(),
+                    material: sparkle_material,
+                    transform: Transform::from_translation(position + spawn_offset)
+                        .with_scale(Vec3::splat(0.399 * size_mult)), // Start at initial size
+                    visibility: if delay == 0.0 { Visibility::Visible } else { Visibility::Hidden },
+                    ..Default::default()
+                },
+                bevy::pbr::NotShadowCaster,
+                bevy::pbr::NotShadowReceiver,
+                WarFXExplosion {
+                    lifetime: 0.0,
+                    max_lifetime: lifetime,
+                },
+                WarFxFlame {
+                    spawn_delay: delay,
+                    active: delay == 0.0,
+                },
+                AnimatedSparkle {
+                    scale_curve,
+                    alpha_curve,
+                    color_curve,
+                    velocity: initial_velocity,
+                    gravity: 4.0 * scale, // Unity gravity modifier: 4
+                },
+                Name::new("WFX_Sparkle"),
+            ));
+        }
+    }
+
+    info!("✅ WAR FX: Spawned 35 glow sparkles");
+}
+
+/// Component for sparkle animation with gravity
+#[derive(Component, Clone)]
+pub struct AnimatedSparkle {
+    pub scale_curve: AnimationCurve,
+    pub alpha_curve: AnimationCurve,
+    pub color_curve: ColorCurve,
+    pub velocity: Vec3,
+    pub gravity: f32,
+}
+
+/// System to animate glow sparkles (scale, color, velocity with gravity)
+pub fn animate_glow_sparkles(
+    mut query: Query<
+        (
+            &mut Transform,
+            &mut AnimatedSparkle,
+            &WarFXExplosion,
+            &Handle<AdditiveMaterial>,
+        ),
+        With<AnimatedSparkle>,
+    >,
+    mut additive_materials: ResMut<Assets<AdditiveMaterial>>,
+    time: Res<Time>,
+) {
+    let dt = time.delta_seconds();
+
+    for (mut transform, mut sparkle, explosion, material_handle) in query.iter_mut() {
+        // Calculate progress through lifetime (0.0 to 1.0)
+        let progress = (explosion.lifetime / explosion.max_lifetime).clamp(0.0, 1.0);
+
+        // Evaluate scale curve
+        let current_scale = sparkle.scale_curve.evaluate(progress);
+        transform.scale = Vec3::splat(current_scale);
+
+        // Evaluate alpha curve
+        let current_alpha = sparkle.alpha_curve.evaluate(progress);
+
+        // Evaluate color curve
+        let current_color = sparkle.color_curve.evaluate(progress);
+
+        // Update material tint color
+        if let Some(material) = additive_materials.get_mut(material_handle) {
+            material.tint_color = Vec4::new(
+                current_color.x,
+                current_color.y,
+                current_color.z,
+                current_alpha,
+            );
+        }
+
+        // Apply gravity to velocity (accumulates over time)
+        sparkle.velocity.y -= sparkle.gravity * dt;
+
+        // Apply velocity to position
+        transform.translation += sparkle.velocity * dt;
+    }
+}
+
 /// Spawns War FX smoke column using scrolling smoke billboards with SmokeScrollMaterial
 /// Creates rising smoke with UV scrolling animation
 pub fn spawn_warfx_smoke_column(

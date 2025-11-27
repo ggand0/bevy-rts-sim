@@ -75,6 +75,7 @@ fn main() {
             wfx_spawn::animate_warfx_smoke_billboards,
             wfx_spawn::animate_explosion_billboards,
             wfx_spawn::animate_smoke_only_billboards,
+            wfx_spawn::animate_glow_sparkles,
         ))
         .run();
 }

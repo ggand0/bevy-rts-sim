@@ -942,4 +942,23 @@ pub fn debug_warfx_test_system(
 
         info!("💨 War FX smoke emitter spawned at center (0, 10, 0)");
     }
+
+    // 4 key: Spawn glow sparkles (fast-moving embers with gravity)
+    if keyboard_input.just_pressed(KeyCode::Digit4) {
+        info!("✨ DEBUG: War FX sparkles hotkey (4) pressed! Spawning glow sparkles...");
+
+        let position = Vec3::new(0.0, 10.0, 0.0);
+        let scale = 2.0;
+
+        crate::wfx_spawn::spawn_glow_sparkles(
+            &mut commands,
+            &mut meshes,
+            &mut additive_materials,
+            &asset_server,
+            position,
+            scale,
+        );
+
+        info!("✨ War FX glow sparkles spawned at center (0, 10, 0)");
+    }
 } 
