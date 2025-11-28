@@ -59,20 +59,43 @@ pub fn screen_to_ground(
     }
 }
 
+/// Calculate actual squad centers from unit positions
+fn calculate_squad_centers(
+    unit_query: &Query<(&Transform, &SquadMember), (With<BattleDroid>, Without<SelectionVisual>)>,
+) -> std::collections::HashMap<u32, Vec3> {
+    let mut squad_positions: std::collections::HashMap<u32, Vec<Vec3>> = std::collections::HashMap::new();
+
+    for (transform, squad_member) in unit_query.iter() {
+        squad_positions.entry(squad_member.squad_id)
+            .or_insert_with(Vec::new)
+            .push(transform.translation);
+    }
+
+    let mut centers = std::collections::HashMap::new();
+    for (squad_id, positions) in squad_positions {
+        if !positions.is_empty() {
+            let sum: Vec3 = positions.iter().sum();
+            centers.insert(squad_id, sum / positions.len() as f32);
+        }
+    }
+    centers
+}
+
 /// Find the squad closest to a world position (for click selection)
+/// Uses actual unit positions, not anchored squad.center_position
 pub fn find_squad_at_position(
     world_pos: Vec3,
-    squad_manager: &SquadManager,
+    squad_centers: &std::collections::HashMap<u32, Vec3>,
     max_distance: f32,
 ) -> Option<u32> {
     let mut closest_squad: Option<u32> = None;
     let mut closest_distance = max_distance;
 
-    for (squad_id, squad) in squad_manager.squads.iter() {
+    for (squad_id, center) in squad_centers.iter() {
         let distance = Vec3::new(
-            world_pos.x - squad.center_position.x,
+            world_pos.x - center.x,
             0.0,  // Ignore Y for horizontal distance
-            world_pos.z - squad.center_position.z,
+            world_pos.z - center.z,
         ).length();
 
         if distance < closest_distance {
@@ -90,7 +113,7 @@ pub fn selection_input_system(
     keyboard: Res<ButtonInput<KeyCode>>,
     window_query: Query<&Window, With<PrimaryWindow>>,
     camera_query: Query<(&Camera, &GlobalTransform), With<RtsCamera>>,
-    squad_manager: Res<SquadManager>,
+    unit_query: Query<(&Transform, &SquadMember), (With<BattleDroid>, Without<SelectionVisual>)>,
     mut selection_state: ResMut<SelectionState>,
 ) {
     let Ok(window) = window_query.get_single() else { return };
@@ -118,7 +141,10 @@ pub fn selection_input_system(
                 if let Some(world_pos) = screen_to_ground(cursor_pos, camera, camera_transform) {
                     let shift_held = keyboard.pressed(KeyCode::ShiftLeft) || keyboard.pressed(KeyCode::ShiftRight);
 
-                    if let Some(squad_id) = find_squad_at_position(world_pos, &squad_manager, SELECTION_CLICK_RADIUS) {
+                    // Calculate actual squad centers from unit positions
+                    let squad_centers = calculate_squad_centers(&unit_query);
+
+                    if let Some(squad_id) = find_squad_at_position(world_pos, &squad_centers, SELECTION_CLICK_RADIUS) {
                         if shift_held {
                             // Toggle selection
                             if selection_state.selected_squads.contains(&squad_id) {
