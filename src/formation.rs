@@ -143,19 +143,26 @@ pub fn squad_formation_system(
                 0.0,
                 transform.translation.z - droid.target_position.z,
             ).length();
-            let has_arrived = distance_to_target < 2.0;
-            let is_actively_moving = !has_arrived && !droid.returning_to_spawn;
-            
-            // DISABLE FORMATION CORRECTION DURING MOVEMENT: Don't apply formation correction if unit is actively marching or retreating
-            let should_apply_formation_correction = if is_actively_moving || droid.returning_to_spawn {
-                // COMPLETELY DISABLE formation correction during active march/retreat to prevent interference
-                false // No formation correction at all during advance or retreat
+
+            // Use a smooth transition zone for arrival detection
+            // Units start getting formation correction when within 5 units, full correction at 1 unit
+            let arrival_blend = if distance_to_target > 5.0 {
+                0.0 // Not arrived yet
+            } else if distance_to_target < 1.0 {
+                1.0 // Fully arrived
             } else {
-                // Normal formation correction when arrived at destination
-                distance > 0.2
+                // Smooth blend from 5.0 down to 1.0
+                1.0 - (distance_to_target - 1.0) / 4.0
             };
 
-            // Apply formation correction if needed - much more careful during movement
+            // Skip correction entirely if moving or retreating
+            let should_apply_formation_correction = if droid.returning_to_spawn {
+                false
+            } else {
+                arrival_blend > 0.0 && distance > 0.2
+            };
+
+            // Apply formation correction with gradual strength based on arrival progress
             if should_apply_formation_correction && distance < 50.0 {
                 // Get squad size to adapt correction strength
                 let squad_size = if let Some(squad) = squad_manager.get_squad(squad_member.squad_id) {
@@ -165,20 +172,20 @@ pub fn squad_formation_system(
                 };
                 let squad_strength_ratio = squad_size as f32 / SQUAD_SIZE as f32;
 
-                // Strong correction when arrived for rapid formation completion
-                let base_correction_strength = 3.0;
+                // Gentler base correction - ramps up with arrival_blend
+                let base_correction_strength = 1.5 * arrival_blend;
 
                 // Reduce correction for smaller squads to prevent over-correction and drift
                 let size_modifier = if squad_strength_ratio < 0.3 {
-                    0.8 // Still decent correction for very small squads
+                    0.8
                 } else if squad_strength_ratio < 0.6 {
-                    0.9 // Good correction for reduced squads
+                    0.9
                 } else {
-                    1.0 // Normal correction for healthy squads
+                    1.0
                 };
 
                 // Slight variation to prevent units from all moving identically
-                let variation_factor = droid.march_offset.sin() * 0.1 + 1.0; // 0.9 to 1.1 multiplier
+                let variation_factor = droid.march_offset.sin() * 0.1 + 1.0;
 
                 let final_strength = base_correction_strength * size_modifier * variation_factor;
                 let movement = direction.normalize() * (distance * final_strength) * time.delta_seconds();
