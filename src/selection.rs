@@ -41,6 +41,10 @@ pub struct MovePathVisual {
 #[derive(Component)]
 pub struct OrientationArrowVisual;
 
+// Marker component for box selection rectangle visual (UI element)
+#[derive(Component)]
+pub struct BoxSelectionVisual;
+
 // Threshold for orientation drag (in world units)
 const ORIENTATION_DRAG_THRESHOLD: f32 = 3.0;
 
@@ -186,13 +190,15 @@ pub fn selection_input_system(
                     }
                 }
             }
-            // Box selection handled in box_selection_update_system
+            // Note: Box selection is handled in box_selection_update_system
+            // Don't clear state here if box selecting - let that system handle it
         }
 
-        // Clear drag state
-        selection_state.box_select_start = None;
-        selection_state.drag_start_world = None;
-        selection_state.is_box_selecting = false;
+        // Only clear drag state if NOT box selecting (box_selection_update_system needs it)
+        if !selection_state.is_box_selecting {
+            selection_state.box_select_start = None;
+            selection_state.drag_start_world = None;
+        }
     }
 }
 
@@ -208,24 +214,9 @@ pub fn box_selection_update_system(
     let Ok(window) = window_query.get_single() else { return };
     let Ok((camera, camera_transform)) = camera_query.get_single() else { return };
     let Some(cursor_pos) = window.cursor_position() else { return };
-
-    // Check if we're dragging with left mouse
-    if !mouse_button.pressed(MouseButton::Left) {
-        return;
-    }
-
     let Some(start_pos) = selection_state.box_select_start else { return };
-    let drag_distance = cursor_pos.distance(start_pos);
 
-    // Start box selecting if drag exceeds threshold
-    if drag_distance >= BOX_SELECT_DRAG_THRESHOLD && !selection_state.is_box_selecting {
-        selection_state.is_box_selecting = true;
-    }
-
-    // If box selecting, select squads on release (handled in selection_input_system)
-    // Here we just track that we're in box select mode
-
-    // When released with box select active, select all squads in the box
+    // Handle release first (before early return for pressed check)
     if mouse_button.just_released(MouseButton::Left) && selection_state.is_box_selecting {
         let shift_held = keyboard.pressed(KeyCode::ShiftLeft) || keyboard.pressed(KeyCode::ShiftRight);
 
@@ -258,6 +249,24 @@ pub fn box_selection_update_system(
         if selected_count > 0 {
             info!("Box selected {} squads ({} total)", selected_count, selection_state.selected_squads.len());
         }
+
+        // Clear state after box selection completes
+        selection_state.box_select_start = None;
+        selection_state.drag_start_world = None;
+        selection_state.is_box_selecting = false;
+        return;
+    }
+
+    // Check if we're dragging with left mouse
+    if !mouse_button.pressed(MouseButton::Left) {
+        return;
+    }
+
+    let drag_distance = cursor_pos.distance(start_pos);
+
+    // Start box selecting if drag exceeds threshold
+    if drag_distance >= BOX_SELECT_DRAG_THRESHOLD && !selection_state.is_box_selecting {
+        selection_state.is_box_selecting = true;
     }
 }
 
@@ -916,4 +925,73 @@ fn create_arrow_mesh() -> Mesh {
     mesh.insert_indices(bevy::render::mesh::Indices::U32(indices));
 
     mesh
+}
+
+/// System: Render box selection rectangle during left-click drag
+pub fn box_selection_visual_system(
+    mut commands: Commands,
+    selection_state: Res<SelectionState>,
+    window_query: Query<&Window, With<PrimaryWindow>>,
+    existing_visual: Query<Entity, With<BoxSelectionVisual>>,
+) {
+    let Ok(window) = window_query.get_single() else { return };
+    let Some(cursor_pos) = window.cursor_position() else {
+        // No cursor - despawn any existing visual
+        for entity in existing_visual.iter() {
+            commands.entity(entity).despawn_recursive();
+        }
+        return;
+    };
+
+    // Check if we should show the box selection visual
+    if !selection_state.is_box_selecting {
+        // Not box selecting - despawn any existing visual
+        for entity in existing_visual.iter() {
+            commands.entity(entity).despawn_recursive();
+        }
+        return;
+    }
+
+    let Some(start_pos) = selection_state.box_select_start else {
+        return;
+    };
+
+    // Calculate box corners (screen space)
+    let min_x = start_pos.x.min(cursor_pos.x);
+    let max_x = start_pos.x.max(cursor_pos.x);
+    let min_y = start_pos.y.min(cursor_pos.y);
+    let max_y = start_pos.y.max(cursor_pos.y);
+
+    let width = max_x - min_x;
+    let height = max_y - min_y;
+
+    // Despawn existing visual (we'll recreate it with new dimensions)
+    for entity in existing_visual.iter() {
+        commands.entity(entity).despawn_recursive();
+    }
+
+    // Skip if too small
+    if width < 2.0 || height < 2.0 {
+        return;
+    }
+
+    // Spawn the box selection UI node
+    // Using a semi-transparent green box with a border effect
+    commands.spawn((
+        NodeBundle {
+            style: Style {
+                position_type: PositionType::Absolute,
+                left: Val::Px(min_x),
+                top: Val::Px(min_y),
+                width: Val::Px(width),
+                height: Val::Px(height),
+                border: UiRect::all(Val::Px(2.0)),
+                ..default()
+            },
+            background_color: BackgroundColor(Color::srgba(0.2, 0.8, 0.3, 0.15)),
+            border_color: BorderColor(Color::srgba(0.3, 1.0, 0.4, 0.8)),
+            ..default()
+        },
+        BoxSelectionVisual,
+    ));
 }
