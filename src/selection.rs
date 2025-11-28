@@ -25,9 +25,15 @@ pub struct SelectionVisual {
     pub squad_id: u32,
 }
 
-// Marker component for move order destination indicator
+// Marker component for move order destination indicator (circle at destination)
 #[derive(Component)]
 pub struct MoveOrderVisual {
+    pub timer: Timer,
+}
+
+// Marker component for path line connecting squad to destination
+#[derive(Component)]
+pub struct MovePathVisual {
     pub timer: Timer,
 }
 
@@ -468,9 +474,14 @@ fn execute_move_command(
         }
     }
 
+    // Collect squad start positions before applying assignments (for path visuals)
+    let squad_start_positions: std::collections::HashMap<u32, Vec3> = assigned_destinations.iter()
+        .filter_map(|(id, _)| squad_manager.get_squad(*id).map(|s| (*id, s.center_position)))
+        .collect();
+
     // Apply the assignments
-    for (squad_id, squad_destination) in assigned_destinations {
-        if let Some(squad) = squad_manager.get_squad_mut(squad_id) {
+    for (squad_id, squad_destination) in assigned_destinations.iter() {
+        if let Some(squad) = squad_manager.get_squad_mut(*squad_id) {
             // ALL squads face the same unified direction
             if unified_facing.length() > 0.1 {
                 squad.target_facing_direction = unified_facing;
@@ -478,7 +489,7 @@ fn execute_move_command(
             }
 
             // Set target position
-            squad.target_position = squad_destination;
+            squad.target_position = *squad_destination;
         }
     }
 
@@ -502,8 +513,16 @@ fn execute_move_command(
         }
     }
 
-    // Spawn move indicator visual
-    spawn_move_indicator(commands, meshes, materials, destination);
+    // Spawn move indicator visuals for each squad
+    for (squad_id, squad_destination) in assigned_destinations.iter() {
+        // Spawn destination circle
+        spawn_move_indicator(commands, meshes, materials, *squad_destination);
+
+        // Spawn path line from squad current position to destination
+        if let Some(&start_pos) = squad_start_positions.get(squad_id) {
+            spawn_path_line(commands, meshes, materials, start_pos, *squad_destination);
+        }
+    }
 }
 
 /// Spawn a visual indicator at the move destination
@@ -540,6 +559,86 @@ fn spawn_move_indicator(
         NotShadowCaster,
         NotShadowReceiver,
     ));
+}
+
+/// Spawn a path line connecting squad position to destination
+fn spawn_path_line(
+    commands: &mut Commands,
+    meshes: &mut ResMut<Assets<Mesh>>,
+    materials: &mut ResMut<Assets<StandardMaterial>>,
+    start: Vec3,
+    end: Vec3,
+) {
+    use bevy::pbr::{NotShadowCaster, NotShadowReceiver};
+
+    let direction = Vec3::new(end.x - start.x, 0.0, end.z - start.z);
+    let length = direction.length();
+
+    if length < 0.5 {
+        return; // Too short to draw
+    }
+
+    let normalized_dir = direction.normalize();
+    let rotation = Quat::from_rotation_y(normalized_dir.x.atan2(normalized_dir.z));
+
+    // Create a thin rectangular mesh for the path line
+    let line_mesh = meshes.add(create_path_line_mesh());
+    let line_material = materials.add(StandardMaterial {
+        base_color: Color::srgba(0.2, 1.0, 0.3, 0.4),
+        emissive: LinearRgba::new(0.05, 0.3, 0.1, 1.0),
+        alpha_mode: AlphaMode::Blend,
+        unlit: true,
+        cull_mode: None,
+        double_sided: true,
+        ..default()
+    });
+
+    commands.spawn((
+        PbrBundle {
+            mesh: line_mesh,
+            material: line_material,
+            transform: Transform::from_translation(Vec3::new(start.x, 0.15, start.z))
+                .with_rotation(rotation)
+                .with_scale(Vec3::new(1.0, 1.0, length)),
+            ..default()
+        },
+        MovePathVisual {
+            timer: Timer::from_seconds(MOVE_INDICATOR_LIFETIME, TimerMode::Once),
+        },
+        NotShadowCaster,
+        NotShadowReceiver,
+    ));
+}
+
+/// Create a thin line mesh for path visualization (pointing in +Z, length 1.0)
+fn create_path_line_mesh() -> Mesh {
+    use bevy::render::mesh::PrimitiveTopology;
+
+    let width = 0.3; // Thin line width
+
+    // Simple quad lying flat on XZ plane
+    let vertices = vec![
+        [-width / 2.0, 0.0, 0.0],  // 0: left start
+        [width / 2.0, 0.0, 0.0],   // 1: right start
+        [width / 2.0, 0.0, 1.0],   // 2: right end
+        [-width / 2.0, 0.0, 1.0],  // 3: left end
+    ];
+
+    let indices = vec![
+        0, 2, 1,
+        0, 3, 2,
+    ];
+
+    let normals = vec![[0.0, 1.0, 0.0]; 4];
+    let uvs = vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
+
+    let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, bevy::render::render_asset::RenderAssetUsages::default());
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, vertices);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
+    mesh.insert_indices(bevy::render::mesh::Indices::U32(indices));
+
+    mesh
 }
 
 /// System: Update and cleanup selection ring visuals
@@ -648,16 +747,34 @@ fn spawn_selection_ring(
 pub fn move_visual_cleanup_system(
     mut commands: Commands,
     time: Res<Time>,
-    mut query: Query<(Entity, &mut MoveOrderVisual, &Handle<StandardMaterial>)>,
+    mut circle_query: Query<(Entity, &mut MoveOrderVisual, &Handle<StandardMaterial>), Without<MovePathVisual>>,
+    mut path_query: Query<(Entity, &mut MovePathVisual, &Handle<StandardMaterial>), Without<MoveOrderVisual>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    for (entity, mut visual, material_handle) in query.iter_mut() {
+    // Handle destination circle visuals
+    for (entity, mut visual, material_handle) in circle_query.iter_mut() {
         visual.timer.tick(time.delta());
 
         // Fade out based on timer progress
         if let Some(material) = materials.get_mut(material_handle) {
             let progress = visual.timer.fraction();
             let alpha = (1.0 - progress) * 0.6;
+            material.base_color = Color::srgba(0.2, 1.0, 0.3, alpha);
+        }
+
+        if visual.timer.finished() {
+            commands.entity(entity).despawn();
+        }
+    }
+
+    // Handle path line visuals
+    for (entity, mut visual, material_handle) in path_query.iter_mut() {
+        visual.timer.tick(time.delta());
+
+        // Fade out based on timer progress
+        if let Some(material) = materials.get_mut(material_handle) {
+            let progress = visual.timer.fraction();
+            let alpha = (1.0 - progress) * 0.4; // Start at 0.4 alpha (matching spawn)
             material.base_color = Color::srgba(0.2, 1.0, 0.3, alpha);
         }
 
