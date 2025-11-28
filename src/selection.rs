@@ -6,10 +6,10 @@ use crate::types::*;
 use crate::constants::*;
 use crate::formation::calculate_formation_offset;
 
-// Selection state resource - tracks which squads are selected
+// Selection state resource - tracks which squads are selected (Vec preserves selection order)
 #[derive(Resource, Default)]
 pub struct SelectionState {
-    pub selected_squads: HashSet<u32>,
+    pub selected_squads: Vec<u32>,  // First element is primary selection
     pub box_select_start: Option<Vec2>,  // Screen-space start position for box selection
     pub is_box_selecting: bool,
     pub drag_start_world: Option<Vec3>,  // World position where drag started
@@ -147,17 +147,17 @@ pub fn selection_input_system(
                     if let Some(squad_id) = find_squad_at_position(world_pos, &squad_centers, SELECTION_CLICK_RADIUS) {
                         if shift_held {
                             // Toggle selection
-                            if selection_state.selected_squads.contains(&squad_id) {
-                                selection_state.selected_squads.remove(&squad_id);
+                            if let Some(pos) = selection_state.selected_squads.iter().position(|&id| id == squad_id) {
+                                selection_state.selected_squads.remove(pos);
                                 info!("Deselected squad {}", squad_id);
                             } else {
-                                selection_state.selected_squads.insert(squad_id);
+                                selection_state.selected_squads.push(squad_id);
                                 info!("Added squad {} to selection ({} total)", squad_id, selection_state.selected_squads.len());
                             }
                         } else {
                             // Clear and select single squad
                             selection_state.selected_squads.clear();
-                            selection_state.selected_squads.insert(squad_id);
+                            selection_state.selected_squads.push(squad_id);
                             info!("Selected squad {}", squad_id);
                         }
                     } else if !shift_held {
@@ -229,8 +229,11 @@ pub fn box_selection_update_system(
             if let Some(screen_pos) = camera.world_to_viewport(camera_transform, squad.center_position) {
                 if screen_pos.x >= min_x && screen_pos.x <= max_x
                    && screen_pos.y >= min_y && screen_pos.y <= max_y {
-                    selection_state.selected_squads.insert(*squad_id);
-                    selected_count += 1;
+                    // Only add if not already selected
+                    if !selection_state.selected_squads.contains(squad_id) {
+                        selection_state.selected_squads.push(*squad_id);
+                        selected_count += 1;
+                    }
                 }
             }
         }
@@ -273,23 +276,52 @@ pub fn move_command_system(
     info!("Move command to ({:.1}, {:.1}) for {} squads",
           destination.x, destination.z, selection_state.selected_squads.len());
 
-    // Issue move commands to all selected squads
-    for &squad_id in selection_state.selected_squads.iter() {
+    // For multi-squad movement, calculate spread direction based on first squad's movement
+    let first_squad_pos = selection_state.selected_squads.first()
+        .and_then(|&id| squad_manager.get_squad(id))
+        .map(|s| s.center_position)
+        .unwrap_or(Vec3::ZERO);
+
+    let move_direction = Vec3::new(
+        destination.x - first_squad_pos.x,
+        0.0,
+        destination.z - first_squad_pos.z,
+    ).normalize_or_zero();
+
+    // Perpendicular direction for spreading squads in a line
+    let spread_direction = Vec3::new(move_direction.z, 0.0, -move_direction.x);
+
+    // Issue move commands to all selected squads with spacing
+    let num_squads = selection_state.selected_squads.len();
+    for (index, &squad_id) in selection_state.selected_squads.iter().enumerate() {
         if let Some(squad) = squad_manager.get_squad_mut(squad_id) {
-            // Calculate target facing direction (toward destination) for smooth rotation
+            // Calculate offset from click position
+            // First squad goes to exact position, others spread perpendicular to movement
+            let offset = if num_squads > 1 {
+                let centered_index = index as f32 - (num_squads - 1) as f32 / 2.0;
+                spread_direction * centered_index * MULTI_SQUAD_SPACING
+            } else {
+                Vec3::ZERO
+            };
+
+            let squad_destination = destination + offset;
+
+            // Calculate target facing direction from this squad's current position
             let direction = Vec3::new(
-                destination.x - squad.center_position.x,
+                squad_destination.x - squad.center_position.x,
                 0.0,
-                destination.z - squad.center_position.z,
+                squad_destination.z - squad.center_position.z,
             );
 
             if direction.length() > 0.1 {
-                // Set target facing toward destination (front row faces movement direction)
+                // Set target facing toward this squad's destination
                 squad.target_facing_direction = direction.normalize();
+                // Also immediately set facing_direction for initial formation calculation
+                squad.facing_direction = direction.normalize();
             }
 
             // Set target position
-            squad.target_position = destination;
+            squad.target_position = squad_destination;
         }
     }
 

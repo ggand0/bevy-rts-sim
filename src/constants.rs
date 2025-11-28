@@ -57,3 +57,4 @@ pub const BOX_SELECT_DRAG_THRESHOLD: f32 = 8.0;     // Pixels before box select 
 pub const MOVE_INDICATOR_RADIUS: f32 = 3.0;         // Radius of move destination indicator
 pub const MOVE_INDICATOR_LIFETIME: f32 = 1.5;       // Seconds before move indicator fades
 pub const SQUAD_ROTATION_SPEED: f32 = 2.0;          // Radians per second for squad rotation
+pub const MULTI_SQUAD_SPACING: f32 = 25.0;          // Spacing between squads when moving multiple
