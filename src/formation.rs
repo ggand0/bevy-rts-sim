@@ -198,6 +198,67 @@ pub fn squad_formation_system(
     }
 }
 
+/// System: Smoothly rotate squad facing direction toward target facing direction
+/// and update unit formation positions accordingly
+pub fn squad_rotation_system(
+    time: Res<Time>,
+    mut squad_manager: ResMut<SquadManager>,
+    mut droid_query: Query<(&mut BattleDroid, &SquadMember)>,
+) {
+    let delta_time = time.delta_seconds();
+
+    // Collect squads that need rotation updates
+    let mut squads_to_update: Vec<(u32, Vec3)> = Vec::new();
+
+    for (squad_id, squad) in squad_manager.squads.iter_mut() {
+        // Check if squad needs to rotate
+        let dot = squad.facing_direction.dot(squad.target_facing_direction);
+
+        if dot < 0.9999 {
+            // Smoothly interpolate facing direction toward target
+            // Use slerp-like behavior via cross product and angle
+            let cross = squad.facing_direction.cross(squad.target_facing_direction);
+            let angle_sign = if cross.y >= 0.0 { 1.0 } else { -1.0 };
+
+            // Calculate rotation amount this frame
+            let max_rotation = SQUAD_ROTATION_SPEED * delta_time;
+            let angle_diff = squad.facing_direction.angle_between(squad.target_facing_direction);
+            let rotation_amount = angle_diff.min(max_rotation);
+
+            // Rotate facing direction
+            let rotation = Quat::from_rotation_y(angle_sign * rotation_amount);
+            squad.facing_direction = (rotation * squad.facing_direction).normalize();
+
+            // Mark this squad for unit position update
+            squads_to_update.push((*squad_id, squad.facing_direction));
+        }
+    }
+
+    // Update unit target positions for rotated squads
+    for (squad_id, new_facing) in squads_to_update {
+        if let Some(squad) = squad_manager.get_squad(squad_id) {
+            let target_pos = squad.target_position;
+            let formation_type = squad.formation_type;
+
+            for (mut droid, squad_member) in droid_query.iter_mut() {
+                if squad_member.squad_id == squad_id && !droid.returning_to_spawn {
+                    // Recalculate formation offset with new facing direction
+                    let new_offset = calculate_formation_offset(
+                        formation_type,
+                        squad_member.formation_position.0,
+                        squad_member.formation_position.1,
+                        new_facing,
+                    );
+
+                    // Preserve unit's spawn Y height when updating target position
+                    let target_xz = target_pos + new_offset;
+                    droid.target_position = Vec3::new(target_xz.x, droid.spawn_position.y, target_xz.z);
+                }
+            }
+        }
+    }
+}
+
 // Squad casualty management system
 pub fn squad_casualty_management_system(
     _commands: Commands,

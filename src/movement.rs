@@ -29,44 +29,29 @@ pub fn animate_march(
             } else {
                 droid.target_position
             };
-            
+
             // Calculate direction to target
             let direction = (current_target - transform.translation).normalize_or_zero();
-            
+
             // Move towards target
             let movement = direction * MARCH_SPEED * delta_time * droid.march_speed;
             transform.translation += movement;
-            
-            // Face movement direction with sway
+
+            // Add marching animation - subtle bobbing motion
+            let march_cycle = (time_seconds * droid.march_speed * 4.0 + droid.march_offset).sin();
+            let bob_height = march_cycle * 0.008; // Very subtle up/down movement
+            transform.translation.y += bob_height;
+
+            // Prevent units from sinking below their spawn height
+            transform.translation.y = transform.translation.y.max(droid.spawn_position.y);
+
+            // Slight rotation for more natural look and face movement direction
+            let sway = (time_seconds * droid.march_speed * 2.0 + droid.march_offset).sin() * 0.01;
             if direction.length() > 0.1 {
                 let forward_rotation = Quat::from_rotation_y(direction.x.atan2(direction.z));
-                let sway = (time_seconds * droid.march_speed * 2.0 + droid.march_offset).sin() * 0.01;
                 transform.rotation = forward_rotation * Quat::from_rotation_y(sway);
             }
-            
-            // Color shifting effect during movement - simulate battle droid energy glow
-            let march_cycle = (time_seconds * 3.0 + droid.march_offset).sin();
-            let energy_pulse = march_cycle * 0.003; // Much more subtle energy pulse effect
-            
-            // Apply color shifting as position modulation (simulates energy field)
-            transform.translation.y += energy_pulse;
-            
-            // Add marching bob
-            let bob_cycle = (time_seconds * 4.0 + droid.march_offset).sin();
-            let bob_height = bob_cycle * 0.004; // Reduced marching bob to prevent excessive movement
-            transform.translation.y += bob_height;
-        } else {
-            // Even when stationary, add very subtle idle animation
-            let idle_cycle = (time_seconds * 1.5 + droid.march_offset).sin();
-            let idle_bob = idle_cycle * 0.002; // Very subtle idle movement
-            transform.translation.y += idle_bob;
         }
-        
-        // Formation correction color shift - units show energy during reformation
-        // This creates a visual effect when units are adjusting to formation positions
-        let formation_stress = (time_seconds * 5.0 + droid.march_offset * 2.0).sin();
-        let formation_energy = formation_stress * 0.002; // Much more subtle formation adjustment glow
-        transform.translation.y += formation_energy;
     }
 }
 
@@ -81,7 +66,7 @@ pub fn update_camera_info(
             .unwrap_or(0.0);
             
         text.sections[0].value = format!(
-            "{} vs {} Units ({} squads/team) | FPS: {:.1}\nWSAD: Move | Mouse: Rotate | Scroll: Zoom | F: Volley Fire\nRectangle Formation Only | G: Advance | H: Retreat",
+            "{} vs {} Units ({} squads/team) | FPS: {:.1}\nLeft-click: Select | Right-click: Move | Middle-drag: Rotate | Scroll: Zoom\nShift+click: Add to selection | G: Advance All | H: Retreat All | F: Volley Fire",
             ARMY_SIZE_PER_TEAM, ARMY_SIZE_PER_TEAM, ARMY_SIZE_PER_TEAM / SQUAD_SIZE, fps
         );
     }
@@ -98,8 +83,8 @@ pub fn rts_camera_movement(
     if let Ok((mut transform, mut camera)) = camera_query.get_single_mut() {
         let delta_time = time.delta_seconds();
         
-        // Mouse drag rotation
-        if mouse_button_input.pressed(MouseButton::Left) {
+        // Mouse drag rotation (middle mouse button - left click is for selection)
+        if mouse_button_input.pressed(MouseButton::Middle) {
             for motion in mouse_motion_events.read() {
                 camera.yaw -= motion.delta.x * CAMERA_ROTATION_SPEED;
                 camera.pitch = (camera.pitch - motion.delta.y * CAMERA_ROTATION_SPEED)

@@ -22,6 +22,7 @@ pub struct Squad {
     pub members: Vec<Entity>,
     pub center_position: Vec3,
     pub facing_direction: Vec3,
+    pub target_facing_direction: Vec3,  // Direction to rotate toward (for smooth rotation)
     pub target_position: Vec3,
 }
 
@@ -35,6 +36,7 @@ impl Squad {
             members: Vec::new(),
             center_position,
             facing_direction,
+            target_facing_direction: facing_direction,  // Initially same as facing
             target_position: center_position,
         }
     }
