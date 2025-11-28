@@ -1,5 +1,6 @@
 // Selection and command systems for RTS controls
 use bevy::prelude::*;
+use bevy::pbr::NotShadowCaster;
 use bevy::window::PrimaryWindow;
 use std::collections::{HashSet, HashMap};
 use crate::types::*;
@@ -75,6 +76,12 @@ pub struct OrientationArrowVisual;
 // Marker component for box selection rectangle visual (UI element)
 #[derive(Component)]
 pub struct BoxSelectionVisual;
+
+// Marker component for group orientation indicator
+#[derive(Component)]
+pub struct GroupOrientationMarker {
+    pub group_id: u32,
+}
 
 // Threshold for orientation drag (in world units)
 const ORIENTATION_DRAG_THRESHOLD: f32 = 3.0;
@@ -392,7 +399,7 @@ pub fn move_command_system(
     camera_query: Query<(&Camera, &GlobalTransform), With<RtsCamera>>,
     mut squad_manager: ResMut<SquadManager>,
     mut selection_state: ResMut<SelectionState>,
-    mut droid_query: Query<(&mut BattleDroid, &SquadMember, &FormationOffset, &Transform)>,
+    mut droid_query: Query<(Entity, &mut BattleDroid, &SquadMember, &FormationOffset, &Transform)>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     arrow_query: Query<Entity, With<OrientationArrowVisual>>,
@@ -481,7 +488,7 @@ pub fn move_command_system(
         execute_move_command(
             &mut commands,
             &mut squad_manager,
-            &selection_state,
+            &mut selection_state,
             &mut droid_query,
             &mut meshes,
             &mut materials,
@@ -525,31 +532,39 @@ fn calculate_default_facing(
 fn execute_group_move(
     commands: &mut Commands,
     squad_manager: &mut ResMut<SquadManager>,
-    selection_state: &SelectionState,
-    droid_query: &mut Query<(&mut BattleDroid, &SquadMember, &FormationOffset, &Transform)>,
+    selection_state: &mut SelectionState,
+    droid_query: &mut Query<(Entity, &mut BattleDroid, &SquadMember, &FormationOffset, &Transform)>,
     meshes: &mut ResMut<Assets<Mesh>>,
     materials: &mut ResMut<Assets<StandardMaterial>>,
     destination: Vec3,
     unified_facing: Vec3,
     group_id: u32,
 ) {
-    let Some(group) = selection_state.groups.get(&group_id) else { return };
+    let Some(group) = selection_state.groups.get_mut(&group_id) else { return };
+
+    // Save the original formation_facing before updating
+    let original_facing = group.formation_facing;
 
     // Calculate rotation from original formation facing to new unified facing
-    let angle_diff = if group.formation_facing.length() > 0.1 && unified_facing.length() > 0.1 {
+    let angle_diff = if original_facing.length() > 0.1 && unified_facing.length() > 0.1 {
         // Calculate angle between the two vectors
-        let dot = group.formation_facing.x * unified_facing.x + group.formation_facing.z * unified_facing.z;
-        let det = group.formation_facing.x * unified_facing.z - group.formation_facing.z * unified_facing.x;
+        let dot = original_facing.x * unified_facing.x + original_facing.z * unified_facing.z;
+        let det = original_facing.x * unified_facing.z - original_facing.z * unified_facing.x;
         det.atan2(dot)
     } else {
         0.0
     };
 
+    // Update the group's formation_facing to the new unified_facing
+    if unified_facing.length() > 0.1 {
+        group.formation_facing = unified_facing;
+    }
+
     let rotation = Quat::from_rotation_y(angle_diff);
 
     // Calculate actual current positions for path visuals
     let mut squad_current_positions: std::collections::HashMap<u32, Vec3> = std::collections::HashMap::new();
-    for (_droid, squad_member, _offset, transform) in droid_query.iter() {
+    for (_entity, _droid, squad_member, _offset, transform) in droid_query.iter() {
         if group.squad_ids.contains(&squad_member.squad_id) {
             let entry = squad_current_positions.entry(squad_member.squad_id).or_insert(Vec3::ZERO);
             *entry += transform.translation;
@@ -592,11 +607,11 @@ fn execute_group_move(
         }
     }
 
-    // Update individual unit targets
-    for (mut droid, squad_member, _formation_offset, _transform) in droid_query.iter_mut() {
+    // Update individual unit targets using standard formation calculation
+    for (_entity, mut droid, squad_member, _formation_offset, _transform) in droid_query.iter_mut() {
         if group.squad_ids.contains(&squad_member.squad_id) {
             if let Some(squad) = squad_manager.get_squad(squad_member.squad_id) {
-                // Calculate new formation offset with new facing direction
+                // Calculate formation offset with new facing direction
                 let new_offset = calculate_formation_offset(
                     squad.formation_type,
                     squad_member.formation_position.0,
@@ -654,8 +669,8 @@ fn check_is_complete_group(selection_state: &SelectionState) -> Option<u32> {
 fn execute_move_command(
     commands: &mut Commands,
     squad_manager: &mut ResMut<SquadManager>,
-    selection_state: &SelectionState,
-    droid_query: &mut Query<(&mut BattleDroid, &SquadMember, &FormationOffset, &Transform)>,
+    selection_state: &mut SelectionState,
+    droid_query: &mut Query<(Entity, &mut BattleDroid, &SquadMember, &FormationOffset, &Transform)>,
     meshes: &mut ResMut<Assets<Mesh>>,
     materials: &mut ResMut<Assets<StandardMaterial>>,
     destination: Vec3,
@@ -699,7 +714,7 @@ fn execute_move_command(
 
     // Calculate actual current positions of squads from unit transforms (not squad.center_position which lags)
     let mut squad_current_positions: std::collections::HashMap<u32, Vec3> = std::collections::HashMap::new();
-    for (_droid, squad_member, _offset, transform) in droid_query.iter() {
+    for (_entity, _droid, squad_member, _offset, transform) in droid_query.iter() {
         if selection_state.selected_squads.contains(&squad_member.squad_id) {
             let entry = squad_current_positions.entry(squad_member.squad_id).or_insert(Vec3::ZERO);
             *entry += transform.translation;
@@ -771,7 +786,7 @@ fn execute_move_command(
     }
 
     // Update individual unit targets
-    for (mut droid, squad_member, _formation_offset, _transform) in droid_query.iter_mut() {
+    for (_entity, mut droid, squad_member, _formation_offset, _transform) in droid_query.iter_mut() {
         if selection_state.selected_squads.contains(&squad_member.squad_id) {
             if let Some(squad) = squad_manager.get_squad(squad_member.squad_id) {
                 // Calculate new formation offset with new facing direction
@@ -1404,5 +1419,154 @@ pub fn box_selection_visual_system(
         },
         BoxSelectionVisual,
     ));
+}
+
+/// System to visualize group orientation with a yellow arrow marker
+pub fn update_group_orientation_markers(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    selection_state: Res<SelectionState>,
+    squad_manager: Res<SquadManager>,
+    mut existing_markers: Query<(Entity, &GroupOrientationMarker, &mut Transform)>,
+    droid_query: Query<(&Transform, &SquadMember), (With<BattleDroid>, Without<GroupOrientationMarker>)>,
+) {
+    // Check if any group is currently selected
+    let selected_group_id = check_is_complete_group(&selection_state);
+
+    // Remove markers for groups that no longer exist or are not selected
+    for (entity, marker, _) in existing_markers.iter() {
+        let should_remove = !selection_state.groups.contains_key(&marker.group_id)
+            || selected_group_id != Some(marker.group_id);
+        if should_remove {
+            commands.entity(entity).despawn();
+        }
+    }
+
+    // Only create/update marker if a complete group is selected
+    let Some(active_group_id) = selected_group_id else { return };
+
+    // Create or update marker for the selected group
+    if let Some(group) = selection_state.groups.get(&active_group_id) {
+        let group_id = active_group_id;
+        // Calculate group bounding box from squad centers
+        let mut min_x = f32::MAX;
+        let mut max_x = f32::MIN;
+        let mut min_z = f32::MAX;
+        let mut max_z = f32::MIN;
+        let mut group_center = Vec3::ZERO;
+        let mut squad_count = 0;
+
+        for &squad_id in &group.squad_ids {
+            if let Some(squad) = squad_manager.get_squad(squad_id) {
+                let pos = squad.center_position;
+                min_x = min_x.min(pos.x);
+                max_x = max_x.max(pos.x);
+                min_z = min_z.min(pos.z);
+                max_z = max_z.max(pos.z);
+                group_center += pos;
+                squad_count += 1;
+            }
+        }
+
+        if squad_count == 0 {
+            return;
+        }
+
+        group_center /= squad_count as f32;
+
+        // Calculate the front edge position based on facing direction
+        // Project bounding box corners onto the facing direction to find the furthest point
+        let facing = group.formation_facing;
+        let _right = Vec3::new(facing.z, 0.0, -facing.x).normalize();
+
+        // Get the forward-most point along the facing direction
+        let corners = [
+            Vec3::new(min_x, group_center.y, min_z),
+            Vec3::new(max_x, group_center.y, min_z),
+            Vec3::new(min_x, group_center.y, max_z),
+            Vec3::new(max_x, group_center.y, max_z),
+        ];
+
+        let mut max_forward = f32::MIN;
+        for corner in &corners {
+            let forward_dist = (*corner - group_center).dot(facing);
+            max_forward = max_forward.max(forward_dist);
+        }
+
+        // Position arrow at the front edge, slightly ahead
+        let front_edge_offset = max_forward + 5.0; // 5 units ahead of front edge
+        let arrow_base = group_center + facing * front_edge_offset;
+
+        // Check if marker already exists for this group
+        let mut found = false;
+        for (_entity, marker, mut transform) in existing_markers.iter_mut() {
+            if marker.group_id == group_id {
+                // Update position smoothly to reduce twitching
+                transform.translation = transform.translation.lerp(arrow_base, 0.1);
+
+                // Update rotation to face the group's facing direction
+                let target_rotation = Quat::from_rotation_y(facing.x.atan2(facing.z));
+                transform.rotation = transform.rotation.slerp(target_rotation, 0.1);
+
+                found = true;
+                break;
+            }
+        }
+
+        if !found {
+            // Create new marker - 2D triangle arrow on the ground
+            let arrow_color = Color::srgb(1.0, 1.0, 0.0);
+
+            // Create a triangle mesh in LOCAL space (centered at origin, pointing forward along +Z)
+            let triangle_size = 3.0;
+
+            // Triangle vertices in local space: tip at front (+Z), base at back
+            let tip = Vec3::new(0.0, 0.05, triangle_size);
+            let base_left = Vec3::new(-triangle_size * 0.6, 0.05, 0.0);
+            let base_right = Vec3::new(triangle_size * 0.6, 0.05, 0.0);
+
+            // Create mesh with positions and normals (in local space)
+            let positions = vec![
+                [tip.x, tip.y, tip.z],
+                [base_left.x, base_left.y, base_left.z],
+                [base_right.x, base_right.y, base_right.z],
+            ];
+            let normals = vec![[0.0, 1.0, 0.0]; 3];
+            let uvs = vec![[0.5, 1.0], [0.0, 0.0], [1.0, 0.0]];
+            let indices = vec![0, 1, 2];
+
+            let mut mesh = Mesh::new(bevy::render::render_resource::PrimitiveTopology::TriangleList, default());
+            mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+            mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+            mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
+            mesh.insert_indices(bevy::render::mesh::Indices::U32(indices));
+
+            // Calculate initial rotation to point in the facing direction
+            let target_rotation = Quat::from_rotation_y(facing.x.atan2(facing.z));
+
+            commands.spawn((
+                PbrBundle {
+                    mesh: meshes.add(mesh),
+                    material: materials.add(StandardMaterial {
+                        base_color: arrow_color,
+                        emissive: LinearRgba::rgb(2.0, 2.0, 0.0),
+                        unlit: true,
+                        alpha_mode: AlphaMode::Blend,
+                        cull_mode: None, // Visible from both sides
+                        ..default()
+                    }),
+                    transform: Transform::from_translation(arrow_base)
+                        .with_rotation(target_rotation),
+                    visibility: Visibility::Visible,
+                    ..default()
+                },
+                NotShadowCaster,
+                GroupOrientationMarker {
+                    group_id,
+                },
+            ));
+        }
+    }
 }
 
