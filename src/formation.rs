@@ -18,13 +18,15 @@ pub fn calculate_formation_offset(
 
 fn calculate_rectangle_offset(row: usize, column: usize, facing_direction: Vec3) -> Vec3 {
     // Standard rectangular formation (10 wide x 5 deep)
+    // Row 0 is front (faces facing_direction), row 4 is rear (commander position)
     let x_offset = (column as f32 - (SQUAD_WIDTH as f32 - 1.0) / 2.0) * SQUAD_HORIZONTAL_SPACING;
     let z_offset = (row as f32 - (SQUAD_DEPTH as f32 - 1.0) / 2.0) * SQUAD_VERTICAL_SPACING;
-    
+
     // Calculate perpendicular direction for width
     let right = Vec3::new(facing_direction.z, 0.0, -facing_direction.x).normalize();
-    
-    right * x_offset + facing_direction * z_offset
+
+    // Negate z_offset so row 0 is in front (positive facing_direction) and commander is rear
+    right * x_offset - facing_direction * z_offset
 }
 
 pub fn assign_formation_positions(formation_type: FormationType) -> Vec<(usize, usize)> {

@@ -284,7 +284,7 @@ pub fn move_command_system(
             );
 
             if direction.length() > 0.1 {
-                // Set target facing for smooth interpolation (don't change facing_direction directly)
+                // Set target facing toward destination (front row faces movement direction)
                 squad.target_facing_direction = direction.normalize();
             }
 
