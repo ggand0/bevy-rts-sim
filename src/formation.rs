@@ -77,50 +77,37 @@ pub fn squad_formation_system(
     };
     
     if should_update_centers {
-        // Calculate intended squad centers based on spawn positions, not chaotic current positions
-        let mut squad_spawn_centers: HashMap<u32, Vec<Vec3>> = HashMap::new();
-        
-        for (_transform, squad_member, _, droid) in unit_query.iter() {
-            // Use spawn positions to calculate stable squad centers
-            squad_spawn_centers.entry(squad_member.squad_id)
+        // Calculate current average positions of units per squad
+        let mut squad_current_centers: HashMap<u32, Vec<Vec3>> = HashMap::new();
+
+        for (transform, squad_member, _, _droid) in unit_query.iter() {
+            squad_current_centers.entry(squad_member.squad_id)
                               .or_insert_with(Vec::new)
-                              .push(droid.spawn_position);
+                              .push(transform.translation);
         }
-        
-        // Update squad centers based on current unit average, but with some stability
-        for (squad_id, spawn_positions) in squad_spawn_centers.iter() {
+
+        // Update squad centers - use target_position as anchor when squads have a move target
+        for (squad_id, current_positions) in squad_current_centers.iter() {
             if let Some(squad) = squad_manager.get_squad_mut(*squad_id) {
-                if !spawn_positions.is_empty() {
-                    let spawn_center = spawn_positions.iter().sum::<Vec3>() / spawn_positions.len() as f32;
-                    
-                    // Calculate current average position of living units in this squad
-                    let mut current_positions = Vec::new();
-                    for (transform, squad_member, _, _) in unit_query.iter() {
-                        if squad_member.squad_id == *squad_id {
-                            current_positions.push(transform.translation);
-                        }
-                    }
-                    
-                    if !current_positions.is_empty() {
-                        let current_center = current_positions.iter().sum::<Vec3>() / current_positions.len() as f32;
-                        
-                        // Use spawn center as primary reference to prevent formation drift
-                        // Only adjust slightly based on current positions for natural movement
-                        let squad_strength_ratio = current_positions.len() as f32 / SQUAD_SIZE as f32;
-                        if squad_strength_ratio < 0.7 {
-                            // For reduced squads, heavily anchor to spawn center to prevent drift
-                            let anchor_weight = 0.8;
-                            let current_weight = 1.0 - anchor_weight;
-                            squad.center_position = spawn_center * anchor_weight + current_center * current_weight;
-                        } else {
-                            // For healthy squads, use spawn center as primary reference with light adjustment
-                            let anchor_weight = 0.6; // Still prefer spawn center
-                            let current_weight = 1.0 - anchor_weight;
-                            squad.center_position = spawn_center * anchor_weight + current_center * current_weight;
-                        }
+                if !current_positions.is_empty() {
+                    let current_center = current_positions.iter().sum::<Vec3>() / current_positions.len() as f32;
+
+                    // Check if squad is actively moving toward a target
+                    let distance_to_target = Vec3::new(
+                        current_center.x - squad.target_position.x,
+                        0.0,
+                        current_center.z - squad.target_position.z,
+                    ).length();
+
+                    if distance_to_target > 5.0 {
+                        // Squad is moving - smoothly transition center toward target
+                        // Use current average as the center (tracks actual unit positions during movement)
+                        squad.center_position = current_center;
                     } else {
-                        // No units left, fall back to spawn center
-                        squad.center_position = spawn_center;
+                        // Squad has arrived - anchor to target position for clean formation
+                        // Blend toward target to ensure proper line alignment
+                        let blend = 0.3; // Gradual snap to target
+                        squad.center_position = squad.center_position * (1.0 - blend) + squad.target_position * blend;
                     }
                 }
             }
@@ -132,27 +119,42 @@ pub fn squad_formation_system(
         if let Some(squad) = squad_manager.get_squad(squad_member.squad_id) {
             // Only update formation targets when not retreating to prevent interference
             if !droid.returning_to_spawn {
-                let correct_target_position = squad.center_position + formation_offset.local_offset;
+                // Recalculate formation offset with current facing direction
+                let new_offset = calculate_formation_offset(
+                    squad.formation_type,
+                    squad_member.formation_position.0,
+                    squad_member.formation_position.1,
+                    squad.facing_direction,
+                );
+                formation_offset.local_offset = new_offset;
+
+                // Use target_position as the formation anchor for clean final alignment
+                let correct_target_position = squad.target_position + formation_offset.local_offset;
                 formation_offset.target_world_position = correct_target_position;
             }
-            
+
             // Apply formation correction - stronger during advance to maintain formation
             let direction = formation_offset.target_world_position - transform.translation;
             let distance = direction.length();
-            
-            // Check if unit is actively moving or should be stationary
-            let is_stationary = droid.target_position == droid.spawn_position && !droid.returning_to_spawn;
-            let is_actively_moving = (!is_stationary && !droid.returning_to_spawn) || droid.returning_to_spawn;
+
+            // Check if unit has arrived at its target position
+            let distance_to_target = Vec3::new(
+                transform.translation.x - droid.target_position.x,
+                0.0,
+                transform.translation.z - droid.target_position.z,
+            ).length();
+            let has_arrived = distance_to_target < 2.0;
+            let is_actively_moving = !has_arrived && !droid.returning_to_spawn;
             
             // DISABLE FORMATION CORRECTION DURING MOVEMENT: Don't apply formation correction if unit is actively marching or retreating
-            let should_apply_formation_correction = if is_actively_moving {
+            let should_apply_formation_correction = if is_actively_moving || droid.returning_to_spawn {
                 // COMPLETELY DISABLE formation correction during active march/retreat to prevent interference
                 false // No formation correction at all during advance or retreat
             } else {
-                // Normal formation correction when stationary
+                // Normal formation correction when arrived at destination
                 distance > 0.2
             };
-            
+
             // Apply formation correction if needed - much more careful during movement
             if should_apply_formation_correction && distance < 50.0 {
                 // Get squad size to adapt correction strength
@@ -162,16 +164,10 @@ pub fn squad_formation_system(
                     SQUAD_SIZE
                 };
                 let squad_strength_ratio = squad_size as f32 / SQUAD_SIZE as f32;
-                
-                // Much more careful base correction to avoid animation interference
-                let base_correction_strength = if is_stationary {
-                    3.0 // Strong correction when stationary for rapid formation completion
-                } else if droid.returning_to_spawn {
-                    0.8 // Moderate correction during retreat
-                } else {
-                    0.1 // Very light correction during advance to avoid interfering with march
-                };
-                
+
+                // Strong correction when arrived for rapid formation completion
+                let base_correction_strength = 3.0;
+
                 // Reduce correction for smaller squads to prevent over-correction and drift
                 let size_modifier = if squad_strength_ratio < 0.3 {
                     0.8 // Still decent correction for very small squads
@@ -180,20 +176,16 @@ pub fn squad_formation_system(
                 } else {
                     1.0 // Normal correction for healthy squads
                 };
-                
-                // Reduced variation to prevent animation interference
-                let variation_factor = if is_actively_moving {
-                    1.0 // No variation during movement to avoid animation interference
-                } else {
-                    droid.march_offset.sin() * 0.1 + 1.0 // 0.9 to 1.1 multiplier for stationary units
-                };
-                
+
+                // Slight variation to prevent units from all moving identically
+                let variation_factor = droid.march_offset.sin() * 0.1 + 1.0; // 0.9 to 1.1 multiplier
+
                 let final_strength = base_correction_strength * size_modifier * variation_factor;
                 let movement = direction.normalize() * (distance * final_strength) * time.delta_seconds();
-                
+
                 // CRITICAL: Only apply horizontal corrections to avoid interfering with Y-axis animations
                 let correction_movement = Vec3::new(movement.x, 0.0, movement.z);
-                
+
                 transform.translation += correction_movement;
             }
         }
