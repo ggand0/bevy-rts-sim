@@ -6,12 +6,13 @@ use crate::constants::*;
 
 pub fn animate_march(
     time: Res<Time>,
-    mut query: Query<(&mut BattleDroid, &mut Transform), With<SquadMember>>,
+    squad_manager: Res<SquadManager>,
+    mut query: Query<(&mut BattleDroid, &mut Transform, &SquadMember)>,
 ) {
     let time_seconds = time.elapsed_seconds();
     let delta_time = time.delta_seconds();
-    
-    for (droid, mut transform) in query.iter_mut() {
+
+    for (droid, mut transform, squad_member) in query.iter_mut() {
         // Only move if explicitly commanded (no automatic cycling)
         let should_move = if droid.returning_to_spawn {
             // Moving back to spawn position
@@ -22,51 +23,46 @@ pub fn animate_march(
             let distance_to_target = transform.translation.distance(droid.target_position);
             distance_to_target > 1.0 && droid.target_position != droid.spawn_position
         };
-        
+
         if should_move {
             let current_target = if droid.returning_to_spawn {
                 droid.spawn_position
             } else {
                 droid.target_position
             };
-            
+
             // Calculate direction to target
             let direction = (current_target - transform.translation).normalize_or_zero();
-            
+
             // Move towards target
             let movement = direction * MARCH_SPEED * delta_time * droid.march_speed;
             transform.translation += movement;
-            
-            // Face movement direction with sway
+
+            // Add marching animation - subtle bobbing motion
+            let march_cycle = (time_seconds * droid.march_speed * 4.0 + droid.march_offset).sin();
+            let bob_height = march_cycle * 0.008; // Very subtle up/down movement
+            transform.translation.y += bob_height;
+
+            // Prevent units from sinking below their spawn height
+            transform.translation.y = transform.translation.y.max(droid.spawn_position.y);
+
+            // Slight rotation for more natural look and face movement direction
+            let sway = (time_seconds * droid.march_speed * 2.0 + droid.march_offset).sin() * 0.01;
             if direction.length() > 0.1 {
                 let forward_rotation = Quat::from_rotation_y(direction.x.atan2(direction.z));
-                let sway = (time_seconds * droid.march_speed * 2.0 + droid.march_offset).sin() * 0.01;
                 transform.rotation = forward_rotation * Quat::from_rotation_y(sway);
             }
-            
-            // Color shifting effect during movement - simulate battle droid energy glow
-            let march_cycle = (time_seconds * 3.0 + droid.march_offset).sin();
-            let energy_pulse = march_cycle * 0.003; // Much more subtle energy pulse effect
-            
-            // Apply color shifting as position modulation (simulates energy field)
-            transform.translation.y += energy_pulse;
-            
-            // Add marching bob
-            let bob_cycle = (time_seconds * 4.0 + droid.march_offset).sin();
-            let bob_height = bob_cycle * 0.004; // Reduced marching bob to prevent excessive movement
-            transform.translation.y += bob_height;
         } else {
-            // Even when stationary, add very subtle idle animation
-            let idle_cycle = (time_seconds * 1.5 + droid.march_offset).sin();
-            let idle_bob = idle_cycle * 0.002; // Very subtle idle movement
-            transform.translation.y += idle_bob;
+            // When stationary, smoothly rotate to face squad's facing direction
+            if let Some(squad) = squad_manager.get_squad(squad_member.squad_id) {
+                let facing = squad.facing_direction;
+                if facing.length() > 0.1 {
+                    let target_rotation = Quat::from_rotation_y(facing.x.atan2(facing.z));
+                    // Smoothly interpolate toward target rotation
+                    transform.rotation = transform.rotation.slerp(target_rotation, 5.0 * delta_time);
+                }
+            }
         }
-        
-        // Formation correction color shift - units show energy during reformation
-        // This creates a visual effect when units are adjusting to formation positions
-        let formation_stress = (time_seconds * 5.0 + droid.march_offset * 2.0).sin();
-        let formation_energy = formation_stress * 0.002; // Much more subtle formation adjustment glow
-        transform.translation.y += formation_energy;
     }
 }
 
@@ -81,7 +77,7 @@ pub fn update_camera_info(
             .unwrap_or(0.0);
             
         text.sections[0].value = format!(
-            "{} vs {} Units ({} squads/team) | FPS: {:.1}\nWSAD: Move | Mouse: Rotate | Scroll: Zoom | F: Volley Fire\nRectangle Formation Only | G: Advance | H: Retreat",
+            "{} vs {} Units ({} squads/team) | FPS: {:.1}\nLeft-click: Select | Right-click: Move | Middle-drag: Rotate | Scroll: Zoom\nShift+click: Add to selection | G: Advance All | H: Retreat All | F: Volley Fire",
             ARMY_SIZE_PER_TEAM, ARMY_SIZE_PER_TEAM, ARMY_SIZE_PER_TEAM / SQUAD_SIZE, fps
         );
     }
@@ -98,8 +94,8 @@ pub fn rts_camera_movement(
     if let Ok((mut transform, mut camera)) = camera_query.get_single_mut() {
         let delta_time = time.delta_seconds();
         
-        // Mouse drag rotation
-        if mouse_button_input.pressed(MouseButton::Left) {
+        // Mouse drag rotation (middle mouse button - left click is for selection)
+        if mouse_button_input.pressed(MouseButton::Middle) {
             for motion in mouse_motion_events.read() {
                 camera.yaw -= motion.delta.x * CAMERA_ROTATION_SPEED;
                 camera.pitch = (camera.pitch - motion.delta.y * CAMERA_ROTATION_SPEED)

@@ -11,6 +11,7 @@ mod explosion_system;
 mod particles;
 mod wfx_materials;
 mod wfx_spawn;
+mod selection;
 use explosion_shader::ExplosionShaderPlugin;
 use particles::ParticleEffectsPlugin;
 use wfx_materials::{SmokeScrollMaterial, AdditiveMaterial, SmokeOnlyMaterial};
@@ -35,12 +36,14 @@ fn main() {
         .insert_resource(SquadManager::new())
         .insert_resource(GameState::default())
         .insert_resource(ExplosionDebugMode::default())
+        .insert_resource(selection::SelectionState::default())
         .add_systems(Startup, (setup::setup_scene, setup::spawn_army_with_squads, spawn_uplink_towers, spawn_objective_ui))
         .add_systems(Update, (
             // Formation and squad management systems run first
             squad_formation_system,
             squad_casualty_management_system,
             squad_movement_system,
+            formation::squad_rotation_system,
             commander::commander_promotion_system,
             commander::commander_visual_update_system,
             // Commander debug markers (glowing cubes above commanders)
@@ -52,6 +55,19 @@ fn main() {
             movement::animate_march,
             movement::update_camera_info,
             movement::rts_camera_movement,
+        ))
+        .add_systems(Update, (
+            // Selection and command systems (Total War style controls)
+            selection::selection_input_system,
+            selection::box_selection_update_system,
+            selection::move_command_system,
+        ).chain())
+        .add_systems(Update, (
+            // Selection visual feedback
+            selection::selection_visual_system,
+            selection::move_visual_cleanup_system,
+            selection::orientation_arrow_system,
+            selection::box_selection_visual_system,
         ))
         .add_systems(Update, (
             // Combat systems

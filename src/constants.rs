@@ -46,4 +46,15 @@ pub const EXPLOSION_DELAY_MAX: f32 = 2.0; // Maximum delay for dramatic cascade 
 pub const EXPLOSION_TIME_QUANTUM: f32 = 0.05; // Quantize delays to 50ms slots for burst clustering
 pub const EXPLOSION_EFFECT_DURATION: f32 = 2.0; // Visual explosion duration
 pub const MAX_EXPLOSIONS_PER_FRAME: usize = 50; // Limit explosions per frame to prevent stutter
-pub const PARTICLE_SPAWN_PROBABILITY: f32 = 0.3; // Probability (0.0-1.0) that an explosion spawns particles 
+pub const PARTICLE_SPAWN_PROBABILITY: f32 = 0.3; // Probability (0.0-1.0) that an explosion spawns particles
+
+// Selection system settings
+pub const SELECTION_CLICK_RADIUS: f32 = 15.0;       // How close to squad center to select (generous for usability)
+pub const SELECTION_RING_INNER_RADIUS: f32 = 8.0;   // Inner radius of selection ring
+pub const SELECTION_RING_OUTER_RADIUS: f32 = 10.0;  // Outer radius of selection ring
+pub const SELECTION_RING_COLOR: bevy::prelude::Color = bevy::prelude::Color::srgba(0.2, 0.9, 1.0, 0.7); // Cyan
+pub const BOX_SELECT_DRAG_THRESHOLD: f32 = 8.0;     // Pixels before box select starts
+pub const MOVE_INDICATOR_RADIUS: f32 = 3.0;         // Radius of move destination indicator
+pub const MOVE_INDICATOR_LIFETIME: f32 = 1.5;       // Seconds before move indicator fades
+pub const SQUAD_ROTATION_SPEED: f32 = 2.0;          // Radians per second for squad rotation
+pub const MULTI_SQUAD_SPACING: f32 = 25.0;          // Spacing between squads when moving multiple

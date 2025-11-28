@@ -326,7 +326,9 @@ fn spawn_team_squads(
                 col,
                 facing_direction,
             );
-            let unit_position = squad_center + formation_offset;
+            // Offset Y to place feet at ground level (mesh feet are at Y=-1.6, scaled by 0.8 = -1.28)
+            // Ground is at Y=-1.0, so spawn at Y=0.3 to have feet slightly above ground
+            let unit_position = squad_center + formation_offset + Vec3::new(0.0, 0.3, 0.0);
             
             // Add some randomness to march timing but reduce speed variance
             let march_offset = rng.gen_range(0.0..2.0 * PI);

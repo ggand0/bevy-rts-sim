@@ -18,13 +18,15 @@ pub fn calculate_formation_offset(
 
 fn calculate_rectangle_offset(row: usize, column: usize, facing_direction: Vec3) -> Vec3 {
     // Standard rectangular formation (10 wide x 5 deep)
+    // Row 0 is front (faces facing_direction), row 4 is rear (commander position)
     let x_offset = (column as f32 - (SQUAD_WIDTH as f32 - 1.0) / 2.0) * SQUAD_HORIZONTAL_SPACING;
     let z_offset = (row as f32 - (SQUAD_DEPTH as f32 - 1.0) / 2.0) * SQUAD_VERTICAL_SPACING;
-    
+
     // Calculate perpendicular direction for width
     let right = Vec3::new(facing_direction.z, 0.0, -facing_direction.x).normalize();
-    
-    right * x_offset + facing_direction * z_offset
+
+    // Negate z_offset so row 0 is in front (positive facing_direction) and commander is rear
+    right * x_offset - facing_direction * z_offset
 }
 
 pub fn assign_formation_positions(formation_type: FormationType) -> Vec<(usize, usize)> {
@@ -75,50 +77,37 @@ pub fn squad_formation_system(
     };
     
     if should_update_centers {
-        // Calculate intended squad centers based on spawn positions, not chaotic current positions
-        let mut squad_spawn_centers: HashMap<u32, Vec<Vec3>> = HashMap::new();
-        
-        for (_transform, squad_member, _, droid) in unit_query.iter() {
-            // Use spawn positions to calculate stable squad centers
-            squad_spawn_centers.entry(squad_member.squad_id)
+        // Calculate current average positions of units per squad
+        let mut squad_current_centers: HashMap<u32, Vec<Vec3>> = HashMap::new();
+
+        for (transform, squad_member, _, _droid) in unit_query.iter() {
+            squad_current_centers.entry(squad_member.squad_id)
                               .or_insert_with(Vec::new)
-                              .push(droid.spawn_position);
+                              .push(transform.translation);
         }
-        
-        // Update squad centers based on current unit average, but with some stability
-        for (squad_id, spawn_positions) in squad_spawn_centers.iter() {
+
+        // Update squad centers - use target_position as anchor when squads have a move target
+        for (squad_id, current_positions) in squad_current_centers.iter() {
             if let Some(squad) = squad_manager.get_squad_mut(*squad_id) {
-                if !spawn_positions.is_empty() {
-                    let spawn_center = spawn_positions.iter().sum::<Vec3>() / spawn_positions.len() as f32;
-                    
-                    // Calculate current average position of living units in this squad
-                    let mut current_positions = Vec::new();
-                    for (transform, squad_member, _, _) in unit_query.iter() {
-                        if squad_member.squad_id == *squad_id {
-                            current_positions.push(transform.translation);
-                        }
-                    }
-                    
-                    if !current_positions.is_empty() {
-                        let current_center = current_positions.iter().sum::<Vec3>() / current_positions.len() as f32;
-                        
-                        // Use spawn center as primary reference to prevent formation drift
-                        // Only adjust slightly based on current positions for natural movement
-                        let squad_strength_ratio = current_positions.len() as f32 / SQUAD_SIZE as f32;
-                        if squad_strength_ratio < 0.7 {
-                            // For reduced squads, heavily anchor to spawn center to prevent drift
-                            let anchor_weight = 0.8;
-                            let current_weight = 1.0 - anchor_weight;
-                            squad.center_position = spawn_center * anchor_weight + current_center * current_weight;
-                        } else {
-                            // For healthy squads, use spawn center as primary reference with light adjustment
-                            let anchor_weight = 0.6; // Still prefer spawn center
-                            let current_weight = 1.0 - anchor_weight;
-                            squad.center_position = spawn_center * anchor_weight + current_center * current_weight;
-                        }
+                if !current_positions.is_empty() {
+                    let current_center = current_positions.iter().sum::<Vec3>() / current_positions.len() as f32;
+
+                    // Check if squad is actively moving toward a target
+                    let distance_to_target = Vec3::new(
+                        current_center.x - squad.target_position.x,
+                        0.0,
+                        current_center.z - squad.target_position.z,
+                    ).length();
+
+                    if distance_to_target > 5.0 {
+                        // Squad is moving - smoothly transition center toward target
+                        // Use current average as the center (tracks actual unit positions during movement)
+                        squad.center_position = current_center;
                     } else {
-                        // No units left, fall back to spawn center
-                        squad.center_position = spawn_center;
+                        // Squad has arrived - anchor to target position for clean formation
+                        // Blend toward target to ensure proper line alignment
+                        let blend = 0.3; // Gradual snap to target
+                        squad.center_position = squad.center_position * (1.0 - blend) + squad.target_position * blend;
                     }
                 }
             }
@@ -130,28 +119,50 @@ pub fn squad_formation_system(
         if let Some(squad) = squad_manager.get_squad(squad_member.squad_id) {
             // Only update formation targets when not retreating to prevent interference
             if !droid.returning_to_spawn {
-                let correct_target_position = squad.center_position + formation_offset.local_offset;
+                // Recalculate formation offset with current facing direction
+                let new_offset = calculate_formation_offset(
+                    squad.formation_type,
+                    squad_member.formation_position.0,
+                    squad_member.formation_position.1,
+                    squad.facing_direction,
+                );
+                formation_offset.local_offset = new_offset;
+
+                // Use target_position as the formation anchor for clean final alignment
+                let correct_target_position = squad.target_position + formation_offset.local_offset;
                 formation_offset.target_world_position = correct_target_position;
             }
-            
+
             // Apply formation correction - stronger during advance to maintain formation
             let direction = formation_offset.target_world_position - transform.translation;
             let distance = direction.length();
-            
-            // Check if unit is actively moving or should be stationary
-            let is_stationary = droid.target_position == droid.spawn_position && !droid.returning_to_spawn;
-            let is_actively_moving = (!is_stationary && !droid.returning_to_spawn) || droid.returning_to_spawn;
-            
-            // DISABLE FORMATION CORRECTION DURING MOVEMENT: Don't apply formation correction if unit is actively marching or retreating
-            let should_apply_formation_correction = if is_actively_moving {
-                // COMPLETELY DISABLE formation correction during active march/retreat to prevent interference
-                false // No formation correction at all during advance or retreat
+
+            // Check if unit has arrived at its target position
+            let distance_to_target = Vec3::new(
+                transform.translation.x - droid.target_position.x,
+                0.0,
+                transform.translation.z - droid.target_position.z,
+            ).length();
+
+            // Use a smooth transition zone for arrival detection
+            // Units start getting formation correction when within 5 units, full correction at 1 unit
+            let arrival_blend = if distance_to_target > 5.0 {
+                0.0 // Not arrived yet
+            } else if distance_to_target < 1.0 {
+                1.0 // Fully arrived
             } else {
-                // Normal formation correction when stationary
-                distance > 0.2
+                // Smooth blend from 5.0 down to 1.0
+                1.0 - (distance_to_target - 1.0) / 4.0
             };
-            
-            // Apply formation correction if needed - much more careful during movement
+
+            // Skip correction entirely if moving or retreating
+            let should_apply_formation_correction = if droid.returning_to_spawn {
+                false
+            } else {
+                arrival_blend > 0.0 && distance > 0.2
+            };
+
+            // Apply formation correction with gradual strength based on arrival progress
             if should_apply_formation_correction && distance < 50.0 {
                 // Get squad size to adapt correction strength
                 let squad_size = if let Some(squad) = squad_manager.get_squad(squad_member.squad_id) {
@@ -160,39 +171,90 @@ pub fn squad_formation_system(
                     SQUAD_SIZE
                 };
                 let squad_strength_ratio = squad_size as f32 / SQUAD_SIZE as f32;
-                
-                // Much more careful base correction to avoid animation interference
-                let base_correction_strength = if is_stationary {
-                    3.0 // Strong correction when stationary for rapid formation completion
-                } else if droid.returning_to_spawn {
-                    0.8 // Moderate correction during retreat
-                } else {
-                    0.1 // Very light correction during advance to avoid interfering with march
-                };
-                
+
+                // Gentler base correction - ramps up with arrival_blend
+                let base_correction_strength = 1.5 * arrival_blend;
+
                 // Reduce correction for smaller squads to prevent over-correction and drift
                 let size_modifier = if squad_strength_ratio < 0.3 {
-                    0.8 // Still decent correction for very small squads
+                    0.8
                 } else if squad_strength_ratio < 0.6 {
-                    0.9 // Good correction for reduced squads
+                    0.9
                 } else {
-                    1.0 // Normal correction for healthy squads
+                    1.0
                 };
-                
-                // Reduced variation to prevent animation interference
-                let variation_factor = if is_actively_moving {
-                    1.0 // No variation during movement to avoid animation interference
-                } else {
-                    droid.march_offset.sin() * 0.1 + 1.0 // 0.9 to 1.1 multiplier for stationary units
-                };
-                
+
+                // Slight variation to prevent units from all moving identically
+                let variation_factor = droid.march_offset.sin() * 0.1 + 1.0;
+
                 let final_strength = base_correction_strength * size_modifier * variation_factor;
                 let movement = direction.normalize() * (distance * final_strength) * time.delta_seconds();
-                
+
                 // CRITICAL: Only apply horizontal corrections to avoid interfering with Y-axis animations
                 let correction_movement = Vec3::new(movement.x, 0.0, movement.z);
-                
+
                 transform.translation += correction_movement;
+            }
+        }
+    }
+}
+
+/// System: Smoothly rotate squad facing direction toward target facing direction
+/// and update unit formation positions accordingly
+pub fn squad_rotation_system(
+    time: Res<Time>,
+    mut squad_manager: ResMut<SquadManager>,
+    mut droid_query: Query<(&mut BattleDroid, &SquadMember)>,
+) {
+    let delta_time = time.delta_seconds();
+
+    // Collect squads that need rotation updates
+    let mut squads_to_update: Vec<(u32, Vec3)> = Vec::new();
+
+    for (squad_id, squad) in squad_manager.squads.iter_mut() {
+        // Check if squad needs to rotate
+        let dot = squad.facing_direction.dot(squad.target_facing_direction);
+
+        if dot < 0.9999 {
+            // Smoothly interpolate facing direction toward target
+            // Use slerp-like behavior via cross product and angle
+            let cross = squad.facing_direction.cross(squad.target_facing_direction);
+            let angle_sign = if cross.y >= 0.0 { 1.0 } else { -1.0 };
+
+            // Calculate rotation amount this frame
+            let max_rotation = SQUAD_ROTATION_SPEED * delta_time;
+            let angle_diff = squad.facing_direction.angle_between(squad.target_facing_direction);
+            let rotation_amount = angle_diff.min(max_rotation);
+
+            // Rotate facing direction
+            let rotation = Quat::from_rotation_y(angle_sign * rotation_amount);
+            squad.facing_direction = (rotation * squad.facing_direction).normalize();
+
+            // Mark this squad for unit position update
+            squads_to_update.push((*squad_id, squad.facing_direction));
+        }
+    }
+
+    // Update unit target positions for rotated squads
+    for (squad_id, new_facing) in squads_to_update {
+        if let Some(squad) = squad_manager.get_squad(squad_id) {
+            let target_pos = squad.target_position;
+            let formation_type = squad.formation_type;
+
+            for (mut droid, squad_member) in droid_query.iter_mut() {
+                if squad_member.squad_id == squad_id && !droid.returning_to_spawn {
+                    // Recalculate formation offset with new facing direction
+                    let new_offset = calculate_formation_offset(
+                        formation_type,
+                        squad_member.formation_position.0,
+                        squad_member.formation_position.1,
+                        new_facing,
+                    );
+
+                    // Preserve unit's spawn Y height when updating target position
+                    let target_xz = target_pos + new_offset;
+                    droid.target_position = Vec3::new(target_xz.x, droid.spawn_position.y, target_xz.z);
+                }
             }
         }
     }
