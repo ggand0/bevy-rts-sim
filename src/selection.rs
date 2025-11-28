@@ -230,9 +230,13 @@ pub fn box_selection_update_system(
         let min_y = start_pos.y.min(cursor_pos.y);
         let max_y = start_pos.y.max(cursor_pos.y);
 
-        // Select all squads whose center projects into the box
+        // Select all squads whose center projects into the box (only squads with living units)
         let mut selected_count = 0;
         for (squad_id, squad) in squad_manager.squads.iter() {
+            // Skip dead squads (no living units)
+            if squad.members.is_empty() {
+                continue;
+            }
             // Project squad center to screen space
             if let Some(screen_pos) = camera.world_to_viewport(camera_transform, squad.center_position) {
                 if screen_pos.x >= min_x && screen_pos.x <= max_x
@@ -671,7 +675,7 @@ fn create_path_line_mesh() -> Mesh {
 /// System: Update and cleanup selection ring visuals
 pub fn selection_visual_system(
     mut commands: Commands,
-    selection_state: Res<SelectionState>,
+    mut selection_state: ResMut<SelectionState>,
     squad_manager: Res<SquadManager>,
     existing_visuals: Query<(Entity, &SelectionVisual)>,
     mut visual_transforms: Query<&mut Transform, With<SelectionVisual>>,
@@ -679,9 +683,20 @@ pub fn selection_visual_system(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    // Remove visuals for deselected squads
+    // Clean up dead squads from selection (squads with no living units)
+    selection_state.selected_squads.retain(|&squad_id| {
+        if let Some(squad) = squad_manager.get_squad(squad_id) {
+            !squad.members.is_empty()
+        } else {
+            false // Squad doesn't exist anymore
+        }
+    });
+
+    // Remove visuals for deselected squads or squads with no living units
     for (entity, visual) in existing_visuals.iter() {
-        if !selection_state.selected_squads.contains(&visual.squad_id) {
+        let should_remove = !selection_state.selected_squads.contains(&visual.squad_id)
+            || squad_manager.get_squad(visual.squad_id).map_or(true, |s| s.members.is_empty());
+        if should_remove {
             commands.entity(entity).despawn();
         }
     }
