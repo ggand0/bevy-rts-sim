@@ -53,6 +53,7 @@ impl Default for SelectionState {
 #[derive(Component)]
 pub struct SelectionVisual {
     pub squad_id: u32,
+    pub is_grouped: bool,  // Track if currently showing grouped color
 }
 
 // Marker component for move order destination indicator (circle at destination)
@@ -1042,7 +1043,7 @@ pub fn selection_visual_system(
     mut commands: Commands,
     mut selection_state: ResMut<SelectionState>,
     squad_manager: Res<SquadManager>,
-    existing_visuals: Query<(Entity, &SelectionVisual)>,
+    mut existing_visuals: Query<(Entity, &mut SelectionVisual, &Handle<StandardMaterial>)>,
     mut visual_transforms: Query<&mut Transform, With<SelectionVisual>>,
     unit_query: Query<(&Transform, &SquadMember), (With<BattleDroid>, Without<SelectionVisual>)>,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -1058,7 +1059,7 @@ pub fn selection_visual_system(
     });
 
     // Remove visuals for deselected squads or squads with no living units
-    for (entity, visual) in existing_visuals.iter() {
+    for (entity, visual, _) in existing_visuals.iter() {
         let should_remove = !selection_state.selected_squads.contains(&visual.squad_id)
             || squad_manager.get_squad(visual.squad_id).map_or(true, |s| s.members.is_empty());
         if should_remove {
@@ -1087,7 +1088,7 @@ pub fn selection_visual_system(
 
     // Find which selected squads need visuals
     let existing_squad_ids: HashSet<u32> = existing_visuals.iter()
-        .map(|(_, v)| v.squad_id)
+        .map(|(_, v, _)| v.squad_id)
         .collect();
 
     // Create visuals for newly selected squads
@@ -1098,16 +1099,36 @@ pub fn selection_visual_system(
                 .copied()
                 .or_else(|| squad_manager.get_squad(squad_id).map(|s| s.center_position))
                 .unwrap_or(Vec3::ZERO);
-            spawn_selection_ring(&mut commands, &mut meshes, &mut materials, squad_id, position);
+            let is_grouped = selection_state.squad_to_group.contains_key(&squad_id);
+            spawn_selection_ring(&mut commands, &mut meshes, &mut materials, squad_id, position, is_grouped);
         }
     }
 
-    // Update positions of existing visuals using actual unit positions
-    for (entity, visual) in existing_visuals.iter() {
+    // Update positions and colors of existing visuals
+    for (entity, mut visual, material_handle) in existing_visuals.iter_mut() {
+        // Update position
         if let Some(&actual_center) = squad_actual_centers.get(&visual.squad_id) {
             if let Ok(mut transform) = visual_transforms.get_mut(entity) {
                 transform.translation.x = actual_center.x;
                 transform.translation.z = actual_center.z;
+            }
+        }
+
+        // Check if group status changed and update color
+        let is_now_grouped = selection_state.squad_to_group.contains_key(&visual.squad_id);
+        if visual.is_grouped != is_now_grouped {
+            visual.is_grouped = is_now_grouped;
+            // Update material color
+            if let Some(material) = materials.get_mut(material_handle) {
+                if is_now_grouped {
+                    // Yellow for grouped
+                    material.base_color = Color::srgba(1.0, 0.9, 0.2, 0.7);
+                    material.emissive = LinearRgba::new(0.8, 0.7, 0.1, 1.0);
+                } else {
+                    // Cyan for ungrouped (default)
+                    material.base_color = SELECTION_RING_COLOR;
+                    material.emissive = LinearRgba::new(0.1, 0.6, 0.8, 1.0);
+                }
             }
         }
     }
@@ -1120,14 +1141,23 @@ fn spawn_selection_ring(
     materials: &mut ResMut<Assets<StandardMaterial>>,
     squad_id: u32,
     position: Vec3,
+    is_grouped: bool,
 ) {
     use bevy::pbr::{NotShadowCaster, NotShadowReceiver};
 
     // Create a flat annulus (2D ring) mesh instead of 3D torus
     let mesh = meshes.add(Annulus::new(SELECTION_RING_INNER_RADIUS, SELECTION_RING_OUTER_RADIUS));
+
+    // Yellow for grouped, cyan for ungrouped
+    let (base_color, emissive) = if is_grouped {
+        (Color::srgba(1.0, 0.9, 0.2, 0.7), LinearRgba::new(0.8, 0.7, 0.1, 1.0))
+    } else {
+        (SELECTION_RING_COLOR, LinearRgba::new(0.1, 0.6, 0.8, 1.0))
+    };
+
     let material = materials.add(StandardMaterial {
-        base_color: SELECTION_RING_COLOR,
-        emissive: LinearRgba::new(0.1, 0.6, 0.8, 1.0),
+        base_color,
+        emissive,
         alpha_mode: AlphaMode::Blend,
         unlit: true,
         cull_mode: None,  // Visible from both sides
@@ -1144,7 +1174,7 @@ fn spawn_selection_ring(
                 .with_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)),
             ..default()
         },
-        SelectionVisual { squad_id },
+        SelectionVisual { squad_id, is_grouped },
         NotShadowCaster,
         NotShadowReceiver,
     ));
