@@ -276,20 +276,20 @@ pub fn move_command_system(
     info!("Move command to ({:.1}, {:.1}) for {} squads",
           destination.x, destination.z, selection_state.selected_squads.len());
 
-    // For multi-squad movement, calculate spread direction based on first squad's movement
+    // For multi-squad movement, calculate a UNIFIED facing direction based on first squad's movement
     let first_squad_pos = selection_state.selected_squads.first()
         .and_then(|&id| squad_manager.get_squad(id))
         .map(|s| s.center_position)
         .unwrap_or(Vec3::ZERO);
 
-    let move_direction = Vec3::new(
+    let unified_facing = Vec3::new(
         destination.x - first_squad_pos.x,
         0.0,
         destination.z - first_squad_pos.z,
     ).normalize_or_zero();
 
-    // Perpendicular direction for spreading squads in a line
-    let spread_direction = Vec3::new(move_direction.z, 0.0, -move_direction.x);
+    // Perpendicular direction for spreading squads in a line (orthogonal to facing)
+    let spread_direction = Vec3::new(unified_facing.z, 0.0, -unified_facing.x);
 
     // Issue move commands to all selected squads with spacing
     let num_squads = selection_state.selected_squads.len();
@@ -306,18 +306,10 @@ pub fn move_command_system(
 
             let squad_destination = destination + offset;
 
-            // Calculate target facing direction from this squad's current position
-            let direction = Vec3::new(
-                squad_destination.x - squad.center_position.x,
-                0.0,
-                squad_destination.z - squad.center_position.z,
-            );
-
-            if direction.length() > 0.1 {
-                // Set target facing toward this squad's destination
-                squad.target_facing_direction = direction.normalize();
-                // Also immediately set facing_direction for initial formation calculation
-                squad.facing_direction = direction.normalize();
+            // ALL squads face the same unified direction (not toward their individual destinations)
+            if unified_facing.length() > 0.1 {
+                squad.target_facing_direction = unified_facing;
+                squad.facing_direction = unified_facing;
             }
 
             // Set target position
