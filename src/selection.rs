@@ -12,8 +12,9 @@ use crate::formation::calculate_formation_offset;
 pub struct SquadGroup {
     pub id: u32,
     pub squad_ids: Vec<u32>,
-    pub squad_offsets: HashMap<u32, Vec3>,  // Relative offsets from group center
-    pub formation_facing: Vec3,              // Facing direction when group was formed
+    pub squad_offsets: HashMap<u32, Vec3>,     // Relative offsets from group center (in original coordinate system)
+    pub original_formation_facing: Vec3,        // Original facing direction when group was created (never changes)
+    pub formation_facing: Vec3,                 // Current facing direction (updates with each move)
 }
 
 // Selection state resource - tracks which squads are selected (Vec preserves selection order)
@@ -542,25 +543,25 @@ fn execute_group_move(
 ) {
     let Some(group) = selection_state.groups.get_mut(&group_id) else { return };
 
-    // Save the original formation_facing before updating
-    let original_facing = group.formation_facing;
+    // Get the ORIGINAL formation facing (from when group was created - this never changes)
+    let original_facing = group.original_formation_facing;
 
-    // Calculate rotation from original formation facing to new unified facing
-    let angle_diff = if original_facing.length() > 0.1 && unified_facing.length() > 0.1 {
-        // Calculate angle between the two vectors
-        let dot = original_facing.x * unified_facing.x + original_facing.z * unified_facing.z;
-        let det = original_facing.z * unified_facing.x - original_facing.x * unified_facing.z;
-        det.atan2(dot)
+    // Calculate rotation from ORIGINAL facing to the NEW unified facing
+    // This ensures we always rotate from the same base coordinate system
+    let rotation = if original_facing.length() > 0.1 && unified_facing.length() > 0.1 {
+        // Calculate the rotation quaternion that rotates original_facing to unified_facing
+        // For XZ plane: angle from +Z axis is atan2(x, z)
+        let original_angle = original_facing.x.atan2(original_facing.z);
+        let new_angle = unified_facing.x.atan2(unified_facing.z);
+        Quat::from_rotation_y(new_angle - original_angle)
     } else {
-        0.0
+        Quat::IDENTITY
     };
 
-    // Update the group's formation_facing to the new unified_facing
+    // Update the group's CURRENT formation_facing (for orientation indicator)
     if unified_facing.length() > 0.1 {
         group.formation_facing = unified_facing;
     }
-
-    let rotation = Quat::from_rotation_y(angle_diff);
 
     // Calculate actual current positions for path visuals
     let mut squad_current_positions: std::collections::HashMap<u32, Vec3> = std::collections::HashMap::new();
@@ -1035,7 +1036,8 @@ pub fn group_command_system(
                     id: group_id,
                     squad_ids: squad_ids.clone(),
                     squad_offsets,
-                    formation_facing: avg_facing,
+                    original_formation_facing: avg_facing,  // Store original facing (never changes)
+                    formation_facing: avg_facing,            // Current facing (will be updated on moves)
                 };
 
                 selection_state.groups.insert(group_id, group);
