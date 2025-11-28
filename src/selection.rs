@@ -13,6 +13,10 @@ pub struct SelectionState {
     pub box_select_start: Option<Vec2>,  // Screen-space start position for box selection
     pub is_box_selecting: bool,
     pub drag_start_world: Option<Vec3>,  // World position where drag started
+    // Right-click drag for orientation (CoH1-style)
+    pub move_drag_start: Option<Vec3>,   // World position where right-click started
+    pub move_drag_current: Option<Vec3>, // Current drag position (for arrow visual)
+    pub is_orientation_dragging: bool,   // True when drag exceeds threshold
 }
 
 // Marker component for selection ring visuals
@@ -26,6 +30,13 @@ pub struct SelectionVisual {
 pub struct MoveOrderVisual {
     pub timer: Timer,
 }
+
+// Marker component for orientation arrow during right-click drag
+#[derive(Component)]
+pub struct OrientationArrowVisual;
+
+// Threshold for orientation drag (in world units)
+const ORIENTATION_DRAG_THRESHOLD: f32 = 3.0;
 
 /// Convert screen cursor position to world position on the ground plane (Y = -1.0)
 pub fn screen_to_ground(
@@ -255,41 +266,127 @@ pub enum MovementAssignmentMode {
 }
 
 /// System: Handle right-click move commands for selected squads
+/// Supports drag-to-set-orientation (CoH1-style)
 pub fn move_command_system(
     mut commands: Commands,
     mouse_button: Res<ButtonInput<MouseButton>>,
     window_query: Query<&Window, With<PrimaryWindow>>,
     camera_query: Query<(&Camera, &GlobalTransform), With<RtsCamera>>,
     mut squad_manager: ResMut<SquadManager>,
-    selection_state: Res<SelectionState>,
+    mut selection_state: ResMut<SelectionState>,
     mut droid_query: Query<(&mut BattleDroid, &SquadMember, &FormationOffset)>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    arrow_query: Query<Entity, With<OrientationArrowVisual>>,
 ) {
-    // Only process if right mouse button just pressed
-    if !mouse_button.just_pressed(MouseButton::Right) {
-        return;
-    }
-
-    // Need selected squads to command
-    if selection_state.selected_squads.is_empty() {
-        return;
-    }
-
     let Ok(window) = window_query.get_single() else { return };
     let Ok((camera, camera_transform)) = camera_query.get_single() else { return };
     let Some(cursor_pos) = window.cursor_position() else { return };
 
-    // Raycast to ground
-    let Some(destination) = screen_to_ground(cursor_pos, camera, camera_transform) else { return };
+    // Get current world position under cursor
+    let current_world_pos = screen_to_ground(cursor_pos, camera, camera_transform);
 
-    info!("Move command to ({:.1}, {:.1}) for {} squads",
-          destination.x, destination.z, selection_state.selected_squads.len());
+    // Handle right mouse button press - start potential drag
+    if mouse_button.just_pressed(MouseButton::Right) {
+        if !selection_state.selected_squads.is_empty() {
+            if let Some(pos) = current_world_pos {
+                selection_state.move_drag_start = Some(pos);
+                selection_state.move_drag_current = Some(pos);
+                selection_state.is_orientation_dragging = false;
+            }
+        }
+    }
 
-    // Calculate average position of all selected squads for unified facing direction
+    // Handle right mouse button held - update drag position
+    if mouse_button.pressed(MouseButton::Right) {
+        if let (Some(start), Some(current)) = (selection_state.move_drag_start, current_world_pos) {
+            selection_state.move_drag_current = Some(current);
+
+            // Check if drag exceeds threshold
+            let drag_distance = Vec3::new(current.x - start.x, 0.0, current.z - start.z).length();
+            if drag_distance > ORIENTATION_DRAG_THRESHOLD {
+                selection_state.is_orientation_dragging = true;
+            }
+        }
+    }
+
+    // Handle right mouse button release - execute move command
+    if mouse_button.just_released(MouseButton::Right) {
+        // Clean up any existing arrow visual
+        for entity in arrow_query.iter() {
+            commands.entity(entity).despawn();
+        }
+
+        let Some(destination) = selection_state.move_drag_start else {
+            // Clear state and return
+            selection_state.move_drag_start = None;
+            selection_state.move_drag_current = None;
+            selection_state.is_orientation_dragging = false;
+            return;
+        };
+
+        if selection_state.selected_squads.is_empty() {
+            selection_state.move_drag_start = None;
+            selection_state.move_drag_current = None;
+            selection_state.is_orientation_dragging = false;
+            return;
+        }
+
+        // Determine facing direction
+        let unified_facing = if selection_state.is_orientation_dragging {
+            // Use drag direction for orientation
+            if let Some(current) = selection_state.move_drag_current {
+                let drag_dir = Vec3::new(
+                    current.x - destination.x,
+                    0.0,
+                    current.z - destination.z,
+                );
+                if drag_dir.length() > 0.1 {
+                    drag_dir.normalize()
+                } else {
+                    // Fallback to movement direction
+                    calculate_default_facing(&selection_state.selected_squads, &squad_manager, destination)
+                }
+            } else {
+                calculate_default_facing(&selection_state.selected_squads, &squad_manager, destination)
+            }
+        } else {
+            // No drag - use default facing (toward destination from average position)
+            calculate_default_facing(&selection_state.selected_squads, &squad_manager, destination)
+        };
+
+        info!("Move command to ({:.1}, {:.1}) for {} squads, orientation: ({:.2}, {:.2})",
+              destination.x, destination.z, selection_state.selected_squads.len(),
+              unified_facing.x, unified_facing.z);
+
+        // Execute the move command
+        execute_move_command(
+            &mut commands,
+            &mut squad_manager,
+            &selection_state,
+            &mut droid_query,
+            &mut meshes,
+            &mut materials,
+            destination,
+            unified_facing,
+        );
+
+        // Clear drag state
+        selection_state.move_drag_start = None;
+        selection_state.move_drag_current = None;
+        selection_state.is_orientation_dragging = false;
+    }
+}
+
+/// Calculate default facing direction (from average squad position toward destination)
+fn calculate_default_facing(
+    selected_squads: &[u32],
+    squad_manager: &SquadManager,
+    destination: Vec3,
+) -> Vec3 {
     let mut avg_pos = Vec3::ZERO;
     let mut count = 0;
-    for &squad_id in selection_state.selected_squads.iter() {
+    for &squad_id in selected_squads.iter() {
         if let Some(squad) = squad_manager.get_squad(squad_id) {
             avg_pos += squad.center_position;
             count += 1;
@@ -299,12 +396,24 @@ pub fn move_command_system(
         avg_pos /= count as f32;
     }
 
-    let unified_facing = Vec3::new(
+    Vec3::new(
         destination.x - avg_pos.x,
         0.0,
         destination.z - avg_pos.z,
-    ).normalize_or_zero();
+    ).normalize_or_zero()
+}
 
+/// Execute the move command with given destination and facing
+fn execute_move_command(
+    commands: &mut Commands,
+    squad_manager: &mut ResMut<SquadManager>,
+    selection_state: &SelectionState,
+    droid_query: &mut Query<(&mut BattleDroid, &SquadMember, &FormationOffset)>,
+    meshes: &mut ResMut<Assets<Mesh>>,
+    materials: &mut ResMut<Assets<StandardMaterial>>,
+    destination: Vec3,
+    unified_facing: Vec3,
+) {
     // Perpendicular direction for spreading squads in a line (orthogonal to facing)
     let spread_direction = Vec3::new(unified_facing.z, 0.0, -unified_facing.x);
 
@@ -323,7 +432,6 @@ pub fn move_command_system(
         })
         .collect();
 
-    // Default mode: ClosestDestination - each squad picks closest slot
     // Collect squad IDs and their current positions
     let squad_positions: Vec<(u32, Vec3)> = selection_state.selected_squads.iter()
         .filter_map(|&id| squad_manager.get_squad(id).map(|s| (id, s.center_position)))
@@ -395,7 +503,7 @@ pub fn move_command_system(
     }
 
     // Spawn move indicator visual
-    spawn_move_indicator(&mut commands, &mut meshes, &mut materials, destination);
+    spawn_move_indicator(commands, meshes, materials, destination);
 }
 
 /// Spawn a visual indicator at the move destination
@@ -557,4 +665,120 @@ pub fn move_visual_cleanup_system(
             commands.entity(entity).despawn();
         }
     }
+}
+
+/// System: Update orientation arrow visual during right-click drag
+pub fn orientation_arrow_system(
+    mut commands: Commands,
+    selection_state: Res<SelectionState>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut arrow_query: Query<(Entity, &mut Transform), With<OrientationArrowVisual>>,
+) {
+    use bevy::pbr::{NotShadowCaster, NotShadowReceiver};
+
+    // Check if we should show the arrow
+    if !selection_state.is_orientation_dragging {
+        // Remove any existing arrow
+        for (entity, _) in arrow_query.iter() {
+            commands.entity(entity).despawn();
+        }
+        return;
+    }
+
+    let Some(start) = selection_state.move_drag_start else {
+        return;
+    };
+    let Some(current) = selection_state.move_drag_current else {
+        return;
+    };
+
+    // Calculate arrow properties
+    let direction = Vec3::new(current.x - start.x, 0.0, current.z - start.z);
+    let length = direction.length();
+
+    if length < 0.1 {
+        return;
+    }
+
+    let normalized_dir = direction.normalize();
+    let arrow_rotation = Quat::from_rotation_y(normalized_dir.x.atan2(normalized_dir.z));
+
+    // Check if arrow already exists
+    if let Ok((_, mut transform)) = arrow_query.get_single_mut() {
+        // Update existing arrow
+        transform.translation = Vec3::new(start.x, 0.2, start.z);
+        transform.rotation = arrow_rotation;
+        transform.scale = Vec3::new(1.0, 1.0, length);
+    } else {
+        // Create new arrow (elongated triangle pointing in drag direction)
+        // Arrow is a simple quad that we'll scale based on drag length
+        let arrow_mesh = meshes.add(create_arrow_mesh());
+        let arrow_material = materials.add(StandardMaterial {
+            base_color: Color::srgba(0.2, 1.0, 0.3, 0.8),
+            emissive: LinearRgba::new(0.1, 0.5, 0.15, 1.0),
+            alpha_mode: AlphaMode::Blend,
+            unlit: true,
+            cull_mode: None,
+            double_sided: true,
+            ..default()
+        });
+
+        commands.spawn((
+            PbrBundle {
+                mesh: arrow_mesh,
+                material: arrow_material,
+                transform: Transform::from_translation(Vec3::new(start.x, 0.2, start.z))
+                    .with_rotation(arrow_rotation)
+                    .with_scale(Vec3::new(1.0, 1.0, length)),
+                ..default()
+            },
+            OrientationArrowVisual,
+            NotShadowCaster,
+            NotShadowReceiver,
+        ));
+    }
+}
+
+/// Create an arrow mesh pointing in +Z direction (will be rotated and scaled)
+fn create_arrow_mesh() -> Mesh {
+    use bevy::render::mesh::PrimitiveTopology;
+
+    // Arrow shape: shaft + head, lying flat on XZ plane
+    // Base length is 1.0, will be scaled by drag distance
+    let shaft_width = 0.8;
+    let head_width = 2.0;
+    let head_length = 0.15; // Proportion of total length for arrowhead
+
+    // Vertices (Y=0, lying flat)
+    let vertices = vec![
+        // Shaft (from origin to 1-head_length)
+        [-shaft_width / 2.0, 0.0, 0.0],           // 0: left start
+        [shaft_width / 2.0, 0.0, 0.0],            // 1: right start
+        [shaft_width / 2.0, 0.0, 1.0 - head_length], // 2: right shaft end
+        [-shaft_width / 2.0, 0.0, 1.0 - head_length], // 3: left shaft end
+        // Arrow head
+        [-head_width / 2.0, 0.0, 1.0 - head_length], // 4: left head base
+        [head_width / 2.0, 0.0, 1.0 - head_length],  // 5: right head base
+        [0.0, 0.0, 1.0],                              // 6: tip
+    ];
+
+    let indices = vec![
+        // Shaft quad (two triangles)
+        0, 2, 1,
+        0, 3, 2,
+        // Arrow head triangle
+        4, 6, 5,
+    ];
+
+    let normals = vec![[0.0, 1.0, 0.0]; 7]; // All pointing up
+    let uvs = vec![[0.0, 0.0]; 7]; // Simple UVs
+
+    let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, bevy::render::render_asset::RenderAssetUsages::default());
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, vertices);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
+    mesh.insert_indices(bevy::render::mesh::Indices::U32(indices));
+
+    mesh
 }

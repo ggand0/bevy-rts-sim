@@ -66,6 +66,7 @@ fn main() {
             // Selection visual feedback
             selection::selection_visual_system,
             selection::move_visual_cleanup_system,
+            selection::orientation_arrow_system,
         ))
         .add_systems(Update, (
             // Combat systems
