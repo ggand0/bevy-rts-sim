@@ -104,15 +104,25 @@ fn calculate_squad_centers(
 
 /// Find the squad closest to a world position (for click selection)
 /// Uses actual unit positions, not anchored squad.center_position
+/// Only considers squads from the specified team (player team)
 pub fn find_squad_at_position(
     world_pos: Vec3,
     squad_centers: &std::collections::HashMap<u32, Vec3>,
+    squad_manager: &SquadManager,
     max_distance: f32,
+    player_team: Team,
 ) -> Option<u32> {
     let mut closest_squad: Option<u32> = None;
     let mut closest_distance = max_distance;
 
     for (squad_id, center) in squad_centers.iter() {
+        // Only allow selecting player's team
+        if let Some(squad) = squad_manager.get_squad(*squad_id) {
+            if squad.team != player_team {
+                continue;
+            }
+        }
+
         let distance = Vec3::new(
             world_pos.x - center.x,
             0.0,  // Ignore Y for horizontal distance
@@ -135,6 +145,7 @@ pub fn selection_input_system(
     window_query: Query<&Window, With<PrimaryWindow>>,
     camera_query: Query<(&Camera, &GlobalTransform), With<RtsCamera>>,
     unit_query: Query<(&Transform, &SquadMember), (With<BattleDroid>, Without<SelectionVisual>)>,
+    squad_manager: Res<SquadManager>,
     mut selection_state: ResMut<SelectionState>,
 ) {
     let Ok(window) = window_query.get_single() else { return };
@@ -165,7 +176,8 @@ pub fn selection_input_system(
                     // Calculate actual squad centers from unit positions
                     let squad_centers = calculate_squad_centers(&unit_query);
 
-                    if let Some(squad_id) = find_squad_at_position(world_pos, &squad_centers, SELECTION_CLICK_RADIUS) {
+                    // Only select player's team (Team::A)
+                    if let Some(squad_id) = find_squad_at_position(world_pos, &squad_centers, &squad_manager, SELECTION_CLICK_RADIUS, Team::A) {
                         if shift_held {
                             // Toggle selection
                             if let Some(pos) = selection_state.selected_squads.iter().position(|&id| id == squad_id) {
@@ -230,9 +242,13 @@ pub fn box_selection_update_system(
         let min_y = start_pos.y.min(cursor_pos.y);
         let max_y = start_pos.y.max(cursor_pos.y);
 
-        // Select all squads whose center projects into the box (only squads with living units)
+        // Select all squads whose center projects into the box (only player's team with living units)
         let mut selected_count = 0;
         for (squad_id, squad) in squad_manager.squads.iter() {
+            // Skip enemy squads (only select player's Team::A)
+            if squad.team != Team::A {
+                continue;
+            }
             // Skip dead squads (no living units)
             if squad.members.is_empty() {
                 continue;
