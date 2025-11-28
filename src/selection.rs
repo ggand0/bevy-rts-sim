@@ -549,7 +549,7 @@ fn execute_group_move(
     let angle_diff = if original_facing.length() > 0.1 && unified_facing.length() > 0.1 {
         // Calculate angle between the two vectors
         let dot = original_facing.x * unified_facing.x + original_facing.z * unified_facing.z;
-        let det = original_facing.x * unified_facing.z - original_facing.z * unified_facing.x;
+        let det = original_facing.z * unified_facing.x - original_facing.x * unified_facing.z;
         det.atan2(dot)
     } else {
         0.0
