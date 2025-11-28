@@ -244,6 +244,16 @@ pub fn box_selection_update_system(
     }
 }
 
+/// Movement assignment mode for multi-squad commands
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MovementAssignmentMode {
+    /// Each squad picks the closest destination slot (default, more natural movement)
+    #[default]
+    ClosestDestination,
+    /// First selected squad goes to click point, others spread in order (debug mode)
+    SelectionOrder,
+}
+
 /// System: Handle right-click move commands for selected squads
 pub fn move_command_system(
     mut commands: Commands,
@@ -276,37 +286,84 @@ pub fn move_command_system(
     info!("Move command to ({:.1}, {:.1}) for {} squads",
           destination.x, destination.z, selection_state.selected_squads.len());
 
-    // For multi-squad movement, calculate a UNIFIED facing direction based on first squad's movement
-    let first_squad_pos = selection_state.selected_squads.first()
-        .and_then(|&id| squad_manager.get_squad(id))
-        .map(|s| s.center_position)
-        .unwrap_or(Vec3::ZERO);
+    // Calculate average position of all selected squads for unified facing direction
+    let mut avg_pos = Vec3::ZERO;
+    let mut count = 0;
+    for &squad_id in selection_state.selected_squads.iter() {
+        if let Some(squad) = squad_manager.get_squad(squad_id) {
+            avg_pos += squad.center_position;
+            count += 1;
+        }
+    }
+    if count > 0 {
+        avg_pos /= count as f32;
+    }
 
     let unified_facing = Vec3::new(
-        destination.x - first_squad_pos.x,
+        destination.x - avg_pos.x,
         0.0,
-        destination.z - first_squad_pos.z,
+        destination.z - avg_pos.z,
     ).normalize_or_zero();
 
     // Perpendicular direction for spreading squads in a line (orthogonal to facing)
     let spread_direction = Vec3::new(unified_facing.z, 0.0, -unified_facing.x);
 
-    // Issue move commands to all selected squads with spacing
     let num_squads = selection_state.selected_squads.len();
-    for (index, &squad_id) in selection_state.selected_squads.iter().enumerate() {
-        if let Some(squad) = squad_manager.get_squad_mut(squad_id) {
-            // Calculate offset from click position
-            // First squad goes to exact position, others spread perpendicular to movement
+
+    // Pre-calculate all destination slots
+    let destination_slots: Vec<Vec3> = (0..num_squads)
+        .map(|index| {
             let offset = if num_squads > 1 {
                 let centered_index = index as f32 - (num_squads - 1) as f32 / 2.0;
                 spread_direction * centered_index * MULTI_SQUAD_SPACING
             } else {
                 Vec3::ZERO
             };
+            destination + offset
+        })
+        .collect();
 
-            let squad_destination = destination + offset;
+    // Default mode: ClosestDestination - each squad picks closest slot
+    // Collect squad IDs and their current positions
+    let squad_positions: Vec<(u32, Vec3)> = selection_state.selected_squads.iter()
+        .filter_map(|&id| squad_manager.get_squad(id).map(|s| (id, s.center_position)))
+        .collect();
 
-            // ALL squads face the same unified direction (not toward their individual destinations)
+    // Greedy assignment: assign each squad to its closest available destination
+    let mut assigned_destinations: Vec<(u32, Vec3)> = Vec::with_capacity(num_squads);
+    let mut available_slots: Vec<Vec3> = destination_slots.clone();
+
+    // Sort squads by distance to destination center (closest first gets priority)
+    let mut sorted_squads = squad_positions.clone();
+    sorted_squads.sort_by(|a, b| {
+        let dist_a = Vec3::new(a.1.x - destination.x, 0.0, a.1.z - destination.z).length();
+        let dist_b = Vec3::new(b.1.x - destination.x, 0.0, b.1.z - destination.z).length();
+        dist_a.partial_cmp(&dist_b).unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    for (squad_id, squad_pos) in sorted_squads {
+        // Find the closest available slot
+        let mut best_slot_idx = 0;
+        let mut best_distance = f32::MAX;
+
+        for (idx, &slot) in available_slots.iter().enumerate() {
+            let dist = Vec3::new(squad_pos.x - slot.x, 0.0, squad_pos.z - slot.z).length();
+            if dist < best_distance {
+                best_distance = dist;
+                best_slot_idx = idx;
+            }
+        }
+
+        if !available_slots.is_empty() {
+            let chosen_slot = available_slots.remove(best_slot_idx);
+            assigned_destinations.push((squad_id, chosen_slot));
+        }
+    }
+
+    // Apply the assignments
+    for (squad_id, squad_destination) in assigned_destinations {
+        if let Some(squad) = squad_manager.get_squad_mut(squad_id) {
+            // ALL squads face the same unified direction
             if unified_facing.length() > 0.1 {
                 squad.target_facing_direction = unified_facing;
                 squad.facing_direction = unified_facing;
