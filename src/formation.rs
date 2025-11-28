@@ -291,7 +291,7 @@ pub fn squad_movement_system(
     let mut should_advance = false;
     let mut should_retreat = false;
     
-    if keyboard_input.just_pressed(KeyCode::KeyG) {
+    if keyboard_input.just_pressed(KeyCode::KeyT) {
         should_advance = true;
         info!("All squads advance!");
     } else if keyboard_input.just_pressed(KeyCode::KeyH) {

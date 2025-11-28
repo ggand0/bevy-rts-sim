@@ -1,13 +1,22 @@
 // Selection and command systems for RTS controls
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
-use std::collections::HashSet;
+use std::collections::{HashSet, HashMap};
 use crate::types::*;
 use crate::constants::*;
 use crate::formation::calculate_formation_offset;
 
+// Squad group - Total War style formation preservation
+#[derive(Clone)]
+pub struct SquadGroup {
+    pub id: u32,
+    pub squad_ids: Vec<u32>,
+    pub squad_offsets: HashMap<u32, Vec3>,  // Relative offsets from group center
+    pub formation_facing: Vec3,              // Facing direction when group was formed
+}
+
 // Selection state resource - tracks which squads are selected (Vec preserves selection order)
-#[derive(Resource, Default)]
+#[derive(Resource)]
 pub struct SelectionState {
     pub selected_squads: Vec<u32>,  // First element is primary selection
     pub box_select_start: Option<Vec2>,  // Screen-space start position for box selection
@@ -17,6 +26,27 @@ pub struct SelectionState {
     pub move_drag_start: Option<Vec3>,   // World position where right-click started
     pub move_drag_current: Option<Vec3>, // Current drag position (for arrow visual)
     pub is_orientation_dragging: bool,   // True when drag exceeds threshold
+    // Squad grouping
+    pub groups: HashMap<u32, SquadGroup>,
+    pub squad_to_group: HashMap<u32, u32>,
+    pub next_group_id: u32,
+}
+
+impl Default for SelectionState {
+    fn default() -> Self {
+        Self {
+            selected_squads: Vec::new(),
+            box_select_start: None,
+            is_box_selecting: false,
+            drag_start_world: None,
+            move_drag_start: None,
+            move_drag_current: None,
+            is_orientation_dragging: false,
+            groups: HashMap::new(),
+            squad_to_group: HashMap::new(),
+            next_group_id: 1,
+        }
+    }
 }
 
 // Marker component for selection ring visuals
@@ -178,20 +208,57 @@ pub fn selection_input_system(
 
                     // Only select player's team (Team::A)
                     if let Some(squad_id) = find_squad_at_position(world_pos, &squad_centers, &squad_manager, SELECTION_CLICK_RADIUS, Team::A) {
-                        if shift_held {
-                            // Toggle selection
-                            if let Some(pos) = selection_state.selected_squads.iter().position(|&id| id == squad_id) {
-                                selection_state.selected_squads.remove(pos);
-                                info!("Deselected squad {}", squad_id);
+                        // Check if clicked squad is part of a group
+                        let group_squads = if let Some(&group_id) = selection_state.squad_to_group.get(&squad_id) {
+                            if let Some(group) = selection_state.groups.get(&group_id) {
+                                Some(group.squad_ids.clone())
                             } else {
-                                selection_state.selected_squads.push(squad_id);
-                                info!("Added squad {} to selection ({} total)", squad_id, selection_state.selected_squads.len());
+                                None
                             }
                         } else {
-                            // Clear and select single squad
+                            None
+                        };
+
+                        if shift_held {
+                            // Toggle selection (entire group if grouped)
+                            if let Some(group_squads) = group_squads {
+                                // Check if entire group is already selected
+                                let all_selected = group_squads.iter().all(|id| selection_state.selected_squads.contains(id));
+                                if all_selected {
+                                    // Deselect entire group
+                                    for squad_id in &group_squads {
+                                        selection_state.selected_squads.retain(|&id| id != *squad_id);
+                                    }
+                                    info!("Deselected group with {} squads", group_squads.len());
+                                } else {
+                                    // Select entire group
+                                    for squad_id in group_squads {
+                                        if !selection_state.selected_squads.contains(&squad_id) {
+                                            selection_state.selected_squads.push(squad_id);
+                                        }
+                                    }
+                                    info!("Added group to selection ({} total)", selection_state.selected_squads.len());
+                                }
+                            } else {
+                                // Single squad toggle
+                                if let Some(pos) = selection_state.selected_squads.iter().position(|&id| id == squad_id) {
+                                    selection_state.selected_squads.remove(pos);
+                                    info!("Deselected squad {}", squad_id);
+                                } else {
+                                    selection_state.selected_squads.push(squad_id);
+                                    info!("Added squad {} to selection ({} total)", squad_id, selection_state.selected_squads.len());
+                                }
+                            }
+                        } else {
+                            // Clear and select (entire group if grouped)
                             selection_state.selected_squads.clear();
-                            selection_state.selected_squads.push(squad_id);
-                            info!("Selected squad {}", squad_id);
+                            if let Some(group_squads) = group_squads {
+                                selection_state.selected_squads.extend(group_squads.iter());
+                                info!("Selected group with {} squads", group_squads.len());
+                            } else {
+                                selection_state.selected_squads.push(squad_id);
+                                info!("Selected squad {}", squad_id);
+                            }
                         }
                     } else if !shift_held {
                         // Clicked on empty ground without shift - clear selection
@@ -265,6 +332,21 @@ pub fn box_selection_update_system(
                 }
             }
         }
+
+        // Expand selection to include all grouped squads
+        let mut additional_squads = Vec::new();
+        for &squad_id in &selection_state.selected_squads {
+            if let Some(&group_id) = selection_state.squad_to_group.get(&squad_id) {
+                if let Some(group) = selection_state.groups.get(&group_id) {
+                    for &grouped_squad_id in &group.squad_ids {
+                        if !selection_state.selected_squads.contains(&grouped_squad_id) {
+                            additional_squads.push(grouped_squad_id);
+                        }
+                    }
+                }
+            }
+        }
+        selection_state.selected_squads.extend(additional_squads);
 
         if selected_count > 0 {
             info!("Box selected {} squads ({} total)", selected_count, selection_state.selected_squads.len());
@@ -438,7 +520,136 @@ fn calculate_default_facing(
     ).normalize_or_zero()
 }
 
+/// Execute a group move - maintains relative formation positions
+fn execute_group_move(
+    commands: &mut Commands,
+    squad_manager: &mut ResMut<SquadManager>,
+    selection_state: &SelectionState,
+    droid_query: &mut Query<(&mut BattleDroid, &SquadMember, &FormationOffset, &Transform)>,
+    meshes: &mut ResMut<Assets<Mesh>>,
+    materials: &mut ResMut<Assets<StandardMaterial>>,
+    destination: Vec3,
+    unified_facing: Vec3,
+    group_id: u32,
+) {
+    let Some(group) = selection_state.groups.get(&group_id) else { return };
+
+    // Calculate rotation from original formation facing to new unified facing
+    let angle_diff = if group.formation_facing.length() > 0.1 && unified_facing.length() > 0.1 {
+        // Calculate angle between the two vectors
+        let dot = group.formation_facing.x * unified_facing.x + group.formation_facing.z * unified_facing.z;
+        let det = group.formation_facing.x * unified_facing.z - group.formation_facing.z * unified_facing.x;
+        det.atan2(dot)
+    } else {
+        0.0
+    };
+
+    let rotation = Quat::from_rotation_y(angle_diff);
+
+    // Calculate actual current positions for path visuals
+    let mut squad_current_positions: std::collections::HashMap<u32, Vec3> = std::collections::HashMap::new();
+    for (_droid, squad_member, _offset, transform) in droid_query.iter() {
+        if group.squad_ids.contains(&squad_member.squad_id) {
+            let entry = squad_current_positions.entry(squad_member.squad_id).or_insert(Vec3::ZERO);
+            *entry += transform.translation;
+        }
+    }
+    // Average the positions
+    for &squad_id in &group.squad_ids {
+        if let Some(squad) = squad_manager.get_squad(squad_id) {
+            if let Some(pos) = squad_current_positions.get_mut(&squad_id) {
+                let member_count = squad.members.len();
+                if member_count > 0 {
+                    *pos /= member_count as f32;
+                }
+            }
+        }
+    }
+
+    // Apply rotated offsets to each squad
+    for (&squad_id, &offset) in &group.squad_offsets {
+        // Rotate the offset
+        let rotated_offset = rotation * offset;
+        let squad_dest = destination + rotated_offset;
+
+        if let Some(squad) = squad_manager.get_squad_mut(squad_id) {
+            // Set facing direction
+            if unified_facing.length() > 0.1 {
+                squad.target_facing_direction = unified_facing;
+                squad.facing_direction = unified_facing;
+            }
+
+            // Set target position
+            squad.target_position = squad_dest;
+
+            // Spawn visual indicators
+            spawn_move_indicator(commands, meshes, materials, squad_dest);
+
+            if let Some(&start_pos) = squad_current_positions.get(&squad_id) {
+                spawn_path_line(commands, meshes, materials, start_pos, squad_dest);
+            }
+        }
+    }
+
+    // Update individual unit targets
+    for (mut droid, squad_member, _formation_offset, _transform) in droid_query.iter_mut() {
+        if group.squad_ids.contains(&squad_member.squad_id) {
+            if let Some(squad) = squad_manager.get_squad(squad_member.squad_id) {
+                // Calculate new formation offset with new facing direction
+                let new_offset = calculate_formation_offset(
+                    squad.formation_type,
+                    squad_member.formation_position.0,
+                    squad_member.formation_position.1,
+                    squad.facing_direction,
+                );
+
+                // Set target position with formation offset, preserving the unit's spawn Y height
+                let target_xz = squad.target_position + new_offset;
+                droid.target_position = Vec3::new(target_xz.x, droid.spawn_position.y, target_xz.z);
+                droid.returning_to_spawn = false;
+            }
+        }
+    }
+
+    info!("Group {} moved to destination with maintained formation", group_id);
+}
+
 /// Execute the move command with given destination and facing
+/// Check if the current selection is exactly one complete group (all squads in a group are selected)
+fn check_is_complete_group(selection_state: &SelectionState) -> Option<u32> {
+    if selection_state.selected_squads.is_empty() {
+        return None;
+    }
+
+    // Check if all selected squads belong to the same group
+    let mut group_id: Option<u32> = None;
+    for &squad_id in &selection_state.selected_squads {
+        if let Some(&gid) = selection_state.squad_to_group.get(&squad_id) {
+            if group_id.is_none() {
+                group_id = Some(gid);
+            } else if group_id != Some(gid) {
+                // Squads belong to different groups
+                return None;
+            }
+        } else {
+            // At least one squad is not in a group
+            return None;
+        }
+    }
+
+    // Check if all squads in the group are selected
+    if let Some(gid) = group_id {
+        if let Some(group) = selection_state.groups.get(&gid) {
+            let all_in_selection = group.squad_ids.iter().all(|id| selection_state.selected_squads.contains(id));
+            if all_in_selection {
+                return Some(gid);
+            }
+        }
+    }
+
+    None
+}
+
 fn execute_move_command(
     commands: &mut Commands,
     squad_manager: &mut ResMut<SquadManager>,
@@ -449,6 +660,24 @@ fn execute_move_command(
     destination: Vec3,
     unified_facing: Vec3,
 ) {
+    // Check if this is a complete group move
+    if let Some(group_id) = check_is_complete_group(selection_state) {
+        // Group move - maintain relative positions
+        execute_group_move(
+            commands,
+            squad_manager,
+            selection_state,
+            droid_query,
+            meshes,
+            materials,
+            destination,
+            unified_facing,
+            group_id,
+        );
+        return;
+    }
+
+    // Regular move - create line formation
     // Perpendicular direction for spreading squads in a line (orthogonal to facing)
     let spread_direction = Vec3::new(unified_facing.z, 0.0, -unified_facing.x);
 
@@ -686,6 +915,126 @@ fn create_path_line_mesh() -> Mesh {
     mesh.insert_indices(bevy::render::mesh::Indices::U32(indices));
 
     mesh
+}
+
+/// System: Handle group toggle with G key (group if ungrouped, ungroup if grouped)
+pub fn group_command_system(
+    keyboard: Res<ButtonInput<KeyCode>>,
+    mut selection_state: ResMut<SelectionState>,
+    squad_manager: Res<SquadManager>,
+) {
+    // Toggle group with G (or U to ungroup)
+    if keyboard.just_pressed(KeyCode::KeyG) || keyboard.just_pressed(KeyCode::KeyU) {
+        if selection_state.selected_squads.is_empty() {
+            return;
+        }
+
+        let selected_squads = selection_state.selected_squads.clone();
+
+        // Check if all selected squads are already in the same group
+        let all_in_same_group = if let Some(&first_group) = selection_state.squad_to_group.get(&selected_squads[0]) {
+            selected_squads.iter().all(|&id| {
+                selection_state.squad_to_group.get(&id) == Some(&first_group)
+            })
+        } else {
+            false
+        };
+
+        // If U is pressed or all are already grouped together, ungroup
+        if keyboard.just_pressed(KeyCode::KeyU) || all_in_same_group {
+            let mut ungrouped_count = 0;
+
+            for &squad_id in &selected_squads {
+                if let Some(&group_id) = selection_state.squad_to_group.get(&squad_id) {
+                    selection_state.squad_to_group.remove(&squad_id);
+                    ungrouped_count += 1;
+
+                    // Remove from group
+                    if let Some(group) = selection_state.groups.get_mut(&group_id) {
+                        group.squad_ids.retain(|&id| id != squad_id);
+                        group.squad_offsets.remove(&squad_id);
+                    }
+                }
+            }
+
+            // Clean up empty groups
+            selection_state.groups.retain(|_, group| !group.squad_ids.is_empty());
+
+            if ungrouped_count > 0 {
+                info!("Ungrouped {} squads", ungrouped_count);
+            }
+        } else if selected_squads.len() >= 2 {
+            // Group the selected squads
+
+            // Remove existing group memberships for selected squads
+            for &squad_id in &selected_squads {
+                if let Some(&old_group_id) = selection_state.squad_to_group.get(&squad_id) {
+                    selection_state.squad_to_group.remove(&squad_id);
+
+                    // Remove from old group's squad list
+                    if let Some(old_group) = selection_state.groups.get_mut(&old_group_id) {
+                        old_group.squad_ids.retain(|&id| id != squad_id);
+                        old_group.squad_offsets.remove(&squad_id);
+                    }
+                }
+            }
+
+            // Clean up empty groups
+            selection_state.groups.retain(|_, group| !group.squad_ids.is_empty());
+
+            // Calculate group center from squad positions
+            let mut group_center = Vec3::ZERO;
+            let mut valid_squad_count = 0;
+            let mut avg_facing = Vec3::ZERO;
+
+            for &squad_id in &selected_squads {
+                if let Some(squad) = squad_manager.get_squad(squad_id) {
+                    group_center += squad.center_position;
+                    avg_facing += squad.facing_direction;
+                    valid_squad_count += 1;
+                }
+            }
+
+            if valid_squad_count > 0 {
+                group_center /= valid_squad_count as f32;
+                avg_facing = avg_facing.normalize_or_zero();
+
+                // Calculate offsets for each squad
+                let mut squad_offsets = HashMap::new();
+                let mut squad_ids = Vec::new();
+
+                for &squad_id in &selected_squads {
+                    if let Some(squad) = squad_manager.get_squad(squad_id) {
+                        let offset = squad.center_position - group_center;
+                        squad_offsets.insert(squad_id, offset);
+                        squad_ids.push(squad_id);
+                    }
+                }
+
+                // Create new group
+                let group_id = selection_state.next_group_id;
+                selection_state.next_group_id += 1;
+
+                let group = SquadGroup {
+                    id: group_id,
+                    squad_ids: squad_ids.clone(),
+                    squad_offsets,
+                    formation_facing: avg_facing,
+                };
+
+                selection_state.groups.insert(group_id, group);
+
+                // Update squad-to-group mapping
+                for squad_id in squad_ids {
+                    selection_state.squad_to_group.insert(squad_id, group_id);
+                }
+
+                info!("Created group {} with {} squads", group_id, valid_squad_count);
+            }
+        } else if selected_squads.len() == 1 {
+            info!("Need at least 2 squads to create a group");
+        }
+    }
 }
 
 /// System: Update and cleanup selection ring visuals
@@ -1026,3 +1375,4 @@ pub fn box_selection_visual_system(
         BoxSelectionVisual,
     ));
 }
+

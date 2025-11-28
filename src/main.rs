@@ -61,6 +61,7 @@ fn main() {
             selection::selection_input_system,
             selection::box_selection_update_system,
             selection::move_command_system,
+            selection::group_command_system,
         ).chain())
         .add_systems(Update, (
             // Selection visual feedback
