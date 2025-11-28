@@ -6,12 +6,13 @@ use crate::constants::*;
 
 pub fn animate_march(
     time: Res<Time>,
-    mut query: Query<(&mut BattleDroid, &mut Transform), With<SquadMember>>,
+    squad_manager: Res<SquadManager>,
+    mut query: Query<(&mut BattleDroid, &mut Transform, &SquadMember)>,
 ) {
     let time_seconds = time.elapsed_seconds();
     let delta_time = time.delta_seconds();
-    
-    for (droid, mut transform) in query.iter_mut() {
+
+    for (droid, mut transform, squad_member) in query.iter_mut() {
         // Only move if explicitly commanded (no automatic cycling)
         let should_move = if droid.returning_to_spawn {
             // Moving back to spawn position
@@ -22,7 +23,7 @@ pub fn animate_march(
             let distance_to_target = transform.translation.distance(droid.target_position);
             distance_to_target > 1.0 && droid.target_position != droid.spawn_position
         };
-        
+
         if should_move {
             let current_target = if droid.returning_to_spawn {
                 droid.spawn_position
@@ -50,6 +51,16 @@ pub fn animate_march(
             if direction.length() > 0.1 {
                 let forward_rotation = Quat::from_rotation_y(direction.x.atan2(direction.z));
                 transform.rotation = forward_rotation * Quat::from_rotation_y(sway);
+            }
+        } else {
+            // When stationary, smoothly rotate to face squad's facing direction
+            if let Some(squad) = squad_manager.get_squad(squad_member.squad_id) {
+                let facing = squad.facing_direction;
+                if facing.length() > 0.1 {
+                    let target_rotation = Quat::from_rotation_y(facing.x.atan2(facing.z));
+                    // Smoothly interpolate toward target rotation
+                    transform.rotation = transform.rotation.slerp(target_rotation, 5.0 * delta_time);
+                }
             }
         }
     }
