@@ -280,7 +280,7 @@ pub fn move_command_system(
     camera_query: Query<(&Camera, &GlobalTransform), With<RtsCamera>>,
     mut squad_manager: ResMut<SquadManager>,
     mut selection_state: ResMut<SelectionState>,
-    mut droid_query: Query<(&mut BattleDroid, &SquadMember, &FormationOffset)>,
+    mut droid_query: Query<(&mut BattleDroid, &SquadMember, &FormationOffset, &Transform)>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     arrow_query: Query<Entity, With<OrientationArrowVisual>>,
@@ -414,7 +414,7 @@ fn execute_move_command(
     commands: &mut Commands,
     squad_manager: &mut ResMut<SquadManager>,
     selection_state: &SelectionState,
-    droid_query: &mut Query<(&mut BattleDroid, &SquadMember, &FormationOffset)>,
+    droid_query: &mut Query<(&mut BattleDroid, &SquadMember, &FormationOffset, &Transform)>,
     meshes: &mut ResMut<Assets<Mesh>>,
     materials: &mut ResMut<Assets<StandardMaterial>>,
     destination: Vec3,
@@ -438,9 +438,29 @@ fn execute_move_command(
         })
         .collect();
 
+    // Calculate actual current positions of squads from unit transforms (not squad.center_position which lags)
+    let mut squad_current_positions: std::collections::HashMap<u32, Vec3> = std::collections::HashMap::new();
+    for (_droid, squad_member, _offset, transform) in droid_query.iter() {
+        if selection_state.selected_squads.contains(&squad_member.squad_id) {
+            let entry = squad_current_positions.entry(squad_member.squad_id).or_insert(Vec3::ZERO);
+            *entry += transform.translation;
+        }
+    }
+    // Average the positions
+    for &squad_id in selection_state.selected_squads.iter() {
+        if let Some(squad) = squad_manager.get_squad(squad_id) {
+            if let Some(pos) = squad_current_positions.get_mut(&squad_id) {
+                let member_count = squad.members.len();
+                if member_count > 0 {
+                    *pos /= member_count as f32;
+                }
+            }
+        }
+    }
+
     // Collect squad IDs and their current positions
     let squad_positions: Vec<(u32, Vec3)> = selection_state.selected_squads.iter()
-        .filter_map(|&id| squad_manager.get_squad(id).map(|s| (id, s.center_position)))
+        .filter_map(|&id| squad_current_positions.get(&id).map(|&pos| (id, pos)))
         .collect();
 
     // Greedy assignment: assign each squad to its closest available destination
@@ -474,10 +494,8 @@ fn execute_move_command(
         }
     }
 
-    // Collect squad start positions before applying assignments (for path visuals)
-    let squad_start_positions: std::collections::HashMap<u32, Vec3> = assigned_destinations.iter()
-        .filter_map(|(id, _)| squad_manager.get_squad(*id).map(|s| (*id, s.center_position)))
-        .collect();
+    // Use actual current positions for path visuals (already calculated above)
+    let squad_start_positions = squad_current_positions.clone();
 
     // Apply the assignments
     for (squad_id, squad_destination) in assigned_destinations.iter() {
@@ -494,7 +512,7 @@ fn execute_move_command(
     }
 
     // Update individual unit targets
-    for (mut droid, squad_member, _formation_offset) in droid_query.iter_mut() {
+    for (mut droid, squad_member, _formation_offset, _transform) in droid_query.iter_mut() {
         if selection_state.selected_squads.contains(&squad_member.squad_id) {
             if let Some(squad) = squad_manager.get_squad(squad_member.squad_id) {
                 // Calculate new formation offset with new facing direction
