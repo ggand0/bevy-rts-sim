@@ -125,14 +125,11 @@ pub fn spawn_warfx_center_glow(
         };
 
         commands.spawn((
-            MaterialMeshBundle {
-                mesh: quad_mesh,
-                material: glow_material,
-                transform: Transform::from_translation(position + offset)
-                    .with_rotation(Quat::from_rotation_z(45.0_f32.to_radians())), // Unity: 45° rotation
-                visibility: Visibility::Visible,
-                ..Default::default()
-            },
+            Mesh3d(quad_mesh),
+            MeshMaterial3d(glow_material),
+            Transform::from_translation(position + offset)
+                .with_rotation(Quat::from_rotation_z(45.0_f32.to_radians())), // Unity: 45° rotation
+            Visibility::Visible,
             bevy::pbr::NotShadowCaster,
             bevy::pbr::NotShadowReceiver,
             WarFXExplosion {
@@ -253,14 +250,11 @@ pub fn spawn_glow_sparkles(
             });
 
             commands.spawn((
-                MaterialMeshBundle {
-                    mesh: quad_mesh.clone(),
-                    material: sparkle_material,
-                    transform: Transform::from_translation(position + spawn_offset)
-                        .with_scale(Vec3::splat(0.399 * size_mult)), // Start at initial size
-                    visibility: if delay == 0.0 { Visibility::Visible } else { Visibility::Hidden },
-                    ..Default::default()
-                },
+                Mesh3d(quad_mesh.clone()),
+                MeshMaterial3d(sparkle_material),
+                Transform::from_translation(position + spawn_offset)
+                    .with_scale(Vec3::splat(0.399 * size_mult)), // Start at initial size
+                if delay == 0.0 { Visibility::Visible } else { Visibility::Hidden },
                 bevy::pbr::NotShadowCaster,
                 bevy::pbr::NotShadowReceiver,
                 WarFXExplosion {
@@ -383,14 +377,11 @@ pub fn spawn_dot_sparkles(
             });
 
             commands.spawn((
-                MaterialMeshBundle {
-                    mesh: quad_mesh.clone(),
-                    material: sparkle_material,
-                    transform: Transform::from_translation(position + spawn_offset)
-                        .with_scale(Vec3::splat(0.399 * size_mult)),
-                    visibility: if delay == 0.0 { Visibility::Visible } else { Visibility::Hidden },
-                    ..Default::default()
-                },
+                Mesh3d(quad_mesh.clone()),
+                MeshMaterial3d(sparkle_material),
+                Transform::from_translation(position + spawn_offset)
+                    .with_scale(Vec3::splat(0.399 * size_mult)),
+                if delay == 0.0 { Visibility::Visible } else { Visibility::Hidden },
                 bevy::pbr::NotShadowCaster,
                 bevy::pbr::NotShadowReceiver,
                 WarFXExplosion {
@@ -514,14 +505,11 @@ pub fn spawn_dot_sparkles_vertical(
             });
 
             commands.spawn((
-                MaterialMeshBundle {
-                    mesh: quad_mesh.clone(),
-                    material: sparkle_material,
-                    transform: Transform::from_translation(position + spawn_offset)
-                        .with_scale(Vec3::splat(0.399 * size_mult)),
-                    visibility: if delay == 0.0 { Visibility::Visible } else { Visibility::Hidden },
-                    ..Default::default()
-                },
+                Mesh3d(quad_mesh.clone()),
+                MeshMaterial3d(sparkle_material),
+                Transform::from_translation(position + spawn_offset)
+                    .with_scale(Vec3::splat(0.399 * size_mult)),
+                if delay == 0.0 { Visibility::Visible } else { Visibility::Hidden },
                 bevy::pbr::NotShadowCaster,
                 bevy::pbr::NotShadowReceiver,
                 WarFXExplosion {
@@ -564,14 +552,14 @@ pub fn animate_glow_sparkles(
             &mut Transform,
             &mut AnimatedSparkle,
             &WarFXExplosion,
-            &Handle<AdditiveMaterial>,
+            &MeshMaterial3d<AdditiveMaterial>,
         ),
         With<AnimatedSparkle>,
     >,
     mut additive_materials: ResMut<Assets<AdditiveMaterial>>,
     time: Res<Time>,
 ) {
-    let dt = time.delta_seconds();
+    let dt = time.delta_secs();
 
     for (mut transform, mut sparkle, explosion, material_handle) in query.iter_mut() {
         // Calculate progress through lifetime (0.0 to 1.0)
@@ -802,15 +790,12 @@ pub fn spawn_smoke_emitter(
 
         // All particles start inactive (spawn_delay > 0)
         commands.spawn((
-            MaterialMeshBundle {
-                mesh: quad_mesh.clone(),
-                material: smoke_material,
-                transform: Transform::from_translation(position + offset)
-                    .with_rotation(Quat::from_rotation_z(initial_rotation))
-                    .with_scale(Vec3::ZERO), // Start at zero scale (hidden)
-                visibility: Visibility::Hidden,
-                ..Default::default()
-            },
+            Mesh3d(quad_mesh.clone()),
+            MeshMaterial3d(smoke_material),
+            Transform::from_translation(position + offset)
+                .with_rotation(Quat::from_rotation_z(initial_rotation))
+                .with_scale(Vec3::ZERO), // Start at zero scale (hidden)
+            Visibility::Hidden,
             bevy::pbr::NotShadowCaster,
             bevy::pbr::NotShadowReceiver,
             WarFXExplosion {
@@ -977,15 +962,12 @@ pub fn spawn_explosion_flames(
             let is_active = delay == 0.0;
 
             commands.spawn((
-                MaterialMeshBundle {
-                    mesh: quad_mesh.clone(),
-                    material: smoke_material,
-                    transform: Transform::from_translation(position + offset)
-                        .with_rotation(Quat::from_rotation_z(initial_rotation))
-                        .with_scale(if is_active { Vec3::splat(0.396 * size_mult) } else { Vec3::ZERO }),
-                    visibility: if is_active { Visibility::Visible } else { Visibility::Hidden },
-                    ..Default::default()
-                },
+                Mesh3d(quad_mesh.clone()),
+                MeshMaterial3d(smoke_material),
+                Transform::from_translation(position + offset)
+                    .with_rotation(Quat::from_rotation_z(initial_rotation))
+                    .with_scale(if is_active { Vec3::splat(0.396 * size_mult) } else { Vec3::ZERO }),
+                if is_active { Visibility::Visible } else { Visibility::Hidden },
                 bevy::pbr::NotShadowCaster,
                 bevy::pbr::NotShadowReceiver,
                 WarFXExplosion {
@@ -1046,7 +1028,7 @@ pub fn animate_smoke_only_billboards(
             &mut Transform,
             &mut AnimatedSmokeOnlyBillboard,
             &WarFXExplosion,
-            &Handle<SmokeOnlyMaterial>,
+            &MeshMaterial3d<SmokeOnlyMaterial>,
         ),
         With<AnimatedSmokeOnlyBillboard>,
     >,
@@ -1082,10 +1064,10 @@ pub fn animate_smoke_only_billboards(
         }
 
         // Apply velocity (smoke drifts upward)
-        transform.translation += billboard.velocity * time.delta_seconds();
+        transform.translation += billboard.velocity * time.delta_secs();
 
         // Apply rotation animation
-        billboard.base_rotation += billboard.rotation_speed * time.delta_seconds();
+        billboard.base_rotation += billboard.rotation_speed * time.delta_secs();
     }
 }
 
@@ -1096,7 +1078,7 @@ pub fn animate_explosion_billboards(
             &mut Transform,
             &mut AnimatedExplosionBillboard,
             &WarFXExplosion,
-            &Handle<SmokeScrollMaterial>,
+            &MeshMaterial3d<SmokeScrollMaterial>,
         ),
         With<AnimatedExplosionBillboard>,
     >,
@@ -1133,10 +1115,10 @@ pub fn animate_explosion_billboards(
         }
 
         // Apply velocity (particles drift upward and outward)
-        transform.translation += billboard.velocity * time.delta_seconds();
+        transform.translation += billboard.velocity * time.delta_secs();
 
         // Apply rotation animation
-        billboard.base_rotation += billboard.rotation_speed * time.delta_seconds();
+        billboard.base_rotation += billboard.rotation_speed * time.delta_secs();
     }
 }
 
@@ -1190,6 +1172,7 @@ impl AnimationCurve {
     }
 
     /// Create a simple linear curve (for backward compatibility)
+    #[allow(dead_code)]
     pub fn linear(start: f32, end: f32) -> Self {
         Self {
             keyframes: vec![(0.0, start), (1.0, end)],
@@ -1277,7 +1260,7 @@ pub fn update_warfx_explosions(
         return; // No camera, can't billboard
     };
 
-    for (entity, mut transform, mut explosion, name, maybe_flame) in query.iter_mut() {
+    for (entity, mut transform, mut explosion, _name, maybe_flame) in query.iter_mut() {
         // Skip inactive flames - they shouldn't update lifetime until activated
         // This prevents delayed flames from expiring before they even appear
         if let Some(flame) = maybe_flame {
@@ -1287,7 +1270,7 @@ pub fn update_warfx_explosions(
         }
 
         // Update lifetime
-        explosion.lifetime += time.delta_seconds();
+        explosion.lifetime += time.delta_secs();
 
         // Billboard effect - rotate to face camera
         // Keep the quad upright (parallel to Y axis) while facing the camera
@@ -1315,7 +1298,7 @@ pub fn animate_warfx_billboards(
             &mut Transform,
             &mut AnimatedBillboard,
             &WarFXExplosion,
-            &Handle<AdditiveMaterial>,
+            &MeshMaterial3d<AdditiveMaterial>,
         ),
         With<AnimatedBillboard>,
     >,
@@ -1347,10 +1330,10 @@ pub fn animate_warfx_billboards(
         }
 
         // Apply velocity (smoke rises, flames burst outward)
-        transform.translation += billboard.velocity * time.delta_seconds();
+        transform.translation += billboard.velocity * time.delta_secs();
 
         // Apply rotation animation
-        billboard.base_rotation += billboard.rotation_speed * time.delta_seconds();
+        billboard.base_rotation += billboard.rotation_speed * time.delta_secs();
     }
 }
 
@@ -1361,7 +1344,7 @@ pub fn animate_warfx_smoke_billboards(
             &mut Transform,
             &mut AnimatedSmokeBillboard,
             &WarFXExplosion,
-            &Handle<SmokeScrollMaterial>,
+            &MeshMaterial3d<SmokeScrollMaterial>,
         ),
         With<AnimatedSmokeBillboard>,
     >,
@@ -1393,10 +1376,10 @@ pub fn animate_warfx_smoke_billboards(
         }
 
         // Apply velocity (smoke rises)
-        transform.translation += billboard.velocity * time.delta_seconds();
+        transform.translation += billboard.velocity * time.delta_secs();
 
         // Apply rotation animation
-        billboard.base_rotation += billboard.rotation_speed * time.delta_seconds();
+        billboard.base_rotation += billboard.rotation_speed * time.delta_secs();
     }
 }
 
@@ -1412,9 +1395,9 @@ pub fn animate_explosion_flames(
     )>,
     time: Res<Time>,
 ) {
-    let delta = time.delta_seconds();
+    let delta = time.delta_secs();
 
-    for (mut flame, mut explosion, mut transform, mut visibility) in query.iter_mut() {
+    for (mut flame, mut explosion, _transform, mut visibility) in query.iter_mut() {
         // Handle spawn delay for inactive flames
         if !flame.active {
             flame.spawn_delay -= delta;

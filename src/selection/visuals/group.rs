@@ -104,21 +104,18 @@ pub fn update_group_orientation_markers(
             let target_rotation = Quat::from_rotation_y(obb.facing.x.atan2(obb.facing.z));
 
             commands.spawn((
-                PbrBundle {
-                    mesh: meshes.add(mesh),
-                    material: materials.add(StandardMaterial {
-                        base_color: arrow_color,
-                        emissive: LinearRgba::rgb(2.0, 2.0, 0.0),
-                        unlit: true,
-                        alpha_mode: AlphaMode::Blend,
-                        cull_mode: None, // Visible from both sides
-                        ..default()
-                    }),
-                    transform: Transform::from_translation(arrow_base)
-                        .with_rotation(target_rotation),
-                    visibility: Visibility::Visible,
+                Mesh3d(meshes.add(mesh)),
+                MeshMaterial3d(materials.add(StandardMaterial {
+                    base_color: arrow_color,
+                    emissive: LinearRgba::rgb(2.0, 2.0, 0.0),
+                    unlit: true,
+                    alpha_mode: AlphaMode::Blend,
+                    cull_mode: None, // Visible from both sides
                     ..default()
-                },
+                })),
+                Transform::from_translation(arrow_base)
+                    .with_rotation(target_rotation),
+                Visibility::Visible,
                 NotShadowCaster,
                 GroupOrientationMarker {
                     group_id,
@@ -268,60 +265,48 @@ pub fn update_group_bounding_box_debug(
 
             // Front edge (at the front of the OBB, where the orientation indicator is)
             commands.spawn((
-                PbrBundle {
-                    mesh: unit_cube.clone(),
-                    material: debug_material.clone(),
-                    transform: Transform::from_translation(front_mid)
-                        .with_rotation(rotation)
-                        .with_scale(Vec3::new(width, line_height, line_thickness)),
-                    visibility: Visibility::Visible,
-                    ..default()
-                },
+                Mesh3d(unit_cube.clone()),
+                MeshMaterial3d(debug_material.clone()),
+                Transform::from_translation(front_mid)
+                    .with_rotation(rotation)
+                    .with_scale(Vec3::new(width, line_height, line_thickness)),
+                Visibility::Visible,
                 NotShadowCaster,
                 GroupBoundingBoxDebug { group_id },
             ));
 
             // Back edge
             commands.spawn((
-                PbrBundle {
-                    mesh: unit_cube.clone(),
-                    material: debug_material.clone(),
-                    transform: Transform::from_translation(back_mid)
-                        .with_rotation(rotation)
-                        .with_scale(Vec3::new(width, line_height, line_thickness)),
-                    visibility: Visibility::Visible,
-                    ..default()
-                },
+                Mesh3d(unit_cube.clone()),
+                MeshMaterial3d(debug_material.clone()),
+                Transform::from_translation(back_mid)
+                    .with_rotation(rotation)
+                    .with_scale(Vec3::new(width, line_height, line_thickness)),
+                Visibility::Visible,
                 NotShadowCaster,
                 GroupBoundingBoxDebug { group_id },
             ));
 
             // Left edge
             commands.spawn((
-                PbrBundle {
-                    mesh: unit_cube.clone(),
-                    material: debug_material.clone(),
-                    transform: Transform::from_translation(left_mid)
-                        .with_rotation(rotation)
-                        .with_scale(Vec3::new(line_thickness, line_height, depth)),
-                    visibility: Visibility::Visible,
-                    ..default()
-                },
+                Mesh3d(unit_cube.clone()),
+                MeshMaterial3d(debug_material.clone()),
+                Transform::from_translation(left_mid)
+                    .with_rotation(rotation)
+                    .with_scale(Vec3::new(line_thickness, line_height, depth)),
+                Visibility::Visible,
                 NotShadowCaster,
                 GroupBoundingBoxDebug { group_id },
             ));
 
             // Right edge
             commands.spawn((
-                PbrBundle {
-                    mesh: unit_cube.clone(),
-                    material: debug_material.clone(),
-                    transform: Transform::from_translation(right_mid)
-                        .with_rotation(rotation)
-                        .with_scale(Vec3::new(line_thickness, line_height, depth)),
-                    visibility: Visibility::Visible,
-                    ..default()
-                },
+                Mesh3d(unit_cube.clone()),
+                MeshMaterial3d(debug_material.clone()),
+                Transform::from_translation(right_mid)
+                    .with_rotation(rotation)
+                    .with_scale(Vec3::new(line_thickness, line_height, depth)),
+                Visibility::Visible,
                 NotShadowCaster,
                 GroupBoundingBoxDebug { group_id },
             ));

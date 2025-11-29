@@ -4,10 +4,11 @@ use bevy::window::PrimaryWindow;
 use crate::types::*;
 use crate::constants::*;
 use crate::formation::calculate_formation_offset;
+use crate::terrain::TerrainHeightmap;
 
 use super::state::{SelectionState, OrientationArrowVisual};
 use super::groups::check_is_complete_group;
-use super::utils::{screen_to_ground, calculate_default_facing, calculate_filtered_squad_centers, horizontal_distance, horizontal_direction};
+use super::utils::{screen_to_ground_with_heightmap, calculate_default_facing, calculate_filtered_squad_centers, horizontal_distance, horizontal_direction};
 use super::visuals::{spawn_move_indicator, spawn_move_indicator_with_color, spawn_path_line};
 
 /// System: Handle right-click move commands for selected squads
@@ -23,13 +24,16 @@ pub fn move_command_system(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     arrow_query: Query<Entity, With<OrientationArrowVisual>>,
+    heightmap: Option<Res<TerrainHeightmap>>,
 ) {
     let Ok(window) = window_query.get_single() else { return };
     let Ok((camera, camera_transform)) = camera_query.get_single() else { return };
     let Some(cursor_pos) = window.cursor_position() else { return };
 
+    let hm = heightmap.as_ref().map(|h| h.as_ref());
+
     // Get current world position under cursor
-    let current_world_pos = screen_to_ground(cursor_pos, camera, camera_transform);
+    let current_world_pos = screen_to_ground_with_heightmap(cursor_pos, camera, camera_transform, hm);
 
     // Handle right mouse button press - start potential drag
     if mouse_button.just_pressed(MouseButton::Right) {
@@ -110,6 +114,7 @@ pub fn move_command_system(
             &mut materials,
             destination,
             unified_facing,
+            hm,
         );
 
         // Clear drag state
@@ -130,6 +135,7 @@ fn execute_group_move(
     destination: Vec3,
     unified_facing: Vec3,
     group_id: u32,
+    heightmap: Option<&TerrainHeightmap>,
 ) {
     let Some(group) = selection_state.groups.get_mut(&group_id) else { return };
 
@@ -171,6 +177,11 @@ fn execute_group_move(
         let is_alive = squad_manager.get_squad(squad_id)
             .map_or(false, |s| !s.members.is_empty());
 
+        // Get terrain height at destination
+        let terrain_y = heightmap
+            .map(|hm| hm.sample_height(squad_dest.x, squad_dest.z))
+            .unwrap_or(-1.0);
+
         if is_alive {
             if let Some(squad) = squad_manager.get_squad_mut(squad_id) {
                 // Set facing direction
@@ -183,16 +194,19 @@ fn execute_group_move(
                 squad.target_position = squad_dest;
 
                 // Spawn green visual indicator for living squad
-                spawn_move_indicator(commands, meshes, materials, squad_dest);
+                spawn_move_indicator(commands, meshes, materials, squad_dest, terrain_y);
 
                 if let Some(&start_pos) = squad_current_positions.get(&squad_id) {
-                    spawn_path_line(commands, meshes, materials, start_pos, squad_dest);
+                    let start_terrain_y = heightmap
+                        .map(|hm| hm.sample_height(start_pos.x, start_pos.z))
+                        .unwrap_or(-1.0);
+                    spawn_path_line(commands, meshes, materials, start_pos, squad_dest, start_terrain_y);
                 }
             }
         } else {
             // Dead squad - spawn grey indicator to show where it would have been
             let dead_color = Color::srgba(0.4, 0.4, 0.4, 0.8);
-            spawn_move_indicator_with_color(commands, meshes, materials, squad_dest, Some(dead_color));
+            spawn_move_indicator_with_color(commands, meshes, materials, squad_dest, Some(dead_color), terrain_y);
         }
     }
 
@@ -228,6 +242,7 @@ fn execute_move_command(
     materials: &mut ResMut<Assets<StandardMaterial>>,
     destination: Vec3,
     unified_facing: Vec3,
+    heightmap: Option<&TerrainHeightmap>,
 ) {
     // Check if this is a complete group move
     if let Some(group_id) = check_is_complete_group(selection_state, squad_manager) {
@@ -242,6 +257,7 @@ fn execute_move_command(
             destination,
             unified_facing,
             group_id,
+            heightmap,
         );
         return;
     }
@@ -348,12 +364,20 @@ fn execute_move_command(
 
     // Spawn move indicator visuals for each squad
     for (squad_id, squad_destination) in assigned_destinations.iter() {
+        // Get terrain height at destination
+        let terrain_y = heightmap
+            .map(|hm| hm.sample_height(squad_destination.x, squad_destination.z))
+            .unwrap_or(-1.0);
+
         // Spawn destination circle
-        spawn_move_indicator(commands, meshes, materials, *squad_destination);
+        spawn_move_indicator(commands, meshes, materials, *squad_destination, terrain_y);
 
         // Spawn path line from squad current position to destination
         if let Some(&start_pos) = squad_start_positions.get(squad_id) {
-            spawn_path_line(commands, meshes, materials, start_pos, *squad_destination);
+            let start_terrain_y = heightmap
+                .map(|hm| hm.sample_height(start_pos.x, start_pos.z))
+                .unwrap_or(-1.0);
+            spawn_path_line(commands, meshes, materials, start_pos, *squad_destination, start_terrain_y);
         }
     }
 }

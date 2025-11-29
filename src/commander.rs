@@ -64,8 +64,8 @@ pub fn commander_promotion_system(
 pub fn commander_visual_update_system(
     mut commands: Commands,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    mut unit_query: Query<(Entity, &mut SquadMember, &Handle<StandardMaterial>, &Children, &BattleDroid), With<BattleDroid>>,
-    head_query: Query<(Entity, &Handle<StandardMaterial>), Without<BattleDroid>>,
+    mut unit_query: Query<(Entity, &mut SquadMember, &MeshMaterial3d<StandardMaterial>, &Children, &BattleDroid), With<BattleDroid>>,
+    head_query: Query<(Entity, &MeshMaterial3d<StandardMaterial>), Without<BattleDroid>>,
     squad_manager: Res<SquadManager>,
 ) {
     // Collect entities that need visual updates to avoid borrowing conflicts
@@ -120,7 +120,7 @@ pub fn commander_visual_update_system(
             // Triple check: verify entity still exists AND can be commanded
             if unit_query.get(entity).is_ok() {
                 if let Some(mut entity_cmd) = commands.get_entity(entity) {
-                    entity_cmd.try_insert(new_commander_body);
+                    entity_cmd.try_insert(MeshMaterial3d(new_commander_body));
                 }
             }
             
@@ -140,7 +140,7 @@ pub fn commander_visual_update_system(
                     // Check child still exists before commanding
                     if head_query.get(child_entity).is_ok() {
                         if let Some(mut child_cmd) = commands.get_entity(child_entity) {
-                            child_cmd.try_insert(new_commander_head);
+                            child_cmd.try_insert(MeshMaterial3d(new_commander_head));
                         }
                     }
                 }
@@ -163,7 +163,7 @@ pub fn commander_visual_update_system(
             // Triple check before applying demotion materials
             if unit_query.get(entity).is_ok() {
                 if let Some(mut entity_cmd) = commands.get_entity(entity) {
-                    entity_cmd.try_insert(new_regular_body);
+                    entity_cmd.try_insert(MeshMaterial3d(new_regular_body));
                 }
             }
             
@@ -186,7 +186,7 @@ pub fn commander_visual_update_system(
                     // Check child still exists before commanding
                     if head_query.get(child_entity).is_ok() {
                         if let Some(mut child_cmd) = commands.get_entity(child_entity) {
-                            child_cmd.try_insert(new_regular_head);
+                            child_cmd.try_insert(MeshMaterial3d(new_regular_head));
                         }
                     }
                 }

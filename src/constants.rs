@@ -1,5 +1,7 @@
 pub const ARMY_SIZE_PER_TEAM: usize = 5_000;
+#[allow(dead_code)]
 pub const FORMATION_WIDTH: f32 = 200.0;
+#[allow(dead_code)]
 pub const UNIT_SPACING: f32 = 2.0;
 pub const MARCH_DISTANCE: f32 = 150.0;
 pub const MARCH_SPEED: f32 = 3.0;
@@ -17,8 +19,10 @@ pub const INTER_SQUAD_SPACING: f32 = 12.0; // Tactical spacing for combined arms
 pub const CAMERA_SPEED: f32 = 50.0;
 pub const CAMERA_ZOOM_SPEED: f32 = 10.0;
 pub const CAMERA_MIN_HEIGHT: f32 = 20.0;
-pub const CAMERA_MAX_HEIGHT: f32 = 200.0;
+pub const CAMERA_MAX_HEIGHT: f32 = 500.0;  // Increased for terrain overview
 pub const CAMERA_ROTATION_SPEED: f32 = 0.005;
+#[allow(dead_code)]
+pub const CAMERA_INITIAL_HEIGHT: f32 = 250.0;  // Higher starting position for terrain
 
 // Laser projectile settings
 pub const LASER_SPEED: f32 = 100.0;
@@ -45,6 +49,7 @@ pub const EXPLOSION_DELAY_MIN: f32 = 0.1; // Minimum delay before unit explodes
 pub const EXPLOSION_DELAY_MAX: f32 = 2.0; // Maximum delay for dramatic cascade effect
 pub const EXPLOSION_TIME_QUANTUM: f32 = 0.05; // Quantize delays to 50ms slots for burst clustering
 pub const EXPLOSION_EFFECT_DURATION: f32 = 2.0; // Visual explosion duration
+#[allow(dead_code)]
 pub const MAX_EXPLOSIONS_PER_FRAME: usize = 50; // Limit explosions per frame to prevent stutter
 pub const PARTICLE_SPAWN_PROBABILITY: f32 = 0.3; // Probability (0.0-1.0) that an explosion spawns particles
 
@@ -59,3 +64,17 @@ pub const MOVE_INDICATOR_LIFETIME: f32 = 1.5;       // Seconds before move indic
 pub const SQUAD_ROTATION_SPEED: f32 = 2.0;          // Radians per second for squad rotation
 pub const MULTI_SQUAD_SPACING: f32 = 25.0;          // Spacing between squads when moving multiple
 pub const SQUAD_ARRIVAL_THRESHOLD: f32 = 5.0;       // Distance at which squads are considered "arrived" at destination
+
+// Terrain generation settings
+pub const TERRAIN_GRID_SIZE: usize = 100;           // 100x100 vertices for terrain mesh
+pub const TERRAIN_SIZE: f32 = 800.0;                // Match current ground size
+pub const TERRAIN_MAX_HEIGHT: f32 = 50.0;           // Maximum hill height
+// Perlin noise parameters - currently hardcoded in terrain.rs, kept here for future configurability
+#[allow(dead_code)]
+pub const PERLIN_SCALE: f64 = 0.02;                 // Noise frequency (lower = larger hills)
+#[allow(dead_code)]
+pub const PERLIN_OCTAVES: usize = 4;                // Detail levels for fractal noise
+#[allow(dead_code)]
+pub const PERLIN_PERSISTENCE: f64 = 0.5;            // How much each octave contributes
+#[allow(dead_code)]
+pub const PERLIN_LACUNARITY: f64 = 2.0;             // Frequency multiplier per octave

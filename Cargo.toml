@@ -4,10 +4,11 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-bevy = { version = "0.14", features = ["dynamic_linking", "wav", "tga"] }
-bevy_hanabi = "0.12"
+bevy = { version = "0.15", features = ["dynamic_linking", "wav", "tga"] }
+bevy_hanabi = "0.14"
 rand = "0.8"
 bytemuck = { version = "1.12", features = ["derive"] }
+noise = "0.9"
 
 
 [profile.dev]
@@ -15,6 +16,12 @@ opt-level = 1
 
 [profile.dev.package."*"]
 opt-level = 3
+
+[profile.opt-dev]
+inherits = "release"
+opt-level = 3
+lto = false
+codegen-units = 16
 
 [profile.release]
 lto = true

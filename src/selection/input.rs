@@ -3,9 +3,10 @@ use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 use crate::types::*;
 use crate::constants::*;
+use crate::terrain::TerrainHeightmap;
 
 use super::state::{SelectionState, SelectionVisual};
-use super::utils::{screen_to_ground, calculate_squad_centers, find_squad_at_position};
+use super::utils::{screen_to_ground_with_heightmap, calculate_squad_centers, find_squad_at_position};
 
 /// System: Handle left-click selection input
 pub fn selection_input_system(
@@ -16,6 +17,7 @@ pub fn selection_input_system(
     unit_query: Query<(&Transform, &SquadMember), (With<BattleDroid>, Without<SelectionVisual>)>,
     squad_manager: Res<SquadManager>,
     mut selection_state: ResMut<SelectionState>,
+    heightmap: Option<Res<TerrainHeightmap>>,
 ) {
     let Ok(window) = window_query.get_single() else { return };
     let Ok((camera, camera_transform)) = camera_query.get_single() else { return };
@@ -23,10 +25,12 @@ pub fn selection_input_system(
     // Get cursor position
     let Some(cursor_pos) = window.cursor_position() else { return };
 
+    let hm = heightmap.as_ref().map(|h| h.as_ref());
+
     // Handle left mouse button press - start selection or box select
     if mouse_button.just_pressed(MouseButton::Left) {
         // Get world position for potential box select start
-        if let Some(world_pos) = screen_to_ground(cursor_pos, camera, camera_transform) {
+        if let Some(world_pos) = screen_to_ground_with_heightmap(cursor_pos, camera, camera_transform, hm) {
             selection_state.drag_start_world = Some(world_pos);
             selection_state.box_select_start = Some(cursor_pos);
         }
@@ -39,7 +43,7 @@ pub fn selection_input_system(
 
             if drag_distance < BOX_SELECT_DRAG_THRESHOLD {
                 // This is a click, not a drag - do single selection
-                if let Some(world_pos) = screen_to_ground(cursor_pos, camera, camera_transform) {
+                if let Some(world_pos) = screen_to_ground_with_heightmap(cursor_pos, camera, camera_transform, hm) {
                     let shift_held = keyboard.pressed(KeyCode::ShiftLeft) || keyboard.pressed(KeyCode::ShiftRight);
 
                     // Calculate actual squad centers from unit positions
@@ -160,7 +164,7 @@ pub fn box_selection_update_system(
                 continue;
             }
             // Project squad center to screen space
-            if let Some(screen_pos) = camera.world_to_viewport(camera_transform, squad.center_position) {
+            if let Ok(screen_pos) = camera.world_to_viewport(camera_transform, squad.center_position) {
                 if screen_pos.x >= min_x && screen_pos.x <= max_x
                    && screen_pos.y >= min_y && screen_pos.y <= max_y {
                     // Only add if not already selected

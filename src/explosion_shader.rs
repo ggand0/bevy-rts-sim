@@ -131,12 +131,9 @@ pub fn spawn_animated_sprite_explosion(
     });
 
     commands.spawn((
-        PbrBundle {
-            mesh: quad_mesh,
-            material: sprite_material,
-            transform: Transform::from_translation(position),
-            ..default()
-        },
+        Mesh3d(quad_mesh),
+        MeshMaterial3d(sprite_material),
+        Transform::from_translation(position),
         ExplosionTimer {
             timer: Timer::new(Duration::from_secs_f32(duration * 0.8), TimerMode::Once),
         },
@@ -178,12 +175,9 @@ pub fn spawn_custom_shader_explosion(
     });
 
     commands.spawn((
-        MaterialMeshBundle {
-            mesh: quad_mesh,
-            material: explosion_material,
-            transform: Transform::from_translation(position),
-            ..default()
-        },
+        Mesh3d(quad_mesh),
+        MeshMaterial3d(explosion_material),
+        Transform::from_translation(position),
         ExplosionTimer {
             timer: Timer::new(Duration::from_secs_f32(duration * 0.8), TimerMode::Once),
         },
@@ -254,7 +248,7 @@ fn debug_test_explosions(
                 2.0,
                 3.0,
                 false,
-                time.elapsed_seconds_f64(),
+                time.elapsed_secs_f64(),
             );
             info!("🎭 U: Custom shader explosion spawned");
         }
@@ -277,13 +271,10 @@ fn debug_test_explosions(
         });
         
         commands.spawn((
-            PbrBundle {
-                mesh: quad_mesh,
-                material: test_material,
-                transform: Transform::from_translation(Vec3::new(0.0, 8.0, 0.0))
-                    .with_scale(Vec3::splat(1.0)),
-                ..default()
-            },
+            Mesh3d(quad_mesh),
+            MeshMaterial3d(test_material),
+            Transform::from_translation(Vec3::new(0.0, 8.0, 0.0))
+                .with_scale(Vec3::splat(1.0)),
             ExplosionTimer {
                 timer: Timer::new(Duration::from_secs_f32(5.0), TimerMode::Once), // Long duration for testing
             },
@@ -299,7 +290,7 @@ fn debug_test_explosions(
 // ===== ANIMATION SYSTEMS =====
 
 fn animate_sprite_explosions(
-    mut query: Query<(&mut Transform, &mut Handle<StandardMaterial>, &mut SpriteExplosion, &ExplosionTimer)>,
+    mut query: Query<(&mut Transform, &MeshMaterial3d<StandardMaterial>, &mut SpriteExplosion, &ExplosionTimer)>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     camera_query: Query<&Transform, (With<RtsCamera>, Without<SpriteExplosion>)>,
     time: Res<Time>,
@@ -316,7 +307,7 @@ fn animate_sprite_explosions(
         let progress = progress.clamp(0.0, 1.0);
         
         // Update frame animation for real sprite sheets
-        sprite_explosion.frame_timer += time.delta_seconds();
+        sprite_explosion.frame_timer += time.delta_secs();
         if sprite_explosion.frame_timer >= sprite_explosion.frame_duration {
             sprite_explosion.frame_timer = 0.0;
             sprite_explosion.current_frame += 1;
@@ -329,7 +320,7 @@ fn animate_sprite_explosions(
         
         // DISABLED: Phase transitions to prevent "three explosions" effect
         // The self-contained sprite sheet already has all phases baked in
-        // sprite_explosion.phase_transition_timer += time.delta_seconds();
+        // sprite_explosion.phase_transition_timer += time.delta_secs();
         
         // Keep constant scale since explosion animation is baked into the texture
         transform.scale = Vec3::splat(1.0);
@@ -350,7 +341,7 @@ fn animate_sprite_explosions(
         }
         
         // Simplified: Keep full intensity throughout since the sprite sheet contains all phases
-        if let Some(material) = materials.get_mut(&*material_handle) {
+        if let Some(material) = materials.get_mut(&material_handle.0) {
             // Maintain full intensity and only fade near the end
             let alpha_fade = if progress > 0.9 {
                 sprite_explosion.fade_alpha * (1.0 - (progress - 0.9) * 10.0) // Fade only in last 10%
@@ -403,7 +394,7 @@ fn cleanup_finished_explosions(
 }
 
 fn animate_custom_shader_explosions(
-    mut query: Query<(&mut Transform, &Handle<ExplosionMaterial>, &mut CustomShaderExplosion, &ExplosionTimer)>,
+    mut query: Query<(&mut Transform, &MeshMaterial3d<ExplosionMaterial>, &mut CustomShaderExplosion, &ExplosionTimer)>,
     mut explosion_materials: ResMut<Assets<ExplosionMaterial>>,
     camera_query: Query<&Transform, (With<RtsCamera>, Without<CustomShaderExplosion>)>,
     time: Res<Time>,
@@ -420,7 +411,7 @@ fn animate_custom_shader_explosions(
         let progress = progress.clamp(0.0, 1.0);
         
         // Update frame animation
-        sprite_explosion.frame_timer += time.delta_seconds();
+        sprite_explosion.frame_timer += time.delta_secs();
         if sprite_explosion.frame_timer >= sprite_explosion.frame_duration {
             sprite_explosion.frame_timer = 0.0;
             let old_frame = sprite_explosion.current_frame;
@@ -441,7 +432,7 @@ fn animate_custom_shader_explosions(
         // The self-contained sprite sheet already has all phases baked in
         
         // Update material uniforms with current frame and animation data
-        if let Some(material) = explosion_materials.get_mut(&*material_handle) {
+        if let Some(material) = explosion_materials.get_mut(&material_handle.0) {
             // Calculate frame coordinates in 5x5 grid
             let frame = sprite_explosion.current_frame;
             let grid_size = 5;
