@@ -4,9 +4,13 @@ use bevy::pbr::{NotShadowCaster, NotShadowReceiver};
 use std::collections::HashSet;
 use crate::types::*;
 use crate::constants::*;
+use crate::terrain::TerrainHeightmap;
 
 use super::super::state::*;
 use super::super::utils::{calculate_squad_centers, horizontal_distance, horizontal_direction};
+
+/// Small offset above terrain for visual markers to prevent z-fighting
+const VISUAL_TERRAIN_OFFSET: f32 = 0.5;
 
 /// System: Fade out and cleanup move order visuals
 pub fn move_visual_cleanup_system(
@@ -57,6 +61,7 @@ pub fn orientation_arrow_system(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut arrow_query: Query<(Entity, &mut Transform), With<OrientationArrowVisual>>,
+    heightmap: Option<Res<TerrainHeightmap>>,
 ) {
     // Check if we should show the arrow
     if !selection_state.is_orientation_dragging {
@@ -85,10 +90,16 @@ pub fn orientation_arrow_system(
     let normalized_dir = direction.normalize();
     let arrow_rotation = Quat::from_rotation_y(normalized_dir.x.atan2(normalized_dir.z));
 
+    // Get terrain height at start position
+    let terrain_y = heightmap.as_ref()
+        .map(|hm| hm.sample_height(start.x, start.z))
+        .unwrap_or(-1.0);
+    let arrow_y = terrain_y + VISUAL_TERRAIN_OFFSET;
+
     // Check if arrow already exists
     if let Ok((_, mut transform)) = arrow_query.get_single_mut() {
         // Update existing arrow
-        transform.translation = Vec3::new(start.x, 0.2, start.z);
+        transform.translation = Vec3::new(start.x, arrow_y, start.z);
         transform.rotation = arrow_rotation;
         transform.scale = Vec3::new(1.0, 1.0, length);
     } else {
@@ -108,7 +119,7 @@ pub fn orientation_arrow_system(
         commands.spawn((
             Mesh3d(arrow_mesh),
             MeshMaterial3d(arrow_material),
-            Transform::from_translation(Vec3::new(start.x, 0.2, start.z))
+            Transform::from_translation(Vec3::new(start.x, arrow_y, start.z))
                 .with_rotation(arrow_rotation)
                 .with_scale(Vec3::new(1.0, 1.0, length)),
             OrientationArrowVisual,
@@ -127,6 +138,7 @@ pub fn update_squad_path_arrows(
     squad_manager: Res<SquadManager>,
     unit_query: Query<(&Transform, &SquadMember), (With<BattleDroid>, Without<SelectionVisual>)>,
     mut existing_arrows: Query<(Entity, &SquadPathArrowVisual, &mut Transform), Without<BattleDroid>>,
+    heightmap: Option<Res<TerrainHeightmap>>,
 ) {
     // Calculate actual squad centers from unit positions
     let squad_actual_centers = calculate_squad_centers(&unit_query);
@@ -173,12 +185,18 @@ pub fn update_squad_path_arrows(
         let normalized_dir = direction.normalize();
         let rotation = Quat::from_rotation_y(normalized_dir.x.atan2(normalized_dir.z));
 
+        // Get terrain height at current position
+        let terrain_y = heightmap.as_ref()
+            .map(|hm| hm.sample_height(current_pos.x, current_pos.z))
+            .unwrap_or(-1.0);
+        let arrow_y = terrain_y + VISUAL_TERRAIN_OFFSET;
+
         // Check if arrow already exists for this squad
         let mut found = false;
         for (_entity, arrow, mut transform) in existing_arrows.iter_mut() {
             if arrow.squad_id == squad_id {
                 // Update existing arrow position/rotation/scale
-                transform.translation = Vec3::new(current_pos.x, 0.2, current_pos.z);
+                transform.translation = Vec3::new(current_pos.x, arrow_y, current_pos.z);
                 transform.rotation = rotation;
                 transform.scale = Vec3::new(1.0, 1.0, length);
                 found = true;
@@ -202,7 +220,7 @@ pub fn update_squad_path_arrows(
             commands.spawn((
                 Mesh3d(arrow_mesh),
                 MeshMaterial3d(arrow_material),
-                Transform::from_translation(Vec3::new(current_pos.x, 0.2, current_pos.z))
+                Transform::from_translation(Vec3::new(current_pos.x, arrow_y, current_pos.z))
                     .with_rotation(rotation)
                     .with_scale(Vec3::new(1.0, 1.0, length)),
                 SquadPathArrowVisual { squad_id },
@@ -260,8 +278,9 @@ pub fn spawn_move_indicator(
     meshes: &mut ResMut<Assets<Mesh>>,
     materials: &mut ResMut<Assets<StandardMaterial>>,
     position: Vec3,
+    terrain_y: f32,
 ) {
-    spawn_move_indicator_with_color(commands, meshes, materials, position, None);
+    spawn_move_indicator_with_color(commands, meshes, materials, position, None, terrain_y);
 }
 
 /// Spawn a visual indicator at the move destination with custom color
@@ -272,6 +291,7 @@ pub fn spawn_move_indicator_with_color(
     materials: &mut ResMut<Assets<StandardMaterial>>,
     position: Vec3,
     color: Option<Color>,
+    terrain_y: f32,
 ) {
     let mesh = meshes.add(Circle::new(MOVE_INDICATOR_RADIUS));
 
@@ -303,7 +323,7 @@ pub fn spawn_move_indicator_with_color(
     commands.spawn((
         Mesh3d(mesh),
         MeshMaterial3d(material),
-        Transform::from_translation(Vec3::new(position.x, 0.0, position.z))
+        Transform::from_translation(Vec3::new(position.x, terrain_y + VISUAL_TERRAIN_OFFSET, position.z))
             .with_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)),
         MoveOrderVisual {
             timer: Timer::from_seconds(MOVE_INDICATOR_LIFETIME, TimerMode::Once),
@@ -321,6 +341,7 @@ pub fn spawn_path_line(
     materials: &mut ResMut<Assets<StandardMaterial>>,
     start: Vec3,
     end: Vec3,
+    terrain_y: f32,
 ) {
     let direction = horizontal_direction(start, end);
     let length = direction.length();
@@ -347,7 +368,7 @@ pub fn spawn_path_line(
     commands.spawn((
         Mesh3d(line_mesh),
         MeshMaterial3d(line_material),
-        Transform::from_translation(Vec3::new(start.x, 0.15, start.z))
+        Transform::from_translation(Vec3::new(start.x, terrain_y + VISUAL_TERRAIN_OFFSET, start.z))
             .with_rotation(rotation)
             .with_scale(Vec3::new(1.0, 1.0, length)),
         MovePathVisual {

@@ -4,9 +4,13 @@ use bevy::pbr::{NotShadowCaster, NotShadowReceiver};
 use std::collections::HashSet;
 use crate::types::*;
 use crate::constants::*;
+use crate::terrain::TerrainHeightmap;
 
 use super::super::state::*;
 use super::super::utils::calculate_squad_centers;
+
+/// Small offset above terrain for visual markers to prevent z-fighting
+const VISUAL_TERRAIN_OFFSET: f32 = 0.5;
 
 /// System: Update and cleanup selection ring visuals
 pub fn selection_visual_system(
@@ -18,6 +22,7 @@ pub fn selection_visual_system(
     unit_query: Query<(&Transform, &SquadMember), (With<BattleDroid>, Without<SelectionVisual>)>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    heightmap: Option<Res<TerrainHeightmap>>,
 ) {
     // Clean up dead squads from selection (squads with no living units)
     selection_state.selected_squads.retain(|&squad_id| {
@@ -54,7 +59,13 @@ pub fn selection_visual_system(
                 .or_else(|| squad_manager.get_squad(squad_id).map(|s| s.center_position))
                 .unwrap_or(Vec3::ZERO);
             let is_grouped = selection_state.squad_to_group.contains_key(&squad_id);
-            spawn_selection_ring(&mut commands, &mut meshes, &mut materials, squad_id, position, is_grouped);
+
+            // Get terrain height at position
+            let terrain_y = heightmap.as_ref()
+                .map(|hm| hm.sample_height(position.x, position.z))
+                .unwrap_or(-1.0);
+
+            spawn_selection_ring(&mut commands, &mut meshes, &mut materials, squad_id, position, is_grouped, terrain_y);
         }
     }
 
@@ -65,6 +76,11 @@ pub fn selection_visual_system(
             if let Ok(mut transform) = visual_transforms.get_mut(entity) {
                 transform.translation.x = actual_center.x;
                 transform.translation.z = actual_center.z;
+                // Update Y to terrain height
+                let terrain_y = heightmap.as_ref()
+                    .map(|hm| hm.sample_height(actual_center.x, actual_center.z))
+                    .unwrap_or(-1.0);
+                transform.translation.y = terrain_y + VISUAL_TERRAIN_OFFSET;
             }
         }
 
@@ -96,6 +112,7 @@ fn spawn_selection_ring(
     squad_id: u32,
     position: Vec3,
     is_grouped: bool,
+    terrain_y: f32,
 ) {
     // Create a flat annulus (2D ring) mesh instead of 3D torus
     let mesh = meshes.add(Annulus::new(SELECTION_RING_INNER_RADIUS, SELECTION_RING_OUTER_RADIUS));
@@ -116,12 +133,12 @@ fn spawn_selection_ring(
         ..default()
     });
 
-    // Place ring flat on the ground (Y=0.1 to avoid z-fighting with ground at Y=-1)
+    // Place ring flat on terrain with small offset to prevent z-fighting
     // Rotate -90 degrees around X to lay flat (circle faces up instead of forward)
     commands.spawn((
         Mesh3d(mesh),
         MeshMaterial3d(material),
-        Transform::from_translation(Vec3::new(position.x, 0.1, position.z))
+        Transform::from_translation(Vec3::new(position.x, terrain_y + VISUAL_TERRAIN_OFFSET, position.z))
             .with_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)),
         SelectionVisual { squad_id, is_grouped },
         NotShadowCaster,

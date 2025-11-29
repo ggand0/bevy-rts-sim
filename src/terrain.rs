@@ -4,10 +4,15 @@
 use bevy::prelude::*;
 use bevy::render::mesh::{Indices, PrimitiveTopology};
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+use bevy::core_pipeline::Skybox;
 use noise::{NoiseFn, Perlin, Fbm, MultiFractal};
 use std::f32::consts::PI;
 use crate::constants::*;
 use crate::types::*;
+
+/// Marker component for skybox - used to remove skybox when switching maps
+#[derive(Component)]
+pub struct MapSkybox;
 
 pub struct TerrainPlugin;
 
@@ -327,10 +332,13 @@ fn terrain_map_switching(
     keys: Res<ButtonInput<KeyCode>>,
     mut config: ResMut<TerrainConfig>,
     terrain_query: Query<Entity, With<TerrainMarker>>,
+    skybox_entity_query: Query<Entity, With<MapSkybox>>,
+    camera_query: Query<Entity, With<crate::types::RtsCamera>>,
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut images: ResMut<Assets<Image>>,
+    asset_server: Res<AssetServer>,
     mut map_switch_events: EventWriter<MapSwitchEvent>,
 ) {
     let new_preset = if keys.just_pressed(KeyCode::Digit1) {
@@ -351,9 +359,18 @@ fn terrain_map_switching(
                 commands.entity(entity).despawn_recursive();
             }
 
+            // Remove skybox from camera if present
+            for entity in skybox_entity_query.iter() {
+                commands.entity(entity).despawn_recursive();
+            }
+            // Also remove Skybox component from camera
+            if let Ok(camera_entity) = camera_query.get_single() {
+                commands.entity(camera_entity).remove::<Skybox>();
+            }
+
             match preset {
                 MapPreset::Flat => {
-                    // Restore original flat ground
+                    // Restore original flat ground (no skybox for Map 1)
                     commands.insert_resource(TerrainHeightmap::flat(TERRAIN_SIZE, -1.0));
 
                     let ground_texture = create_ground_texture(&mut images);
@@ -407,7 +424,17 @@ fn terrain_map_switching(
                         Name::new("ProceduralTerrain"),
                     ));
 
-                    info!("Switched to rolling hills terrain");
+                    // Add skybox to camera for Map 2
+                    let skybox_handle: Handle<Image> = asset_server.load("skybox/qwantani_mid_morning_puresky_2k/skybox.ktx2");
+                    if let Ok(camera_entity) = camera_query.get_single() {
+                        commands.entity(camera_entity).insert(Skybox {
+                            image: skybox_handle.clone(),
+                            brightness: 1000.0,
+                            rotation: Quat::IDENTITY,
+                        });
+                    }
+
+                    info!("Switched to rolling hills terrain with skybox");
                 }
             }
 

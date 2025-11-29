@@ -4,6 +4,40 @@ use crate::types::*;
 use crate::constants::*;
 use crate::terrain::TerrainHeightmap;
 
+/// Check if there's a clear line of sight between shooter and target
+/// Returns true if the path is clear (no terrain blocking)
+fn has_line_of_sight(
+    shooter_pos: Vec3,
+    target_pos: Vec3,
+    heightmap: Option<&TerrainHeightmap>,
+) -> bool {
+    // If no heightmap, assume clear line of sight
+    let Some(hm) = heightmap else { return true };
+
+    // Sample terrain at multiple points along the line
+    const NUM_SAMPLES: usize = 8;
+
+    for i in 1..NUM_SAMPLES {
+        let t = i as f32 / NUM_SAMPLES as f32;
+
+        // Interpolate position along the line
+        let sample_pos = shooter_pos.lerp(target_pos, t);
+
+        // Get terrain height at this point
+        let terrain_y = hm.sample_height(sample_pos.x, sample_pos.z);
+
+        // Calculate the expected Y at this point along the straight line
+        let line_y = shooter_pos.y.lerp(target_pos.y, t);
+
+        // If terrain is above the line of sight (with small margin), line is blocked
+        if terrain_y > line_y + 0.5 {
+            return false;
+        }
+    }
+
+    true
+}
+
 // Helper function to calculate proper laser orientation
 pub fn calculate_laser_orientation(
     velocity: Vec3,
@@ -217,63 +251,89 @@ pub fn target_acquisition_system(
     time: Res<Time>,
     mut combat_query: Query<(Entity, &Transform, &BattleDroid, &mut CombatUnit)>,
     tower_query: Query<(Entity, &Transform, &UplinkTower), With<UplinkTower>>,
+    heightmap: Option<Res<TerrainHeightmap>>,
 ) {
     let delta_time = time.delta_secs();
-    
+    let hm = heightmap.as_ref().map(|h| h.as_ref());
+
     // Collect all unit data first to avoid borrowing issues
     let all_units: Vec<(Entity, Vec3, Team)> = combat_query
         .iter()
         .map(|(entity, transform, droid, _)| (entity, transform.translation, droid.team))
         .collect();
-    
+
     // Collect all tower data
     let all_towers: Vec<(Entity, Vec3, Team)> = tower_query
         .iter()
         .map(|(entity, transform, tower)| (entity, transform.translation, tower.team))
         .collect();
-    
+
     for (entity, transform, droid, mut combat_unit) in combat_query.iter_mut() {
         // Update target scan timer
         combat_unit.target_scan_timer -= delta_time;
-        
+
         if combat_unit.target_scan_timer <= 0.0 {
             combat_unit.target_scan_timer = TARGET_SCAN_INTERVAL;
-            
+
             let mut closest_enemy: Option<Entity> = None;
-            let mut closest_distance = f32::INFINITY;
             let mut target_priority = 0; // 0 = unit, 1 = tower
-            
+            let shooter_pos = transform.translation;
+
             // Check enemy towers first (higher priority targets)
-            for &(tower_entity, tower_position, tower_team) in &all_towers {
-                if tower_team != droid.team { // Enemy tower
-                    let distance = transform.translation.distance(tower_position);
-                    if distance <= TARGETING_RANGE * 1.5 { // Slightly longer range for towers
-                        // Towers are high priority - prefer them over units
-                        if target_priority < 1 || distance < closest_distance {
-                            closest_distance = distance;
-                            closest_enemy = Some(tower_entity);
-                            target_priority = 1;
-                        }
+            // Collect towers in range and sort by distance
+            let mut towers_in_range: Vec<(Entity, Vec3, f32)> = all_towers.iter()
+                .filter(|(_, _, tower_team)| *tower_team != droid.team)
+                .filter_map(|&(tower_entity, tower_position, _)| {
+                    let distance = shooter_pos.distance(tower_position);
+                    if distance <= TARGETING_RANGE * 1.5 {
+                        Some((tower_entity, tower_position, distance))
+                    } else {
+                        None
                     }
+                })
+                .collect();
+
+            towers_in_range.sort_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal));
+
+            // Find the closest tower with clear line of sight
+            for (tower_entity, tower_position, _distance) in towers_in_range {
+                if has_line_of_sight(shooter_pos, tower_position, hm) {
+                    closest_enemy = Some(tower_entity);
+                    target_priority = 1;
+                    break;
                 }
             }
-            
+
             // If no tower in range, check enemy units
+            // Sort by distance and find the closest one with clear LOS
             if target_priority == 0 {
-                for &(target_entity, target_position, target_team) in &all_units {
-                    // Skip allies and self
-                    if target_team == droid.team || target_entity == entity {
-                        continue;
-                    }
-                    
-                    let distance = transform.translation.distance(target_position);
-                    if distance <= TARGETING_RANGE && distance < closest_distance {
-                        closest_distance = distance;
+                // Collect all enemies in range with their distances
+                let mut enemies_in_range: Vec<(Entity, Vec3, f32)> = all_units.iter()
+                    .filter(|(target_entity, _, target_team)| {
+                        *target_team != droid.team && *target_entity != entity
+                    })
+                    .filter_map(|&(target_entity, target_position, _)| {
+                        let distance = shooter_pos.distance(target_position);
+                        if distance <= TARGETING_RANGE {
+                            Some((target_entity, target_position, distance))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+
+                // Sort by distance (closest first)
+                enemies_in_range.sort_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal));
+
+                // Find the closest enemy with clear line of sight
+                for (target_entity, target_position, _distance) in enemies_in_range {
+                    if has_line_of_sight(shooter_pos, target_position, hm) {
                         closest_enemy = Some(target_entity);
+                        break;
                     }
                 }
             }
-            
+
             combat_unit.current_target = closest_enemy;
         }
     }
