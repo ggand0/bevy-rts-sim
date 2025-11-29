@@ -15,6 +15,7 @@ pub enum FormationType {
 
 #[derive(Component)]
 pub struct Squad {
+    #[allow(dead_code)]
     pub id: u32,
     pub team: Team,
     pub formation_type: FormationType,
@@ -89,6 +90,7 @@ pub struct BattleDroid {
     pub team: Team,
 }
 
+#[allow(dead_code)]
 #[derive(Component)]
 pub struct FormationUnit {
     pub formation_index: usize,
@@ -168,6 +170,7 @@ impl SpatialGrid {
         (x.clamp(0, crate::constants::GRID_SIZE - 1), z.clamp(0, crate::constants::GRID_SIZE - 1))
     }
     
+    #[allow(dead_code)]
     pub fn add_laser(&mut self, entity: Entity, pos: Vec3) {
         let (x, z) = Self::world_to_grid(pos);
         self.laser_cells[x as usize][z as usize].push(entity);
@@ -254,6 +257,7 @@ impl SquadManager {
         self.squads.get_mut(&squad_id)
     }
     
+    #[allow(dead_code)]
     pub fn get_unit_squad_id(&self, entity: Entity) -> Option<u32> {
         self.entity_to_squad.get(&entity).copied()
     }
@@ -294,6 +298,7 @@ pub struct UplinkTower {
     pub destruction_radius: f32, // Radius for chain reaction
 }
 
+#[allow(dead_code)]
 #[derive(Component)]
 pub struct ObjectiveTarget {
     pub team: Team,

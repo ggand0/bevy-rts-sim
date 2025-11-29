@@ -8,6 +8,7 @@ use super::state::SelectionState;
 /// Squad group - Total War style formation preservation
 #[derive(Clone)]
 pub struct SquadGroup {
+    #[allow(dead_code)]
     pub id: u32,
     pub squad_ids: Vec<u32>,
     pub squad_offsets: HashMap<u32, Vec3>,     // Relative offsets from group center (in original coordinate system)

@@ -20,6 +20,7 @@ pub fn horizontal_direction(from: Vec3, to: Vec3) -> Vec3 {
 
 /// Convert screen cursor position to world position on the terrain surface
 /// Uses iterative raycasting against the terrain heightmap for accurate placement
+#[allow(dead_code)]
 pub fn screen_to_ground(
     cursor_pos: Vec2,
     camera: &Camera,

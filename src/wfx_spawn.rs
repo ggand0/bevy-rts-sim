@@ -1172,6 +1172,7 @@ impl AnimationCurve {
     }
 
     /// Create a simple linear curve (for backward compatibility)
+    #[allow(dead_code)]
     pub fn linear(start: f32, end: f32) -> Self {
         Self {
             keyframes: vec![(0.0, start), (1.0, end)],
@@ -1259,7 +1260,7 @@ pub fn update_warfx_explosions(
         return; // No camera, can't billboard
     };
 
-    for (entity, mut transform, mut explosion, name, maybe_flame) in query.iter_mut() {
+    for (entity, mut transform, mut explosion, _name, maybe_flame) in query.iter_mut() {
         // Skip inactive flames - they shouldn't update lifetime until activated
         // This prevents delayed flames from expiring before they even appear
         if let Some(flame) = maybe_flame {
@@ -1396,7 +1397,7 @@ pub fn animate_explosion_flames(
 ) {
     let delta = time.delta_secs();
 
-    for (mut flame, mut explosion, mut transform, mut visibility) in query.iter_mut() {
+    for (mut flame, mut explosion, _transform, mut visibility) in query.iter_mut() {
         // Handle spawn delay for inactive flames
         if !flame.active {
             flame.spawn_delay -= delta;

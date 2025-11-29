@@ -10,6 +10,7 @@ use crate::types::UplinkTower;
 #[derive(Component)]
 pub struct PendingExplosion {
     pub delay_timer: f32,
+    #[allow(dead_code)]
     pub explosion_power: f32,
 }
 
@@ -18,7 +19,9 @@ pub struct PendingExplosion {
 pub struct ExplosionEffect {
     pub timer: f32,
     pub max_time: f32,
+    #[allow(dead_code)]
     pub radius: f32,
+    #[allow(dead_code)]
     pub intensity: f32,
 }
 
