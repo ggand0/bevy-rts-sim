@@ -93,6 +93,39 @@ pub fn find_squad_at_position(
     closest_squad
 }
 
+/// Calculate squad centers from unit positions for a filtered set of squads.
+/// Takes an iterator of (squad_id, position) and a filter closure for which squads to include.
+/// Uses squad_manager to get member counts for proper averaging.
+pub fn calculate_filtered_squad_centers<I, F>(
+    positions: I,
+    filter: F,
+    _squad_manager: &SquadManager,
+) -> HashMap<u32, Vec3>
+where
+    I: Iterator<Item = (u32, Vec3)>,
+    F: Fn(u32) -> bool,
+{
+    let mut squad_sums: HashMap<u32, Vec3> = HashMap::new();
+    let mut squad_counts: HashMap<u32, usize> = HashMap::new();
+
+    for (squad_id, position) in positions {
+        if filter(squad_id) {
+            *squad_sums.entry(squad_id).or_insert(Vec3::ZERO) += position;
+            *squad_counts.entry(squad_id).or_insert(0) += 1;
+        }
+    }
+
+    let mut centers = HashMap::new();
+    for (squad_id, sum) in squad_sums {
+        if let Some(&count) = squad_counts.get(&squad_id) {
+            if count > 0 {
+                centers.insert(squad_id, sum / count as f32);
+            }
+        }
+    }
+    centers
+}
+
 /// Calculate default facing direction (from average squad position toward destination)
 pub fn calculate_default_facing(
     selected_squads: &[u32],

@@ -1,14 +1,13 @@
 // Movement command systems
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
-use std::collections::HashMap;
 use crate::types::*;
 use crate::constants::*;
 use crate::formation::calculate_formation_offset;
 
 use super::state::{SelectionState, OrientationArrowVisual};
 use super::groups::check_is_complete_group;
-use super::utils::{screen_to_ground, calculate_default_facing};
+use super::utils::{screen_to_ground, calculate_default_facing, calculate_filtered_squad_centers};
 use super::visuals::{spawn_move_indicator, spawn_path_line};
 
 /// System: Handle right-click move commands for selected squads
@@ -159,24 +158,12 @@ fn execute_group_move(
     }
 
     // Calculate actual current positions for path visuals
-    let mut squad_current_positions: HashMap<u32, Vec3> = HashMap::new();
-    for (_entity, _droid, squad_member, _offset, transform) in droid_query.iter() {
-        if group.squad_ids.contains(&squad_member.squad_id) {
-            let entry = squad_current_positions.entry(squad_member.squad_id).or_insert(Vec3::ZERO);
-            *entry += transform.translation;
-        }
-    }
-    // Average the positions
-    for &squad_id in &group.squad_ids {
-        if let Some(squad) = squad_manager.get_squad(squad_id) {
-            if let Some(pos) = squad_current_positions.get_mut(&squad_id) {
-                let member_count = squad.members.len();
-                if member_count > 0 {
-                    *pos /= member_count as f32;
-                }
-            }
-        }
-    }
+    let group_squad_ids = group.squad_ids.clone();
+    let squad_current_positions = calculate_filtered_squad_centers(
+        droid_query.iter().map(|(_, _, sm, _, t)| (sm.squad_id, t.translation)),
+        |id| group_squad_ids.contains(&id),
+        squad_manager,
+    );
 
     // Apply rotated offsets to each squad
     for (&squad_id, &offset) in &group.squad_offsets {
@@ -273,24 +260,12 @@ fn execute_move_command(
         .collect();
 
     // Calculate actual current positions of squads from unit transforms (not squad.center_position which lags)
-    let mut squad_current_positions: HashMap<u32, Vec3> = HashMap::new();
-    for (_entity, _droid, squad_member, _offset, transform) in droid_query.iter() {
-        if selection_state.selected_squads.contains(&squad_member.squad_id) {
-            let entry = squad_current_positions.entry(squad_member.squad_id).or_insert(Vec3::ZERO);
-            *entry += transform.translation;
-        }
-    }
-    // Average the positions
-    for &squad_id in selection_state.selected_squads.iter() {
-        if let Some(squad) = squad_manager.get_squad(squad_id) {
-            if let Some(pos) = squad_current_positions.get_mut(&squad_id) {
-                let member_count = squad.members.len();
-                if member_count > 0 {
-                    *pos /= member_count as f32;
-                }
-            }
-        }
-    }
+    let selected = selection_state.selected_squads.clone();
+    let squad_current_positions = calculate_filtered_squad_centers(
+        droid_query.iter().map(|(_, _, sm, _, t)| (sm.squad_id, t.translation)),
+        |id| selected.contains(&id),
+        squad_manager,
+    );
 
     // Collect squad IDs and their current positions
     let squad_positions: Vec<(u32, Vec3)> = selection_state.selected_squads.iter()

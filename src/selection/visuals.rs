@@ -9,6 +9,7 @@ use crate::constants::*;
 use super::state::*;
 use super::groups::check_is_complete_group;
 use super::obb::OrientedBoundingBox;
+use super::utils::calculate_squad_centers;
 
 /// System: Update and cleanup selection ring visuals
 pub fn selection_visual_system(
@@ -40,23 +41,7 @@ pub fn selection_visual_system(
     }
 
     // Calculate actual squad centers from unit positions (not the anchored squad.center_position)
-    let mut squad_actual_centers: std::collections::HashMap<u32, Vec3> = std::collections::HashMap::new();
-    for (transform, squad_member) in unit_query.iter() {
-        let entry = squad_actual_centers.entry(squad_member.squad_id).or_insert(Vec3::ZERO);
-        *entry += transform.translation;
-    }
-    // Count units per squad and compute average
-    let mut squad_unit_counts: std::collections::HashMap<u32, usize> = std::collections::HashMap::new();
-    for (_, squad_member) in unit_query.iter() {
-        *squad_unit_counts.entry(squad_member.squad_id).or_insert(0) += 1;
-    }
-    for (squad_id, total) in squad_actual_centers.iter_mut() {
-        if let Some(&count) = squad_unit_counts.get(squad_id) {
-            if count > 0 {
-                *total /= count as f32;
-            }
-        }
-    }
+    let squad_actual_centers = calculate_squad_centers(&unit_query);
 
     // Find which selected squads need visuals
     let existing_squad_ids: HashSet<u32> = existing_visuals.iter()
