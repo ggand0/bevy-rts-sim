@@ -63,17 +63,16 @@ pub fn squad_formation_system(
     time: Res<Time>,
     mut squad_manager: ResMut<SquadManager>,
     mut unit_query: Query<(&mut Transform, &SquadMember, &mut FormationOffset, &BattleDroid), With<BattleDroid>>,
+    mut last_update_time: Local<f32>,
 ) {
     // Only update squad centers periodically, not every frame
-    static mut LAST_UPDATE_TIME: f32 = 0.0;
     let current_time = time.elapsed_seconds();
-    let should_update_centers = unsafe {
-        if current_time - LAST_UPDATE_TIME < 0.1 { // Update only 10 times per second
-            false
-        } else {
-            LAST_UPDATE_TIME = current_time;
-            true
-        }
+    let should_update_centers = if current_time - *last_update_time < 0.1 {
+        // Update only 10 times per second
+        false
+    } else {
+        *last_update_time = current_time;
+        true
     };
     
     if should_update_centers {
