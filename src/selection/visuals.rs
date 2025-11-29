@@ -705,15 +705,15 @@ pub fn spawn_move_indicator_with_color(
 
     // Determine base color - grey for dead squads, green for living
     let base_color = if color.is_some() {
-        // Dead squad: grey
-        Color::srgba(0.5, 0.5, 0.5, 0.6)
+        // Dead squad: brighter grey
+        Color::srgba(0.7, 0.7, 0.7, 0.7)
     } else {
         // Living squad: green
         Color::srgba(0.2, 1.0, 0.3, 0.6)
     };
 
     let emissive = if color.is_some() {
-        LinearRgba::new(0.3, 0.3, 0.3, 1.0)
+        LinearRgba::new(0.5, 0.5, 0.5, 1.0)
     } else {
         LinearRgba::new(0.1, 0.5, 0.15, 1.0)
     };
