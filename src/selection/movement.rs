@@ -195,8 +195,8 @@ fn execute_group_move(
             }
         } else {
             // Dead squad - spawn grey indicator to show where it would have been
-            let grey = Color::srgb(0.5, 0.5, 0.5);
-            spawn_move_indicator_with_color(commands, meshes, materials, squad_dest, Some(grey));
+            let dead_color = Color::srgba(0.4, 0.4, 0.4, 0.8);
+            spawn_move_indicator_with_color(commands, meshes, materials, squad_dest, Some(dead_color));
         }
     }
 

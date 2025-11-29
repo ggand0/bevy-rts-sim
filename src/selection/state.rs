@@ -49,6 +49,7 @@ pub struct SelectionVisual {
 #[derive(Component)]
 pub struct MoveOrderVisual {
     pub timer: Timer,
+    pub base_color: Color,  // Original color for fade-out
 }
 
 // Marker component for path line connecting squad to destination

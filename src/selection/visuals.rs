@@ -147,11 +147,12 @@ pub fn move_visual_cleanup_system(
     for (entity, mut visual, material_handle) in circle_query.iter_mut() {
         visual.timer.tick(time.delta());
 
-        // Fade out based on timer progress
+        // Fade out based on timer progress, preserving original color
         if let Some(material) = materials.get_mut(material_handle) {
             let progress = visual.timer.fraction();
             let alpha = (1.0 - progress) * 0.6;
-            material.base_color = Color::srgba(0.2, 1.0, 0.3, alpha);
+            // Use the stored base color, just update alpha
+            material.base_color = visual.base_color.with_alpha(alpha);
         }
 
         if visual.timer.finished() {
@@ -700,12 +701,21 @@ pub fn spawn_move_indicator_with_color(
     position: Vec3,
     color: Option<Color>,
 ) {
-    // Create a flat circle on the ground
     let mesh = meshes.add(Circle::new(MOVE_INDICATOR_RADIUS));
 
-    let (base_color, emissive) = match color {
-        Some(c) => (c.with_alpha(0.6), LinearRgba::from(c) * 0.5),
-        None => (Color::srgba(0.2, 1.0, 0.3, 0.6), LinearRgba::new(0.1, 0.5, 0.15, 1.0)),
+    // Determine base color - grey for dead squads, green for living
+    let base_color = if color.is_some() {
+        // Dead squad: grey
+        Color::srgba(0.5, 0.5, 0.5, 0.6)
+    } else {
+        // Living squad: green
+        Color::srgba(0.2, 1.0, 0.3, 0.6)
+    };
+
+    let emissive = if color.is_some() {
+        LinearRgba::new(0.3, 0.3, 0.3, 1.0)
+    } else {
+        LinearRgba::new(0.1, 0.5, 0.15, 1.0)
     };
 
     let material = materials.add(StandardMaterial {
@@ -713,7 +723,8 @@ pub fn spawn_move_indicator_with_color(
         emissive,
         alpha_mode: AlphaMode::Blend,
         unlit: true,
-        cull_mode: None,  // Visible from both sides
+        cull_mode: None,
+        double_sided: true,
         ..default()
     });
 
@@ -727,6 +738,7 @@ pub fn spawn_move_indicator_with_color(
         },
         MoveOrderVisual {
             timer: Timer::from_seconds(MOVE_INDICATOR_LIFETIME, TimerMode::Once),
+            base_color,  // Store original color for fade-out
         },
         NotShadowCaster,
         NotShadowReceiver,
