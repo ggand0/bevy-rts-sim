@@ -84,6 +84,12 @@ pub struct GroupOrientationMarker {
     pub group_id: u32,
 }
 
+// Marker component for debug bounding rectangle
+#[derive(Component)]
+pub struct GroupBoundingBoxDebug {
+    pub group_id: u32,
+}
+
 // Threshold for orientation drag (in world units)
 const ORIENTATION_DRAG_THRESHOLD: f32 = 3.0;
 
@@ -1431,7 +1437,6 @@ pub fn update_group_orientation_markers(
     selection_state: Res<SelectionState>,
     squad_manager: Res<SquadManager>,
     mut existing_markers: Query<(Entity, &GroupOrientationMarker, &mut Transform)>,
-    droid_query: Query<(&Transform, &SquadMember), (With<BattleDroid>, Without<GroupOrientationMarker>)>,
 ) {
     // Check if any group is currently selected
     let selected_group_id = check_is_complete_group(&selection_state);
@@ -1451,7 +1456,7 @@ pub fn update_group_orientation_markers(
     // Create or update marker for the selected group
     if let Some(group) = selection_state.groups.get(&active_group_id) {
         let group_id = active_group_id;
-        // Calculate group bounding box from squad centers
+        // Calculate group bounding box from SQUAD CENTERS
         let mut min_x = f32::MAX;
         let mut max_x = f32::MIN;
         let mut min_z = f32::MAX;
@@ -1567,6 +1572,246 @@ pub fn update_group_orientation_markers(
                 GroupOrientationMarker {
                     group_id,
                 },
+            ));
+        }
+    }
+}
+
+/// System to visualize group bounding boxes for debugging
+pub fn update_group_bounding_box_debug(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    selection_state: Res<SelectionState>,
+    squad_manager: Res<SquadManager>,
+    mut existing_debug: Query<(Entity, &GroupBoundingBoxDebug, &mut Transform)>,
+) {
+    // Check if any group is currently selected
+    let selected_group_id = check_is_complete_group(&selection_state);
+
+    // Remove debug boxes for groups that no longer exist or are not selected
+    for (entity, debug_marker, _) in existing_debug.iter() {
+        let should_remove = !selection_state.groups.contains_key(&debug_marker.group_id)
+            || selected_group_id != Some(debug_marker.group_id);
+        if should_remove {
+            commands.entity(entity).despawn();
+        }
+    }
+
+    // Only create/update debug box if a complete group is selected
+    let Some(active_group_id) = selected_group_id else { return };
+
+    // Create or update debug box for the selected group
+    if let Some(group) = selection_state.groups.get(&active_group_id) {
+        let group_id = active_group_id;
+
+        // Calculate group bounding box from SQUAD CENTERS (not individual units)
+        // This gives a better representation of the group's extent
+        let mut min_x = f32::MAX;
+        let mut max_x = f32::MIN;
+        let mut min_z = f32::MAX;
+        let mut max_z = f32::MIN;
+        let mut group_center = Vec3::ZERO;
+        let mut squad_count = 0;
+
+        for &squad_id in &group.squad_ids {
+            if let Some(squad) = squad_manager.get_squad(squad_id) {
+                let pos = squad.center_position;
+                min_x = min_x.min(pos.x);
+                max_x = max_x.max(pos.x);
+                min_z = min_z.min(pos.z);
+                max_z = max_z.max(pos.z);
+                group_center += pos;
+                squad_count += 1;
+            }
+        }
+
+        if squad_count == 0 {
+            return;
+        }
+
+        group_center /= squad_count as f32;
+
+        // Calculate bounding box dimensions with padding to make it more visible
+        let padding = 15.0; // Add significant padding around squad centers
+        let min_dimension = 10.0; // Minimum width/depth to ensure visibility
+        let width = ((max_x - min_x) + padding).max(min_dimension);
+        let depth = ((max_z - min_z) + padding).max(min_dimension);
+        let _center = Vec3::new(
+            (min_x + max_x) / 2.0,
+            group_center.y + 0.1, // Slightly above ground
+            (min_z + max_z) / 2.0,
+        );
+
+        // Check if debug box already exists for this group
+        let existing_count = existing_debug.iter()
+            .filter(|(_, marker, _)| marker.group_id == group_id)
+            .count();
+        let found = existing_count > 0;
+
+        // Debug logging to understand the bounding box dimensions (only log once when creating)
+        if !found {
+            info!("Group {} bounding box: min_x={:.2}, max_x={:.2}, min_z={:.2}, max_z={:.2}, width={:.2}, depth={:.2}",
+                group_id, min_x, max_x, min_z, max_z, width, depth);
+        }
+
+        // Update existing edges if they exist
+        if found {
+            let y_offset = 0.2;
+            let line_thickness = 0.5;
+            let line_height = 0.3;
+
+            let mut edge_index = 0;
+            for (_entity, debug_marker, mut transform) in existing_debug.iter_mut() {
+                if debug_marker.group_id == group_id {
+                    match edge_index {
+                        0 => {
+                            // Top edge (max_z)
+                            transform.translation = Vec3::new(
+                                (min_x + max_x) / 2.0,
+                                group_center.y + y_offset,
+                                max_z + padding / 2.0,
+                            );
+                            transform.scale = Vec3::new(width, line_height, line_thickness);
+                        }
+                        1 => {
+                            // Bottom edge (min_z)
+                            transform.translation = Vec3::new(
+                                (min_x + max_x) / 2.0,
+                                group_center.y + y_offset,
+                                min_z - padding / 2.0,
+                            );
+                            transform.scale = Vec3::new(width, line_height, line_thickness);
+                        }
+                        2 => {
+                            // Left edge (min_x)
+                            transform.translation = Vec3::new(
+                                min_x - padding / 2.0,
+                                group_center.y + y_offset,
+                                (min_z + max_z) / 2.0,
+                            );
+                            transform.scale = Vec3::new(line_thickness, line_height, depth);
+                        }
+                        3 => {
+                            // Right edge (max_x)
+                            transform.translation = Vec3::new(
+                                max_x + padding / 2.0,
+                                group_center.y + y_offset,
+                                (min_z + max_z) / 2.0,
+                            );
+                            transform.scale = Vec3::new(line_thickness, line_height, depth);
+                        }
+                        _ => {}
+                    }
+                    edge_index += 1;
+                }
+            }
+        }
+
+        if !found {
+            // Create new debug box - wireframe outline on the ground
+            let debug_color = Color::srgba(1.0, 0.0, 1.0, 0.8); // Magenta with some transparency
+
+            // Create a unit cube that we'll scale - this allows dynamic resizing
+            let unit_cube = meshes.add(Cuboid::new(1.0, 1.0, 1.0));
+            let line_thickness = 0.5;
+            let y_offset = 0.2; // Raise above ground to prevent z-fighting
+            let line_height = 0.3;
+
+            // Top edge (max_z) - scale X by width, Z by line_thickness
+            commands.spawn((
+                PbrBundle {
+                    mesh: unit_cube.clone(),
+                    material: materials.add(StandardMaterial {
+                        base_color: debug_color,
+                        emissive: LinearRgba::rgb(2.0, 0.0, 2.0),
+                        unlit: true,
+                        alpha_mode: AlphaMode::Blend,
+                        ..default()
+                    }),
+                    transform: Transform::from_translation(Vec3::new(
+                        (min_x + max_x) / 2.0,
+                        group_center.y + y_offset,
+                        max_z + padding / 2.0,
+                    ))
+                    .with_scale(Vec3::new(width, line_height, line_thickness)),
+                    visibility: Visibility::Visible,
+                    ..default()
+                },
+                NotShadowCaster,
+                GroupBoundingBoxDebug { group_id },
+            ));
+
+            // Bottom edge (min_z)
+            commands.spawn((
+                PbrBundle {
+                    mesh: unit_cube.clone(),
+                    material: materials.add(StandardMaterial {
+                        base_color: debug_color,
+                        emissive: LinearRgba::rgb(2.0, 0.0, 2.0),
+                        unlit: true,
+                        alpha_mode: AlphaMode::Blend,
+                        ..default()
+                    }),
+                    transform: Transform::from_translation(Vec3::new(
+                        (min_x + max_x) / 2.0,
+                        group_center.y + y_offset,
+                        min_z - padding / 2.0,
+                    ))
+                    .with_scale(Vec3::new(width, line_height, line_thickness)),
+                    visibility: Visibility::Visible,
+                    ..default()
+                },
+                NotShadowCaster,
+                GroupBoundingBoxDebug { group_id },
+            ));
+
+            // Left edge (min_x) - scale Z by depth, X by line_thickness
+            commands.spawn((
+                PbrBundle {
+                    mesh: unit_cube.clone(),
+                    material: materials.add(StandardMaterial {
+                        base_color: debug_color,
+                        emissive: LinearRgba::rgb(2.0, 0.0, 2.0),
+                        unlit: true,
+                        alpha_mode: AlphaMode::Blend,
+                        ..default()
+                    }),
+                    transform: Transform::from_translation(Vec3::new(
+                        min_x - padding / 2.0,
+                        group_center.y + y_offset,
+                        (min_z + max_z) / 2.0,
+                    ))
+                    .with_scale(Vec3::new(line_thickness, line_height, depth)),
+                    visibility: Visibility::Visible,
+                    ..default()
+                },
+                NotShadowCaster,
+                GroupBoundingBoxDebug { group_id },
+            ));
+
+            // Right edge (max_x)
+            commands.spawn((
+                PbrBundle {
+                    mesh: unit_cube.clone(),
+                    material: materials.add(StandardMaterial {
+                        base_color: debug_color,
+                        emissive: LinearRgba::rgb(2.0, 0.0, 2.0),
+                        unlit: true,
+                        alpha_mode: AlphaMode::Blend,
+                        ..default()
+                    }),
+                    transform: Transform::from_translation(Vec3::new(
+                        max_x + padding / 2.0,
+                        group_center.y + y_offset,
+                        (min_z + max_z) / 2.0,
+                    ))
+                    .with_scale(Vec3::new(line_thickness, line_height, depth)),
+                    visibility: Visibility::Visible,
+                    ..default()
+                },
+                NotShadowCaster,
+                GroupBoundingBoxDebug { group_id },
             ));
         }
     }

@@ -70,6 +70,7 @@ fn main() {
             selection::orientation_arrow_system,
             selection::box_selection_visual_system,
             selection::update_group_orientation_markers,
+            selection::update_group_bounding_box_debug,
         ))
         .add_systems(Update, (
             // Combat systems
