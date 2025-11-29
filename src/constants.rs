@@ -58,3 +58,4 @@ pub const MOVE_INDICATOR_RADIUS: f32 = 3.0;         // Radius of move destinatio
 pub const MOVE_INDICATOR_LIFETIME: f32 = 1.5;       // Seconds before move indicator fades
 pub const SQUAD_ROTATION_SPEED: f32 = 2.0;          // Radians per second for squad rotation
 pub const MULTI_SQUAD_SPACING: f32 = 25.0;          // Spacing between squads when moving multiple
+pub const SQUAD_ARRIVAL_THRESHOLD: f32 = 5.0;       // Distance at which squads are considered "arrived" at destination

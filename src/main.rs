@@ -61,6 +61,7 @@ fn main() {
             selection::selection_input_system,
             selection::box_selection_update_system,
             selection::move_command_system,
+            selection::group_command_system,
         ).chain())
         .add_systems(Update, (
             // Selection visual feedback
@@ -68,6 +69,9 @@ fn main() {
             selection::move_visual_cleanup_system,
             selection::orientation_arrow_system,
             selection::box_selection_visual_system,
+            selection::update_group_orientation_markers,
+            selection::update_group_bounding_box_debug,
+            selection::update_squad_path_arrows,
         ))
         .add_systems(Update, (
             // Combat systems
