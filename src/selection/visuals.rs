@@ -682,6 +682,150 @@ pub fn update_group_bounding_box_debug(
     }
 }
 
+/// System: Update persistent path arrows for selected squads that are moving
+pub fn update_squad_path_arrows(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    selection_state: Res<SelectionState>,
+    squad_manager: Res<SquadManager>,
+    unit_query: Query<(&Transform, &SquadMember), (With<BattleDroid>, Without<SelectionVisual>)>,
+    mut existing_arrows: Query<(Entity, &SquadPathArrowVisual, &mut Transform), Without<BattleDroid>>,
+) {
+    // Calculate actual squad centers from unit positions
+    let squad_actual_centers = calculate_squad_centers(&unit_query);
+
+    // Collect selected squads that have a target position different from current position
+    let mut squads_needing_arrows: Vec<(u32, Vec3, Vec3)> = Vec::new(); // (squad_id, current_pos, target_pos)
+
+    for &squad_id in &selection_state.selected_squads {
+        if let Some(squad) = squad_manager.get_squad(squad_id) {
+            // Get actual center position from unit transforms
+            let current_pos = squad_actual_centers.get(&squad_id)
+                .copied()
+                .unwrap_or(squad.center_position);
+
+            let target_pos = squad.target_position;
+
+            // Check if squad is moving (target is significantly different from current)
+            let distance = Vec3::new(
+                target_pos.x - current_pos.x,
+                0.0,
+                target_pos.z - current_pos.z,
+            ).length();
+
+            if distance > 2.0 {
+                // Squad is moving toward a target
+                squads_needing_arrows.push((squad_id, current_pos, target_pos));
+            }
+        }
+    }
+
+    // Remove arrows for squads that are no longer selected or no longer moving
+    let squads_with_arrows: HashSet<u32> = squads_needing_arrows.iter().map(|(id, _, _)| *id).collect();
+    for (entity, arrow, _) in existing_arrows.iter() {
+        if !squads_with_arrows.contains(&arrow.squad_id) {
+            commands.entity(entity).despawn();
+        }
+    }
+
+    // Update or create arrows for squads that need them
+    for (squad_id, current_pos, target_pos) in squads_needing_arrows {
+        let direction = Vec3::new(target_pos.x - current_pos.x, 0.0, target_pos.z - current_pos.z);
+        let length = direction.length();
+
+        if length < 2.0 {
+            continue;
+        }
+
+        let normalized_dir = direction.normalize();
+        let rotation = Quat::from_rotation_y(normalized_dir.x.atan2(normalized_dir.z));
+
+        // Check if arrow already exists for this squad
+        let mut found = false;
+        for (_entity, arrow, mut transform) in existing_arrows.iter_mut() {
+            if arrow.squad_id == squad_id {
+                // Update existing arrow position/rotation/scale
+                transform.translation = Vec3::new(current_pos.x, 0.2, current_pos.z);
+                transform.rotation = rotation;
+                transform.scale = Vec3::new(1.0, 1.0, length);
+                found = true;
+                break;
+            }
+        }
+
+        if !found {
+            // Create new arrow
+            let arrow_mesh = meshes.add(create_path_arrow_mesh());
+            let arrow_material = materials.add(StandardMaterial {
+                base_color: Color::srgba(0.3, 0.9, 0.4, 0.5),
+                emissive: LinearRgba::new(0.1, 0.4, 0.15, 1.0),
+                alpha_mode: AlphaMode::Blend,
+                unlit: true,
+                cull_mode: None,
+                double_sided: true,
+                ..default()
+            });
+
+            commands.spawn((
+                PbrBundle {
+                    mesh: arrow_mesh,
+                    material: arrow_material,
+                    transform: Transform::from_translation(Vec3::new(current_pos.x, 0.2, current_pos.z))
+                        .with_rotation(rotation)
+                        .with_scale(Vec3::new(1.0, 1.0, length)),
+                    ..default()
+                },
+                SquadPathArrowVisual { squad_id },
+                NotShadowCaster,
+                NotShadowReceiver,
+            ));
+        }
+    }
+}
+
+/// Create an arrow mesh for persistent path visualization (pointing in +Z, length 1.0)
+fn create_path_arrow_mesh() -> Mesh {
+    use bevy::render::mesh::PrimitiveTopology;
+
+    // Arrow shape: shaft + head, lying flat on XZ plane
+    let shaft_width = 0.5;
+    let head_width = 1.5;
+    let head_length = 0.1; // Proportion of total length for arrowhead
+
+    // Vertices (Y=0, lying flat)
+    let vertices = vec![
+        // Shaft (from origin to 1-head_length)
+        [-shaft_width / 2.0, 0.0, 0.0],           // 0: left start
+        [shaft_width / 2.0, 0.0, 0.0],            // 1: right start
+        [shaft_width / 2.0, 0.0, 1.0 - head_length], // 2: right shaft end
+        [-shaft_width / 2.0, 0.0, 1.0 - head_length], // 3: left shaft end
+        // Arrow head
+        [-head_width / 2.0, 0.0, 1.0 - head_length], // 4: left head base
+        [head_width / 2.0, 0.0, 1.0 - head_length],  // 5: right head base
+        [0.0, 0.0, 1.0],                              // 6: tip
+    ];
+
+    let indices = vec![
+        // Shaft quad (two triangles)
+        0, 2, 1,
+        0, 3, 2,
+        // Arrow head triangle
+        4, 6, 5,
+    ];
+
+    let normals = vec![[0.0, 1.0, 0.0]; 7]; // All pointing up
+    let uvs = vec![[0.0, 0.0]; 7]; // Simple UVs
+
+    let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, bevy::render::render_asset::RenderAssetUsages::default());
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, vertices);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
+    mesh.insert_indices(bevy::render::mesh::Indices::U32(indices));
+
+    mesh
+}
+
 /// Spawn a visual indicator at the move destination
 pub fn spawn_move_indicator(
     commands: &mut Commands,

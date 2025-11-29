@@ -71,6 +71,7 @@ fn main() {
             selection::box_selection_visual_system,
             selection::update_group_orientation_markers,
             selection::update_group_bounding_box_debug,
+            selection::update_squad_path_arrows,
         ))
         .add_systems(Update, (
             // Combat systems

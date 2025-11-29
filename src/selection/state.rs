@@ -72,6 +72,12 @@ pub struct GroupOrientationMarker {
     pub group_id: u32,
 }
 
+// Marker component for persistent path arrow (shows when squad is selected and moving)
+#[derive(Component)]
+pub struct SquadPathArrowVisual {
+    pub squad_id: u32,
+}
+
 // Marker component for debug bounding rectangle
 #[derive(Component)]
 pub struct GroupBoundingBoxDebug {

@@ -31,4 +31,5 @@ pub use visuals::{
     box_selection_visual_system,
     update_group_orientation_markers,
     update_group_bounding_box_debug,
+    update_squad_path_arrows,
 };
