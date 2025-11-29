@@ -8,7 +8,7 @@ use crate::formation::calculate_formation_offset;
 use super::state::{SelectionState, OrientationArrowVisual};
 use super::groups::check_is_complete_group;
 use super::utils::{screen_to_ground, calculate_default_facing, calculate_filtered_squad_centers};
-use super::visuals::{spawn_move_indicator, spawn_path_line};
+use super::visuals::{spawn_move_indicator, spawn_move_indicator_with_color, spawn_path_line};
 
 /// System: Handle right-click move commands for selected squads
 /// Supports drag-to-set-orientation (CoH1-style)
@@ -171,22 +171,32 @@ fn execute_group_move(
         let rotated_offset = rotation * offset;
         let squad_dest = destination + rotated_offset;
 
-        if let Some(squad) = squad_manager.get_squad_mut(squad_id) {
-            // Set facing direction
-            if unified_facing.length() > 0.1 {
-                squad.target_facing_direction = unified_facing;
-                squad.facing_direction = unified_facing;
+        // Check if squad is alive (has members)
+        let is_alive = squad_manager.get_squad(squad_id)
+            .map_or(false, |s| !s.members.is_empty());
+
+        if is_alive {
+            if let Some(squad) = squad_manager.get_squad_mut(squad_id) {
+                // Set facing direction
+                if unified_facing.length() > 0.1 {
+                    squad.target_facing_direction = unified_facing;
+                    squad.facing_direction = unified_facing;
+                }
+
+                // Set target position
+                squad.target_position = squad_dest;
+
+                // Spawn green visual indicator for living squad
+                spawn_move_indicator(commands, meshes, materials, squad_dest);
+
+                if let Some(&start_pos) = squad_current_positions.get(&squad_id) {
+                    spawn_path_line(commands, meshes, materials, start_pos, squad_dest);
+                }
             }
-
-            // Set target position
-            squad.target_position = squad_dest;
-
-            // Spawn visual indicators
-            spawn_move_indicator(commands, meshes, materials, squad_dest);
-
-            if let Some(&start_pos) = squad_current_positions.get(&squad_id) {
-                spawn_path_line(commands, meshes, materials, start_pos, squad_dest);
-            }
+        } else {
+            // Dead squad - spawn grey indicator to show where it would have been
+            let grey = Color::srgb(0.5, 0.5, 0.5);
+            spawn_move_indicator_with_color(commands, meshes, materials, squad_dest, Some(grey));
         }
     }
 

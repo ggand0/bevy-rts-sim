@@ -387,9 +387,10 @@ pub fn update_group_orientation_markers(
     if let Some(group) = selection_state.groups.get(&active_group_id) {
         let group_id = active_group_id;
 
-        // Collect squad positions
+        // Collect squad positions (only living squads with members)
         let squad_positions: Vec<Vec3> = group.squad_ids.iter()
             .filter_map(|&squad_id| squad_manager.get_squad(squad_id))
+            .filter(|squad| !squad.members.is_empty())
             .map(|squad| squad.center_position)
             .collect();
 
@@ -508,9 +509,10 @@ pub fn update_group_bounding_box_debug(
     if let Some(group) = selection_state.groups.get(&active_group_id) {
         let group_id = active_group_id;
 
-        // Collect squad positions
+        // Collect squad positions (only living squads with members)
         let squad_positions: Vec<Vec3> = group.squad_ids.iter()
             .filter_map(|&squad_id| squad_manager.get_squad(squad_id))
+            .filter(|squad| !squad.members.is_empty())
             .map(|squad| squad.center_position)
             .collect();
 
@@ -686,11 +688,29 @@ pub fn spawn_move_indicator(
     materials: &mut ResMut<Assets<StandardMaterial>>,
     position: Vec3,
 ) {
+    spawn_move_indicator_with_color(commands, meshes, materials, position, None);
+}
+
+/// Spawn a visual indicator at the move destination with custom color
+/// If color is None, uses default green color
+pub fn spawn_move_indicator_with_color(
+    commands: &mut Commands,
+    meshes: &mut ResMut<Assets<Mesh>>,
+    materials: &mut ResMut<Assets<StandardMaterial>>,
+    position: Vec3,
+    color: Option<Color>,
+) {
     // Create a flat circle on the ground
     let mesh = meshes.add(Circle::new(MOVE_INDICATOR_RADIUS));
+
+    let (base_color, emissive) = match color {
+        Some(c) => (c.with_alpha(0.6), LinearRgba::from(c) * 0.5),
+        None => (Color::srgba(0.2, 1.0, 0.3, 0.6), LinearRgba::new(0.1, 0.5, 0.15, 1.0)),
+    };
+
     let material = materials.add(StandardMaterial {
-        base_color: Color::srgba(0.2, 1.0, 0.3, 0.6),
-        emissive: LinearRgba::new(0.1, 0.5, 0.15, 1.0),
+        base_color,
+        emissive,
         alpha_mode: AlphaMode::Blend,
         unlit: true,
         cull_mode: None,  // Visible from both sides
