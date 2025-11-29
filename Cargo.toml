@@ -4,8 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-bevy = { version = "0.14", features = ["dynamic_linking", "wav", "tga"] }
-bevy_hanabi = "0.12"
+bevy = { version = "0.15", features = ["dynamic_linking", "wav", "tga"] }
+bevy_hanabi = "0.14"
 rand = "0.8"
 bytemuck = { version = "1.12", features = ["derive"] }
 

@@ -48,7 +48,7 @@ pub fn pending_explosion_system(
     for (entity, mut pending, transform, tower_component) in explosion_query.iter_mut() {
         total_pending += 1;
         let old_timer = pending.delay_timer;
-        pending.delay_timer -= time.delta_seconds();
+        pending.delay_timer -= time.delta_secs();
 
         if pending.delay_timer <= 0.0 {
             let is_tower = tower_component.is_some();
@@ -83,10 +83,10 @@ pub fn pending_explosion_system(
     for (entity, position, _explosion_radius) in towers_ready {
         info!("🏰 Processing TOWER explosion at {:?}", position);
 
-        commands.spawn(AudioBundle {
-            source: audio_assets.explosion_sound.clone(),
-            settings: PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::new(0.5)),
-        });
+        commands.spawn((
+            AudioPlayer::new(audio_assets.explosion_sound.clone()),
+            PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::new(0.5)),
+        ));
 
         crate::wfx_spawn::spawn_combined_explosion(
             &mut commands,
@@ -121,7 +121,7 @@ pub fn pending_explosion_system(
                 1.0,
                 EXPLOSION_EFFECT_DURATION,
                 *is_tower,
-                time.elapsed_seconds_f64(),
+                time.elapsed_secs_f64(),
             );
         } else {
             warn!("Cannot spawn unit explosion - ExplosionAssets not loaded");
@@ -142,7 +142,7 @@ pub fn explosion_effect_system(
     time: Res<Time>,
 ) {
     for (entity, mut effect, _transform) in explosion_query.iter_mut() {
-        effect.timer += time.delta_seconds();
+        effect.timer += time.delta_secs();
 
         if effect.timer >= effect.max_time {
             commands.entity(entity).despawn();

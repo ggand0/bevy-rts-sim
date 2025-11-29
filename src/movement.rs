@@ -9,8 +9,8 @@ pub fn animate_march(
     squad_manager: Res<SquadManager>,
     mut query: Query<(&mut BattleDroid, &mut Transform, &SquadMember)>,
 ) {
-    let time_seconds = time.elapsed_seconds();
-    let delta_time = time.delta_seconds();
+    let time_seconds = time.elapsed_secs();
+    let delta_time = time.delta_secs();
 
     for (droid, mut transform, squad_member) in query.iter_mut() {
         // Only move if explicitly commanded (no automatic cycling)
@@ -75,8 +75,8 @@ pub fn update_camera_info(
             .get(&bevy::diagnostic::FrameTimeDiagnosticsPlugin::FPS)
             .and_then(|fps| fps.smoothed())
             .unwrap_or(0.0);
-            
-        text.sections[0].value = format!(
+
+        **text = format!(
             "{} vs {} Units ({} squads/team) | FPS: {:.1}\nLeft-click: Select | Right-click: Move | Middle-drag: Rotate | Scroll: Zoom\nShift+click: Add to selection | G: Advance All | H: Retreat All | F: Volley Fire",
             ARMY_SIZE_PER_TEAM, ARMY_SIZE_PER_TEAM, ARMY_SIZE_PER_TEAM / SQUAD_SIZE, fps
         );
@@ -92,7 +92,7 @@ pub fn rts_camera_movement(
     mut camera_query: Query<(&mut Transform, &mut RtsCamera)>,
 ) {
     if let Ok((mut transform, mut camera)) = camera_query.get_single_mut() {
-        let delta_time = time.delta_seconds();
+        let delta_time = time.delta_secs();
         
         // Mouse drag rotation (middle mouse button - left click is for selection)
         if mouse_button_input.pressed(MouseButton::Middle) {

@@ -12,8 +12,8 @@ use super::super::utils::{calculate_squad_centers, horizontal_distance, horizont
 pub fn move_visual_cleanup_system(
     mut commands: Commands,
     time: Res<Time>,
-    mut circle_query: Query<(Entity, &mut MoveOrderVisual, &Handle<StandardMaterial>), Without<MovePathVisual>>,
-    mut path_query: Query<(Entity, &mut MovePathVisual, &Handle<StandardMaterial>), Without<MoveOrderVisual>>,
+    mut circle_query: Query<(Entity, &mut MoveOrderVisual, &MeshMaterial3d<StandardMaterial>), Without<MovePathVisual>>,
+    mut path_query: Query<(Entity, &mut MovePathVisual, &MeshMaterial3d<StandardMaterial>), Without<MoveOrderVisual>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     // Handle destination circle visuals
@@ -21,7 +21,7 @@ pub fn move_visual_cleanup_system(
         visual.timer.tick(time.delta());
 
         // Fade out based on timer progress, preserving original color
-        if let Some(material) = materials.get_mut(material_handle) {
+        if let Some(material) = materials.get_mut(&material_handle.0) {
             let progress = visual.timer.fraction();
             let alpha = (1.0 - progress) * 0.6;
             // Use the stored base color, just update alpha
@@ -38,7 +38,7 @@ pub fn move_visual_cleanup_system(
         visual.timer.tick(time.delta());
 
         // Fade out based on timer progress
-        if let Some(material) = materials.get_mut(material_handle) {
+        if let Some(material) = materials.get_mut(&material_handle.0) {
             let progress = visual.timer.fraction();
             let alpha = (1.0 - progress) * 0.4; // Start at 0.4 alpha (matching spawn)
             material.base_color = Color::srgba(0.2, 1.0, 0.3, alpha);
@@ -106,14 +106,11 @@ pub fn orientation_arrow_system(
         });
 
         commands.spawn((
-            PbrBundle {
-                mesh: arrow_mesh,
-                material: arrow_material,
-                transform: Transform::from_translation(Vec3::new(start.x, 0.2, start.z))
-                    .with_rotation(arrow_rotation)
-                    .with_scale(Vec3::new(1.0, 1.0, length)),
-                ..default()
-            },
+            Mesh3d(arrow_mesh),
+            MeshMaterial3d(arrow_material),
+            Transform::from_translation(Vec3::new(start.x, 0.2, start.z))
+                .with_rotation(arrow_rotation)
+                .with_scale(Vec3::new(1.0, 1.0, length)),
             OrientationArrowVisual,
             NotShadowCaster,
             NotShadowReceiver,
@@ -203,14 +200,11 @@ pub fn update_squad_path_arrows(
             });
 
             commands.spawn((
-                PbrBundle {
-                    mesh: arrow_mesh,
-                    material: arrow_material,
-                    transform: Transform::from_translation(Vec3::new(current_pos.x, 0.2, current_pos.z))
-                        .with_rotation(rotation)
-                        .with_scale(Vec3::new(1.0, 1.0, length)),
-                    ..default()
-                },
+                Mesh3d(arrow_mesh),
+                MeshMaterial3d(arrow_material),
+                Transform::from_translation(Vec3::new(current_pos.x, 0.2, current_pos.z))
+                    .with_rotation(rotation)
+                    .with_scale(Vec3::new(1.0, 1.0, length)),
                 SquadPathArrowVisual { squad_id },
                 NotShadowCaster,
                 NotShadowReceiver,
@@ -307,13 +301,10 @@ pub fn spawn_move_indicator_with_color(
     });
 
     commands.spawn((
-        PbrBundle {
-            mesh,
-            material,
-            transform: Transform::from_translation(Vec3::new(position.x, 0.0, position.z))
-                .with_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)),
-            ..default()
-        },
+        Mesh3d(mesh),
+        MeshMaterial3d(material),
+        Transform::from_translation(Vec3::new(position.x, 0.0, position.z))
+            .with_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)),
         MoveOrderVisual {
             timer: Timer::from_seconds(MOVE_INDICATOR_LIFETIME, TimerMode::Once),
             base_color,  // Store original color for fade-out
@@ -354,14 +345,11 @@ pub fn spawn_path_line(
     });
 
     commands.spawn((
-        PbrBundle {
-            mesh: line_mesh,
-            material: line_material,
-            transform: Transform::from_translation(Vec3::new(start.x, 0.15, start.z))
-                .with_rotation(rotation)
-                .with_scale(Vec3::new(1.0, 1.0, length)),
-            ..default()
-        },
+        Mesh3d(line_mesh),
+        MeshMaterial3d(line_material),
+        Transform::from_translation(Vec3::new(start.x, 0.15, start.z))
+            .with_rotation(rotation)
+            .with_scale(Vec3::new(1.0, 1.0, length)),
         MovePathVisual {
             timer: Timer::from_seconds(MOVE_INDICATOR_LIFETIME, TimerMode::Once),
         },

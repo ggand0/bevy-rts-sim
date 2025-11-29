@@ -13,7 +13,7 @@ pub fn selection_visual_system(
     mut commands: Commands,
     mut selection_state: ResMut<SelectionState>,
     squad_manager: Res<SquadManager>,
-    mut existing_visuals: Query<(Entity, &mut SelectionVisual, &Handle<StandardMaterial>)>,
+    mut existing_visuals: Query<(Entity, &mut SelectionVisual, &MeshMaterial3d<StandardMaterial>)>,
     mut visual_transforms: Query<&mut Transform, With<SelectionVisual>>,
     unit_query: Query<(&Transform, &SquadMember), (With<BattleDroid>, Without<SelectionVisual>)>,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -73,7 +73,7 @@ pub fn selection_visual_system(
         if visual.is_grouped != is_now_grouped {
             visual.is_grouped = is_now_grouped;
             // Update material color
-            if let Some(material) = materials.get_mut(material_handle) {
+            if let Some(material) = materials.get_mut(&material_handle.0) {
                 if is_now_grouped {
                     // Yellow for grouped
                     material.base_color = Color::srgba(1.0, 0.9, 0.2, 0.7);
@@ -119,13 +119,10 @@ fn spawn_selection_ring(
     // Place ring flat on the ground (Y=0.1 to avoid z-fighting with ground at Y=-1)
     // Rotate -90 degrees around X to lay flat (circle faces up instead of forward)
     commands.spawn((
-        PbrBundle {
-            mesh,
-            material,
-            transform: Transform::from_translation(Vec3::new(position.x, 0.1, position.z))
-                .with_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)),
-            ..default()
-        },
+        Mesh3d(mesh),
+        MeshMaterial3d(material),
+        Transform::from_translation(Vec3::new(position.x, 0.1, position.z))
+            .with_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)),
         SelectionVisual { squad_id, is_grouped },
         NotShadowCaster,
         NotShadowReceiver,
@@ -183,20 +180,17 @@ pub fn box_selection_visual_system(
     // Spawn the box selection UI node
     // Using a semi-transparent green box with a border effect
     commands.spawn((
-        NodeBundle {
-            style: Style {
-                position_type: PositionType::Absolute,
-                left: Val::Px(min_x),
-                top: Val::Px(min_y),
-                width: Val::Px(width),
-                height: Val::Px(height),
-                border: UiRect::all(Val::Px(2.0)),
-                ..default()
-            },
-            background_color: BackgroundColor(Color::srgba(0.2, 0.8, 0.3, 0.15)),
-            border_color: BorderColor(Color::srgba(0.3, 1.0, 0.4, 0.8)),
+        Node {
+            position_type: PositionType::Absolute,
+            left: Val::Px(min_x),
+            top: Val::Px(min_y),
+            width: Val::Px(width),
+            height: Val::Px(height),
+            border: UiRect::all(Val::Px(2.0)),
             ..default()
         },
+        BackgroundColor(Color::srgba(0.2, 0.8, 0.3, 0.15)),
+        BorderColor(Color::srgba(0.3, 1.0, 0.4, 0.8)),
         BoxSelectionVisual,
     ));
 }

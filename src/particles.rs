@@ -44,8 +44,8 @@ fn setup_particle_effects(
     color_gradient1.add_key(1.0, Vec4::new(0.1, 0.1, 0.1, 0.0)); // Fade to black
 
     let mut size_gradient1 = Gradient::new();
-    size_gradient1.add_key(0.0, Vec2::splat(0.5));
-    size_gradient1.add_key(1.0, Vec2::splat(0.3));
+    size_gradient1.add_key(0.0, Vec3::splat(0.5));
+    size_gradient1.add_key(1.0, Vec3::splat(0.3));
 
     let writer = ExprWriter::new();
 
@@ -71,7 +71,7 @@ fn setup_particle_effects(
     let debris_module = writer.finish();
 
     let debris_effect = effects.add(
-        EffectAsset::new(vec![32768], Spawner::once(100.0.into(), true), debris_module)
+        EffectAsset::new(32768, Spawner::once(100.0.into(), true), debris_module)
             .with_name("explosion_debris")
             .init(init_pos)
             .init(init_vel)
@@ -93,8 +93,8 @@ fn setup_particle_effects(
     color_gradient2.add_key(1.0, Vec4::new(0.5, 0.1, 0.0, 0.0)); // Fade out
 
     let mut size_gradient2 = Gradient::new();
-    size_gradient2.add_key(0.0, Vec2::splat(0.2));
-    size_gradient2.add_key(1.0, Vec2::splat(0.05));
+    size_gradient2.add_key(0.0, Vec3::splat(0.2));
+    size_gradient2.add_key(1.0, Vec3::splat(0.05));
 
     let writer2 = ExprWriter::new();
 
@@ -119,7 +119,7 @@ fn setup_particle_effects(
     let sparks_module = writer2.finish();
 
     let sparks_effect = effects.add(
-        EffectAsset::new(vec![32768], Spawner::once(200.0.into(), true), sparks_module)
+        EffectAsset::new(32768, Spawner::once(200.0.into(), true), sparks_module)
             .with_name("explosion_sparks")
             .init(init_pos2)
             .init(init_vel2)
@@ -141,8 +141,8 @@ fn setup_particle_effects(
     color_gradient3.add_key(1.0, Vec4::new(0.2, 0.2, 0.2, 0.0)); // Fade out
 
     let mut size_gradient3 = Gradient::new();
-    size_gradient3.add_key(0.0, Vec2::splat(2.0));
-    size_gradient3.add_key(1.0, Vec2::splat(4.0)); // Expand over lifetime
+    size_gradient3.add_key(0.0, Vec3::splat(2.0));
+    size_gradient3.add_key(1.0, Vec3::splat(4.0)); // Expand over lifetime
 
     let writer3 = ExprWriter::new();
 
@@ -167,7 +167,7 @@ fn setup_particle_effects(
     let smoke_module = writer3.finish();
 
     let smoke_effect = effects.add(
-        EffectAsset::new(vec![32768], Spawner::once(50.0.into(), true), smoke_module)
+        EffectAsset::new(32768, Spawner::once(50.0.into(), true), smoke_module)
             .with_name("explosion_smoke")
             .init(init_pos3)
             .init(init_vel3)
@@ -203,12 +203,9 @@ pub fn spawn_explosion_particles(
     // Spawn debris particles
     // Note: Using Spawner::once() with auto-despawn after particles finish
     commands.spawn((
-        ParticleEffectBundle {
-            effect: ParticleEffect::new(particle_effects.debris_effect.clone()),
-            transform: Transform::from_translation(position)
-                .with_scale(Vec3::splat(scale)),
-            ..default()
-        },
+        ParticleEffect::new(particle_effects.debris_effect.clone()),
+        Transform::from_translation(position)
+            .with_scale(Vec3::splat(scale)),
         ParticleEffectLifetime {
             spawn_time: current_time,
             duration: 5.0, // Cleanup 5s after spawn (particles lifetime is 2.5s)
@@ -218,12 +215,9 @@ pub fn spawn_explosion_particles(
 
     // Spawn sparks particles
     commands.spawn((
-        ParticleEffectBundle {
-            effect: ParticleEffect::new(particle_effects.sparks_effect.clone()),
-            transform: Transform::from_translation(position)
-                .with_scale(Vec3::splat(scale)),
-            ..default()
-        },
+        ParticleEffect::new(particle_effects.sparks_effect.clone()),
+        Transform::from_translation(position)
+            .with_scale(Vec3::splat(scale)),
         ParticleEffectLifetime {
             spawn_time: current_time,
             duration: 3.0, // Cleanup 3s after spawn (particles lifetime is 1.5s)
@@ -233,12 +227,9 @@ pub fn spawn_explosion_particles(
 
     // Spawn smoke particles
     commands.spawn((
-        ParticleEffectBundle {
-            effect: ParticleEffect::new(particle_effects.smoke_effect.clone()),
-            transform: Transform::from_translation(position + Vec3::new(0.0, 2.0 * scale, 0.0))
-                .with_scale(Vec3::splat(scale)),
-            ..default()
-        },
+        ParticleEffect::new(particle_effects.smoke_effect.clone()),
+        Transform::from_translation(position + Vec3::new(0.0, 2.0 * scale, 0.0))
+            .with_scale(Vec3::splat(scale)),
         ParticleEffectLifetime {
             spawn_time: current_time,
             duration: 6.0, // Cleanup 6s after spawn (particles lifetime is 3.5s)
@@ -305,7 +296,7 @@ fn cleanup_finished_particle_effects(
     query: Query<(Entity, &ParticleEffectLifetime)>,
     time: Res<Time>,
 ) {
-    let current_time = time.elapsed_seconds_f64();
+    let current_time = time.elapsed_secs_f64();
 
     for (entity, lifetime) in query.iter() {
         let elapsed = (current_time - lifetime.spawn_time) as f32;

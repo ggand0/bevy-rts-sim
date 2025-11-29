@@ -160,7 +160,7 @@ pub fn box_selection_update_system(
                 continue;
             }
             // Project squad center to screen space
-            if let Some(screen_pos) = camera.world_to_viewport(camera_transform, squad.center_position) {
+            if let Ok(screen_pos) = camera.world_to_viewport(camera_transform, squad.center_position) {
                 if screen_pos.x >= min_x && screen_pos.x <= max_x
                    && screen_pos.y >= min_y && screen_pos.y <= max_y {
                     // Only add if not already selected

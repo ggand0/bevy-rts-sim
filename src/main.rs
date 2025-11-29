@@ -92,6 +92,9 @@ fn main() {
             update_debug_mode_ui,
             debug_explosion_hotkey_system,
             debug_warfx_test_system,
+        ))
+        .add_systems(Update, (
+            // War FX explosion animations
             wfx_spawn::update_warfx_explosions,
             wfx_spawn::animate_explosion_flames,
             wfx_spawn::animate_warfx_billboards,

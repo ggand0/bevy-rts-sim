@@ -346,13 +346,10 @@ pub fn spawn_uplink_towers(
     // Spawn Team A tower (left side, behind army)
     let team_a_pos = Vec3::new(-BATTLEFIELD_SIZE / 2.0 - 30.0, 0.0, 0.0);
     commands.spawn((
-        PbrBundle {
-            mesh: tower_mesh.clone(),
-            material: team_a_material,
-            transform: Transform::from_translation(team_a_pos)
-                .with_scale(Vec3::splat(1.0)),
-            ..default()
-        },
+        Mesh3d(tower_mesh.clone()),
+        MeshMaterial3d(team_a_material),
+        Transform::from_translation(team_a_pos)
+            .with_scale(Vec3::splat(1.0)),
         UplinkTower {
             team: Team::A,
             destruction_radius: TOWER_DESTRUCTION_RADIUS,
@@ -367,13 +364,10 @@ pub fn spawn_uplink_towers(
     // Spawn Team B tower (right side, behind army)
     let team_b_pos = Vec3::new(BATTLEFIELD_SIZE / 2.0 + 30.0, 0.0, 0.0);
     commands.spawn((
-        PbrBundle {
-            mesh: tower_mesh,
-            material: team_b_material,
-            transform: Transform::from_translation(team_b_pos)
-                .with_scale(Vec3::splat(1.0)),
-            ..default()
-        },
+        Mesh3d(tower_mesh),
+        MeshMaterial3d(team_b_material),
+        Transform::from_translation(team_b_pos)
+            .with_scale(Vec3::splat(1.0)),
         UplinkTower {
             team: Team::B,
             destruction_radius: TOWER_DESTRUCTION_RADIUS,
@@ -561,7 +555,7 @@ pub fn update_objective_ui_system(
             ui_text.push_str("\n⚔️ Battle in Progress ⚔️");
         }
         
-        text.sections[0].value = ui_text;
+        **text = ui_text;
     }
 }
 
@@ -573,39 +567,35 @@ pub struct DebugModeUI;
 
 pub fn spawn_objective_ui(mut commands: Commands) {
     commands.spawn((
-        TextBundle::from_section(
-            "Loading objective data...",
-            TextStyle {
-                font_size: 18.0,
-                color: Color::WHITE,
-                ..default()
-            },
-        )
-        .with_style(Style {
+        Text::new("Loading objective data..."),
+        TextFont {
+            font_size: 18.0,
+            ..default()
+        },
+        TextColor(Color::WHITE),
+        Node {
             position_type: PositionType::Absolute,
             top: Val::Px(120.0),
             left: Val::Px(10.0),
             ..default()
-        }),
+        },
         ObjectiveUI,
     ));
 
     // Debug mode indicator (hidden by default)
     commands.spawn((
-        TextBundle::from_section(
-            "",
-            TextStyle {
-                font_size: 16.0,
-                color: Color::srgb(1.0, 0.8, 0.2), // Yellow/gold color
-                ..default()
-            },
-        )
-        .with_style(Style {
+        Text::new(""),
+        TextFont {
+            font_size: 16.0,
+            ..default()
+        },
+        TextColor(Color::srgb(1.0, 0.8, 0.2)), // Yellow/gold color
+        Node {
             position_type: PositionType::Absolute,
             bottom: Val::Px(10.0),
             left: Val::Px(10.0),
             ..default()
-        }),
+        },
         DebugModeUI,
     ));
 }
@@ -727,9 +717,9 @@ pub fn update_debug_mode_ui(
 
     for mut text in ui_query.iter_mut() {
         if debug_mode.0 {
-            text.sections[0].value = "[0] EXPLOSION DEBUG: 1=glow 2=flames 3=smoke 4=sparkles 5=combined 6=dots".to_string();
+            **text = "[0] EXPLOSION DEBUG: 1=glow 2=flames 3=smoke 4=sparkles 5=combined 6=dots".to_string();
         } else {
-            text.sections[0].value = String::new();
+            **text = String::new();
         }
     }
 }

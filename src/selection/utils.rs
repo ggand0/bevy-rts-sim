@@ -24,7 +24,7 @@ pub fn screen_to_ground(
     camera_transform: &GlobalTransform,
 ) -> Option<Vec3> {
     // Get ray from camera through cursor position
-    let ray = camera.viewport_to_world(camera_transform, cursor_pos)?;
+    let ray = camera.viewport_to_world(camera_transform, cursor_pos).ok()?;
 
     // Intersect with ground plane at Y = -1.0
     let ground_y = -1.0;

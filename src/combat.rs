@@ -143,12 +143,9 @@ pub fn volley_fire_system(
             
             // Spawn laser projectile
             commands.spawn((
-                PbrBundle {
-                    mesh: laser_mesh.clone(),
-                    material: laser_material,
-                    transform: laser_transform,
-                    ..default()
-                },
+                Mesh3d(laser_mesh.clone()),
+                MeshMaterial3d(laser_material),
+                laser_transform,
                 LaserProjectile {
                     velocity,
                     lifetime: LASER_LIFETIME,
@@ -160,10 +157,10 @@ pub fn volley_fire_system(
         // Play random laser sound effect for volley fire
         let mut rng = rand::thread_rng();
         let sound = audio_assets.get_random_laser_sound(&mut rng);
-        commands.spawn(AudioBundle {
-            source: sound,
-            settings: PlaybackSettings::DESPAWN,
-        });
+        commands.spawn((
+            AudioPlayer::new(sound),
+            PlaybackSettings::DESPAWN,
+        ));
         
         info!("Volley fire! {} lasers fired!", droid_query.iter().count());
     }
@@ -175,8 +172,8 @@ pub fn update_projectiles(
     mut projectile_query: Query<(Entity, &mut Transform, &mut LaserProjectile)>,
     camera_query: Query<&Transform, (With<RtsCamera>, Without<LaserProjectile>)>,
 ) {
-    let delta_time = time.delta_seconds();
-    
+    let delta_time = time.delta_secs();
+
     // Get camera position for billboarding
     let camera_transform = camera_query.get_single().ok();
     
@@ -209,7 +206,7 @@ pub fn target_acquisition_system(
     mut combat_query: Query<(Entity, &Transform, &BattleDroid, &mut CombatUnit)>,
     tower_query: Query<(Entity, &Transform, &UplinkTower), With<UplinkTower>>,
 ) {
-    let delta_time = time.delta_seconds();
+    let delta_time = time.delta_secs();
     
     // Collect all unit data first to avoid borrowing issues
     let all_units: Vec<(Entity, Vec3, Team)> = combat_query
@@ -281,7 +278,7 @@ pub fn auto_fire_system(
     camera_query: Query<&Transform, (With<RtsCamera>, Without<LaserProjectile>)>,
     audio_assets: Res<AudioAssets>,
 ) {
-    let delta_time = time.delta_seconds();
+    let delta_time = time.delta_secs();
     
     // Get camera position for initial orientation
     let camera_position = camera_query.get_single()
@@ -341,12 +338,9 @@ pub fn auto_fire_system(
                     
                     // Spawn targeted laser
                     commands.spawn((
-                        PbrBundle {
-                            mesh: laser_mesh,
-                            material: laser_material,
-                            transform: laser_transform,
-                            ..default()
-                        },
+                        Mesh3d(laser_mesh),
+                        MeshMaterial3d(laser_material),
+                        laser_transform,
                         LaserProjectile {
                             velocity,
                             lifetime: LASER_LIFETIME,
@@ -359,10 +353,10 @@ pub fn auto_fire_system(
                     if shots_fired <= MAX_AUDIO_PER_FRAME {
                         let mut rng = rand::thread_rng();
                         let sound = audio_assets.get_random_laser_sound(&mut rng);
-                        commands.spawn(AudioBundle {
-                            source: sound,
-                            settings: PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::new(0.3)),
-                        });
+                        commands.spawn((
+                            AudioPlayer::new(sound),
+                            PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::new(0.3)),
+                        ));
                     }
                 }
             }

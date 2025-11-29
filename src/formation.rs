@@ -66,7 +66,7 @@ pub fn squad_formation_system(
     mut last_update_time: Local<f32>,
 ) {
     // Only update squad centers periodically, not every frame
-    let current_time = time.elapsed_seconds();
+    let current_time = time.elapsed_secs();
     let should_update_centers = if current_time - *last_update_time < 0.1 {
         // Update only 10 times per second
         false
@@ -183,7 +183,7 @@ pub fn squad_formation_system(
                 let variation_factor = droid.march_offset.sin() * 0.1 + 1.0;
 
                 let final_strength = base_correction_strength * size_modifier * variation_factor;
-                let movement = direction.normalize() * (distance * final_strength) * time.delta_seconds();
+                let movement = direction.normalize() * (distance * final_strength) * time.delta_secs();
 
                 // CRITICAL: Only apply horizontal corrections to avoid interfering with Y-axis animations
                 let correction_movement = Vec3::new(movement.x, 0.0, movement.z);
@@ -201,7 +201,7 @@ pub fn squad_rotation_system(
     mut squad_manager: ResMut<SquadManager>,
     mut droid_query: Query<(&mut BattleDroid, &SquadMember)>,
 ) {
-    let delta_time = time.delta_seconds();
+    let delta_time = time.delta_secs();
 
     // Collect squads that need rotation updates
     let mut squads_to_update: Vec<(u32, Vec3)> = Vec::new();
@@ -373,13 +373,10 @@ pub fn commander_visual_marker_system(
                 
                 // Spawn marker above commander
                 commands.spawn((
-                    PbrBundle {
-                        mesh: marker_mesh,
-                        material: marker_material,
-                        transform: Transform::from_translation(transform.translation + Vec3::new(0.0, 3.0, 0.0))
-                            .with_scale(Vec3::splat(0.8)),
-                        ..default()
-                    },
+                    Mesh3d(marker_mesh),
+                    MeshMaterial3d(marker_material),
+                    Transform::from_translation(transform.translation + Vec3::new(0.0, 3.0, 0.0))
+                        .with_scale(Vec3::splat(0.8)),
                     CommanderMarker {
                         commander_entity: entity,
                     },

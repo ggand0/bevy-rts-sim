@@ -48,33 +48,31 @@ pub fn setup_scene(
     let ground_texture = images.add(image);
 
     // Ground plane (expanded for marching distance)
-    commands.spawn(PbrBundle {
-        mesh: meshes.add(Rectangle::new(800.0, 800.0)),
-        material: materials.add(StandardMaterial {
+    commands.spawn((
+        Mesh3d(meshes.add(Rectangle::new(800.0, 800.0))),
+        MeshMaterial3d(materials.add(StandardMaterial {
             base_color_texture: Some(ground_texture),
             perceptual_roughness: 0.8,
             metallic: 0.0,
             ..default()
-        }),
-        transform: Transform::from_xyz(0.0, -1.0, 0.0)
+        })),
+        Transform::from_xyz(0.0, -1.0, 0.0)
             .with_rotation(Quat::from_rotation_x(-PI / 2.0)),
-        ..default()
-    });
+    ));
 
     // Directional light (sun)
-    commands.spawn(DirectionalLightBundle {
-        directional_light: DirectionalLight {
+    commands.spawn((
+        DirectionalLight {
             illuminance: 10000.0,
             shadows_enabled: true,
             ..default()
         },
-        transform: Transform {
+        Transform {
             translation: Vec3::new(0.0, 50.0, 0.0),
             rotation: Quat::from_rotation_x(-PI / 4.0),
             ..default()
         },
-        ..default()
-    });
+    ));
 
     // Ambient light
     commands.insert_resource(AmbientLight {
@@ -89,11 +87,10 @@ pub fn setup_scene(
     let initial_pitch = -0.5; // Looking down at battlefield
     
     commands.spawn((
-        Camera3dBundle {
-            transform: Transform::from_xyz(0.0, 120.0, 180.0)
-                .looking_at(focus_point, Vec3::Y),
-            ..default()
-        },
+        Camera3d::default(),
+        Camera::default(),
+        Transform::from_xyz(0.0, 120.0, 180.0)
+            .looking_at(focus_point, Vec3::Y),
         RtsCamera {
             focus_point,
             yaw: initial_yaw,
@@ -118,22 +115,20 @@ pub fn setup_scene(
     });
 
     // UI text for performance info
-    commands.spawn(
-        TextBundle::from_section(
-            "5,000 vs 5,000 Units | FPS: --\nWSAD: Move | Mouse: Rotate | Scroll: Zoom | F: Volley Fire\nQ/E/R/T: Formations (Rect/Line/Box/Wedge) | G: Advance | H: Retreat",
-            TextStyle {
-                font_size: 20.0,
-                color: Color::WHITE,
-                ..default()
-            },
-        )
-        .with_style(Style {
+    commands.spawn((
+        Text::new("5,000 vs 5,000 Units | FPS: --\nWSAD: Move | Mouse: Rotate | Scroll: Zoom | F: Volley Fire\nQ/E/R/T: Formations (Rect/Line/Box/Wedge) | G: Advance | H: Retreat"),
+        TextFont {
+            font_size: 20.0,
+            ..default()
+        },
+        TextColor(Color::WHITE),
+        Node {
             position_type: PositionType::Absolute,
             top: Val::Px(10.0),
             left: Val::Px(10.0),
             ..default()
-        }),
-    );
+        },
+    ));
 }
 
 pub fn spawn_army_with_squads(
@@ -369,14 +364,11 @@ fn spawn_team_squads(
             
             // Spawn the battle droid
             let droid_entity = commands.spawn((
-                PbrBundle {
-                    mesh: droid_mesh.clone(),
-                    material: unit_body_material,
-                    transform: Transform::from_translation(unit_position)
-                        .with_scale(if is_commander { Vec3::splat(0.9) } else { Vec3::splat(0.8) }) // Commanders slightly larger
-                        .looking_at(unit_position + facing_direction, Vec3::Y),
-                    ..default()
-                },
+                Mesh3d(droid_mesh.clone()),
+                MeshMaterial3d(unit_body_material),
+                Transform::from_translation(unit_position)
+                    .with_scale(if is_commander { Vec3::splat(0.9) } else { Vec3::splat(0.8) }) // Commanders slightly larger
+                    .looking_at(unit_position + facing_direction, Vec3::Y),
                 BattleDroid {
                     march_speed,
                     spawn_position: unit_position,
@@ -412,15 +404,14 @@ fn spawn_team_squads(
             }
             
             // Add a head (separate entity as child)
-            let head_entity = commands.spawn(PbrBundle {
-                mesh: droid_mesh.clone(),
-                material: unit_head_material,
-                transform: Transform::from_xyz(0.0, 1.2, 0.0)
+            let head_entity = commands.spawn((
+                Mesh3d(droid_mesh.clone()),
+                MeshMaterial3d(unit_head_material),
+                Transform::from_xyz(0.0, 1.2, 0.0)
                     .with_scale(Vec3::splat(0.3)),
-                ..default()
-            }).id();
-            
-            commands.entity(droid_entity).push_children(&[head_entity]);
+            )).id();
+
+            commands.entity(droid_entity).add_children(&[head_entity]);
         }
     }
 }
