@@ -93,6 +93,89 @@ pub struct GroupBoundingBoxDebug {
 // Threshold for orientation drag (in world units)
 const ORIENTATION_DRAG_THRESHOLD: f32 = 3.0;
 
+/// Oriented Bounding Box (OBB) result for group visualization
+pub struct OrientedBoundingBox {
+    pub center: Vec3,           // Center of the OBB in world space
+    pub half_extents: Vec2,     // Half-width (right) and half-depth (forward) in local space
+    pub facing: Vec3,           // Forward direction (normalized)
+    pub right: Vec3,            // Right direction (normalized)
+}
+
+impl OrientedBoundingBox {
+    /// Calculate OBB from squad positions aligned to a facing direction
+    pub fn from_squads(squad_positions: &[Vec3], facing: Vec3, padding: f32) -> Option<Self> {
+        if squad_positions.is_empty() {
+            return None;
+        }
+
+        // Calculate center
+        let center: Vec3 = squad_positions.iter().copied().sum::<Vec3>() / squad_positions.len() as f32;
+
+        // Calculate right vector (perpendicular to facing in XZ plane)
+        let right = Vec3::new(facing.z, 0.0, -facing.x).normalize_or_zero();
+
+        // If facing is zero, fall back to axis-aligned
+        let (facing, right) = if facing.length() < 0.1 {
+            (Vec3::Z, Vec3::X)
+        } else {
+            (facing.normalize(), right)
+        };
+
+        // Transform squad positions to local space (relative to center, aligned to facing)
+        let mut min_right = f32::MAX;
+        let mut max_right = f32::MIN;
+        let mut min_forward = f32::MAX;
+        let mut max_forward = f32::MIN;
+
+        for &pos in squad_positions {
+            let relative = pos - center;
+            let local_right = relative.dot(right);
+            let local_forward = relative.dot(facing);
+
+            min_right = min_right.min(local_right);
+            max_right = max_right.max(local_right);
+            min_forward = min_forward.min(local_forward);
+            max_forward = max_forward.max(local_forward);
+        }
+
+        // Add padding and ensure minimum size
+        let min_dimension = 5.0;
+        let half_width = ((max_right - min_right) / 2.0 + padding / 2.0).max(min_dimension);
+        let half_depth = ((max_forward - min_forward) / 2.0 + padding / 2.0).max(min_dimension);
+
+        // Adjust center to be at the actual center of the OBB (not just average of squad positions)
+        let center_offset_right = (min_right + max_right) / 2.0;
+        let center_offset_forward = (min_forward + max_forward) / 2.0;
+        let adjusted_center = center + right * center_offset_right + facing * center_offset_forward;
+
+        Some(Self {
+            center: adjusted_center,
+            half_extents: Vec2::new(half_width, half_depth),
+            facing,
+            right,
+        })
+    }
+
+    /// Get the 4 corners of the OBB in world space (bottom-left, bottom-right, top-right, top-left)
+    /// where "top" is the front (facing direction)
+    pub fn corners(&self, y: f32) -> [Vec3; 4] {
+        let hw = self.half_extents.x;
+        let hd = self.half_extents.y;
+
+        [
+            self.center + self.right * (-hw) + self.facing * (-hd) + Vec3::Y * y, // back-left
+            self.center + self.right * hw + self.facing * (-hd) + Vec3::Y * y,    // back-right
+            self.center + self.right * hw + self.facing * hd + Vec3::Y * y,       // front-right
+            self.center + self.right * (-hw) + self.facing * hd + Vec3::Y * y,    // front-left
+        ]
+    }
+
+    /// Get the front edge center position
+    pub fn front_edge_center(&self, y: f32) -> Vec3 {
+        self.center + self.facing * self.half_extents.y + Vec3::Y * y
+    }
+}
+
 /// Convert screen cursor position to world position on the ground plane (Y = -1.0)
 pub fn screen_to_ground(
     cursor_pos: Vec2,
@@ -1456,54 +1539,26 @@ pub fn update_group_orientation_markers(
     // Create or update marker for the selected group
     if let Some(group) = selection_state.groups.get(&active_group_id) {
         let group_id = active_group_id;
-        // Calculate group bounding box from SQUAD CENTERS
-        let mut min_x = f32::MAX;
-        let mut max_x = f32::MIN;
-        let mut min_z = f32::MAX;
-        let mut max_z = f32::MIN;
-        let mut group_center = Vec3::ZERO;
-        let mut squad_count = 0;
 
-        for &squad_id in &group.squad_ids {
-            if let Some(squad) = squad_manager.get_squad(squad_id) {
-                let pos = squad.center_position;
-                min_x = min_x.min(pos.x);
-                max_x = max_x.max(pos.x);
-                min_z = min_z.min(pos.z);
-                max_z = max_z.max(pos.z);
-                group_center += pos;
-                squad_count += 1;
-            }
-        }
+        // Collect squad positions
+        let squad_positions: Vec<Vec3> = group.squad_ids.iter()
+            .filter_map(|&squad_id| squad_manager.get_squad(squad_id))
+            .map(|squad| squad.center_position)
+            .collect();
 
-        if squad_count == 0 {
+        if squad_positions.is_empty() {
             return;
         }
 
-        group_center /= squad_count as f32;
-
-        // Calculate the front edge position based on facing direction
-        // Project bounding box corners onto the facing direction to find the furthest point
+        // Calculate OBB aligned to the group's facing direction
         let facing = group.formation_facing;
-        let _right = Vec3::new(facing.z, 0.0, -facing.x).normalize();
+        let padding = 15.0;
+        let Some(obb) = OrientedBoundingBox::from_squads(&squad_positions, facing, padding) else {
+            return;
+        };
 
-        // Get the forward-most point along the facing direction
-        let corners = [
-            Vec3::new(min_x, group_center.y, min_z),
-            Vec3::new(max_x, group_center.y, min_z),
-            Vec3::new(min_x, group_center.y, max_z),
-            Vec3::new(max_x, group_center.y, max_z),
-        ];
-
-        let mut max_forward = f32::MIN;
-        for corner in &corners {
-            let forward_dist = (*corner - group_center).dot(facing);
-            max_forward = max_forward.max(forward_dist);
-        }
-
-        // Position arrow at the front edge, slightly ahead
-        let front_edge_offset = max_forward + 5.0; // 5 units ahead of front edge
-        let arrow_base = group_center + facing * front_edge_offset;
+        // Position arrow at the front edge of the OBB, slightly ahead
+        let arrow_base = obb.front_edge_center(0.0) + obb.facing * 5.0;
 
         // Check if marker already exists for this group
         let mut found = false;
@@ -1513,7 +1568,7 @@ pub fn update_group_orientation_markers(
                 transform.translation = transform.translation.lerp(arrow_base, 0.1);
 
                 // Update rotation to face the group's facing direction
-                let target_rotation = Quat::from_rotation_y(facing.x.atan2(facing.z));
+                let target_rotation = Quat::from_rotation_y(obb.facing.x.atan2(obb.facing.z));
                 transform.rotation = transform.rotation.slerp(target_rotation, 0.1);
 
                 found = true;
@@ -1550,7 +1605,7 @@ pub fn update_group_orientation_markers(
             mesh.insert_indices(bevy::render::mesh::Indices::U32(indices));
 
             // Calculate initial rotation to point in the facing direction
-            let target_rotation = Quat::from_rotation_y(facing.x.atan2(facing.z));
+            let target_rotation = Quat::from_rotation_y(obb.facing.x.atan2(obb.facing.z));
 
             commands.spawn((
                 PbrBundle {
@@ -1578,6 +1633,7 @@ pub fn update_group_orientation_markers(
 }
 
 /// System to visualize group bounding boxes for debugging
+/// Uses an Oriented Bounding Box (OBB) that rotates with the group's facing direction
 pub fn update_group_bounding_box_debug(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -1605,43 +1661,44 @@ pub fn update_group_bounding_box_debug(
     if let Some(group) = selection_state.groups.get(&active_group_id) {
         let group_id = active_group_id;
 
-        // Calculate group bounding box from SQUAD CENTERS (not individual units)
-        // This gives a better representation of the group's extent
-        let mut min_x = f32::MAX;
-        let mut max_x = f32::MIN;
-        let mut min_z = f32::MAX;
-        let mut max_z = f32::MIN;
-        let mut group_center = Vec3::ZERO;
-        let mut squad_count = 0;
+        // Collect squad positions
+        let squad_positions: Vec<Vec3> = group.squad_ids.iter()
+            .filter_map(|&squad_id| squad_manager.get_squad(squad_id))
+            .map(|squad| squad.center_position)
+            .collect();
 
-        for &squad_id in &group.squad_ids {
-            if let Some(squad) = squad_manager.get_squad(squad_id) {
-                let pos = squad.center_position;
-                min_x = min_x.min(pos.x);
-                max_x = max_x.max(pos.x);
-                min_z = min_z.min(pos.z);
-                max_z = max_z.max(pos.z);
-                group_center += pos;
-                squad_count += 1;
-            }
-        }
-
-        if squad_count == 0 {
+        if squad_positions.is_empty() {
             return;
         }
 
-        group_center /= squad_count as f32;
+        // Calculate OBB aligned to the group's facing direction
+        let facing = group.formation_facing;
+        let padding = 15.0;
+        let Some(obb) = OrientedBoundingBox::from_squads(&squad_positions, facing, padding) else {
+            return;
+        };
 
-        // Calculate bounding box dimensions with padding to make it more visible
-        let padding = 15.0; // Add significant padding around squad centers
-        let min_dimension = 10.0; // Minimum width/depth to ensure visibility
-        let width = ((max_x - min_x) + padding).max(min_dimension);
-        let depth = ((max_z - min_z) + padding).max(min_dimension);
-        let _center = Vec3::new(
-            (min_x + max_x) / 2.0,
-            group_center.y + 0.1, // Slightly above ground
-            (min_z + max_z) / 2.0,
-        );
+        // Get the 4 corners of the OBB
+        let y_offset = 0.2;
+        let corners = obb.corners(y_offset);
+        // corners: [back-left, back-right, front-right, front-left]
+
+        // Calculate edge midpoints and lengths
+        // Front edge: front-left to front-right (corners[3] to corners[2])
+        // Back edge: back-left to back-right (corners[0] to corners[1])
+        // Left edge: back-left to front-left (corners[0] to corners[3])
+        // Right edge: back-right to front-right (corners[1] to corners[2])
+
+        let front_mid = (corners[3] + corners[2]) / 2.0;
+        let back_mid = (corners[0] + corners[1]) / 2.0;
+        let left_mid = (corners[0] + corners[3]) / 2.0;
+        let right_mid = (corners[1] + corners[2]) / 2.0;
+
+        let width = obb.half_extents.x * 2.0;  // Full width (perpendicular to facing)
+        let depth = obb.half_extents.y * 2.0;  // Full depth (along facing)
+
+        // Calculate rotation from facing direction
+        let rotation = Quat::from_rotation_y(obb.facing.x.atan2(obb.facing.z));
 
         // Check if debug box already exists for this group
         let existing_count = existing_debug.iter()
@@ -1649,56 +1706,44 @@ pub fn update_group_bounding_box_debug(
             .count();
         let found = existing_count > 0;
 
-        // Debug logging to understand the bounding box dimensions (only log once when creating)
+        // Debug logging (only when creating)
         if !found {
-            info!("Group {} bounding box: min_x={:.2}, max_x={:.2}, min_z={:.2}, max_z={:.2}, width={:.2}, depth={:.2}",
-                group_id, min_x, max_x, min_z, max_z, width, depth);
+            info!("Group {} OBB: center=({:.2}, {:.2}), half_extents=({:.2}, {:.2}), facing=({:.2}, {:.2})",
+                group_id, obb.center.x, obb.center.z, obb.half_extents.x, obb.half_extents.y,
+                obb.facing.x, obb.facing.z);
         }
+
+        let line_thickness = 0.5;
+        let line_height = 0.3;
 
         // Update existing edges if they exist
         if found {
-            let y_offset = 0.2;
-            let line_thickness = 0.5;
-            let line_height = 0.3;
-
             let mut edge_index = 0;
             for (_entity, debug_marker, mut transform) in existing_debug.iter_mut() {
                 if debug_marker.group_id == group_id {
                     match edge_index {
                         0 => {
-                            // Top edge (max_z)
-                            transform.translation = Vec3::new(
-                                (min_x + max_x) / 2.0,
-                                group_center.y + y_offset,
-                                max_z + padding / 2.0,
-                            );
+                            // Front edge
+                            transform.translation = front_mid;
+                            transform.rotation = rotation;
                             transform.scale = Vec3::new(width, line_height, line_thickness);
                         }
                         1 => {
-                            // Bottom edge (min_z)
-                            transform.translation = Vec3::new(
-                                (min_x + max_x) / 2.0,
-                                group_center.y + y_offset,
-                                min_z - padding / 2.0,
-                            );
+                            // Back edge
+                            transform.translation = back_mid;
+                            transform.rotation = rotation;
                             transform.scale = Vec3::new(width, line_height, line_thickness);
                         }
                         2 => {
-                            // Left edge (min_x)
-                            transform.translation = Vec3::new(
-                                min_x - padding / 2.0,
-                                group_center.y + y_offset,
-                                (min_z + max_z) / 2.0,
-                            );
+                            // Left edge
+                            transform.translation = left_mid;
+                            transform.rotation = rotation;
                             transform.scale = Vec3::new(line_thickness, line_height, depth);
                         }
                         3 => {
-                            // Right edge (max_x)
-                            transform.translation = Vec3::new(
-                                max_x + padding / 2.0,
-                                group_center.y + y_offset,
-                                (min_z + max_z) / 2.0,
-                            );
+                            // Right edge
+                            transform.translation = right_mid;
+                            transform.rotation = rotation;
                             transform.scale = Vec3::new(line_thickness, line_height, depth);
                         }
                         _ => {}
@@ -1709,16 +1754,13 @@ pub fn update_group_bounding_box_debug(
         }
 
         if !found {
-            // Create new debug box - wireframe outline on the ground
+            // Create new debug box - wireframe outline using OBB
             let debug_color = Color::srgba(1.0, 0.0, 1.0, 0.8); // Magenta with some transparency
 
-            // Create a unit cube that we'll scale - this allows dynamic resizing
+            // Create a unit cube that we'll scale and rotate
             let unit_cube = meshes.add(Cuboid::new(1.0, 1.0, 1.0));
-            let line_thickness = 0.5;
-            let y_offset = 0.2; // Raise above ground to prevent z-fighting
-            let line_height = 0.3;
 
-            // Top edge (max_z) - scale X by width, Z by line_thickness
+            // Front edge (at the front of the OBB, where the orientation indicator is)
             commands.spawn((
                 PbrBundle {
                     mesh: unit_cube.clone(),
@@ -1729,12 +1771,9 @@ pub fn update_group_bounding_box_debug(
                         alpha_mode: AlphaMode::Blend,
                         ..default()
                     }),
-                    transform: Transform::from_translation(Vec3::new(
-                        (min_x + max_x) / 2.0,
-                        group_center.y + y_offset,
-                        max_z + padding / 2.0,
-                    ))
-                    .with_scale(Vec3::new(width, line_height, line_thickness)),
+                    transform: Transform::from_translation(front_mid)
+                        .with_rotation(rotation)
+                        .with_scale(Vec3::new(width, line_height, line_thickness)),
                     visibility: Visibility::Visible,
                     ..default()
                 },
@@ -1742,7 +1781,7 @@ pub fn update_group_bounding_box_debug(
                 GroupBoundingBoxDebug { group_id },
             ));
 
-            // Bottom edge (min_z)
+            // Back edge
             commands.spawn((
                 PbrBundle {
                     mesh: unit_cube.clone(),
@@ -1753,12 +1792,9 @@ pub fn update_group_bounding_box_debug(
                         alpha_mode: AlphaMode::Blend,
                         ..default()
                     }),
-                    transform: Transform::from_translation(Vec3::new(
-                        (min_x + max_x) / 2.0,
-                        group_center.y + y_offset,
-                        min_z - padding / 2.0,
-                    ))
-                    .with_scale(Vec3::new(width, line_height, line_thickness)),
+                    transform: Transform::from_translation(back_mid)
+                        .with_rotation(rotation)
+                        .with_scale(Vec3::new(width, line_height, line_thickness)),
                     visibility: Visibility::Visible,
                     ..default()
                 },
@@ -1766,7 +1802,7 @@ pub fn update_group_bounding_box_debug(
                 GroupBoundingBoxDebug { group_id },
             ));
 
-            // Left edge (min_x) - scale Z by depth, X by line_thickness
+            // Left edge
             commands.spawn((
                 PbrBundle {
                     mesh: unit_cube.clone(),
@@ -1777,12 +1813,9 @@ pub fn update_group_bounding_box_debug(
                         alpha_mode: AlphaMode::Blend,
                         ..default()
                     }),
-                    transform: Transform::from_translation(Vec3::new(
-                        min_x - padding / 2.0,
-                        group_center.y + y_offset,
-                        (min_z + max_z) / 2.0,
-                    ))
-                    .with_scale(Vec3::new(line_thickness, line_height, depth)),
+                    transform: Transform::from_translation(left_mid)
+                        .with_rotation(rotation)
+                        .with_scale(Vec3::new(line_thickness, line_height, depth)),
                     visibility: Visibility::Visible,
                     ..default()
                 },
@@ -1790,7 +1823,7 @@ pub fn update_group_bounding_box_debug(
                 GroupBoundingBoxDebug { group_id },
             ));
 
-            // Right edge (max_x)
+            // Right edge
             commands.spawn((
                 PbrBundle {
                     mesh: unit_cube.clone(),
@@ -1801,12 +1834,9 @@ pub fn update_group_bounding_box_debug(
                         alpha_mode: AlphaMode::Blend,
                         ..default()
                     }),
-                    transform: Transform::from_translation(Vec3::new(
-                        max_x + padding / 2.0,
-                        group_center.y + y_offset,
-                        (min_z + max_z) / 2.0,
-                    ))
-                    .with_scale(Vec3::new(line_thickness, line_height, depth)),
+                    transform: Transform::from_translation(right_mid)
+                        .with_rotation(rotation)
+                        .with_scale(Vec3::new(line_thickness, line_height, depth)),
                     visibility: Visibility::Visible,
                     ..default()
                 },
