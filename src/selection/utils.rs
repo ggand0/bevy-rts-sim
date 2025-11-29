@@ -2,6 +2,7 @@
 use bevy::prelude::*;
 use std::collections::HashMap;
 use crate::types::*;
+use crate::terrain::TerrainHeightmap;
 
 /// Calculate horizontal distance between two points (ignoring Y axis)
 #[inline]
@@ -17,36 +18,66 @@ pub fn horizontal_direction(from: Vec3, to: Vec3) -> Vec3 {
     Vec3::new(to.x - from.x, 0.0, to.z - from.z)
 }
 
-/// Convert screen cursor position to world position on the ground plane (Y = -1.0)
+/// Convert screen cursor position to world position on the terrain surface
+/// Uses iterative raycasting against the terrain heightmap for accurate placement
 pub fn screen_to_ground(
     cursor_pos: Vec2,
     camera: &Camera,
     camera_transform: &GlobalTransform,
 ) -> Option<Vec3> {
+    screen_to_ground_with_heightmap(cursor_pos, camera, camera_transform, None)
+}
+
+/// Convert screen cursor position to world position on the terrain surface
+/// Uses the terrain heightmap for accurate Y positioning
+pub fn screen_to_ground_with_heightmap(
+    cursor_pos: Vec2,
+    camera: &Camera,
+    camera_transform: &GlobalTransform,
+    heightmap: Option<&TerrainHeightmap>,
+) -> Option<Vec3> {
     // Get ray from camera through cursor position
     let ray = camera.viewport_to_world(camera_transform, cursor_pos).ok()?;
-
-    // Intersect with ground plane at Y = -1.0
-    let ground_y = -1.0;
-
-    // Ray equation: P = origin + t * direction
-    // Plane equation: P.y = ground_y
-    // Solve: origin.y + t * direction.y = ground_y
-    // t = (ground_y - origin.y) / direction.y
 
     if ray.direction.y.abs() < 0.0001 {
         // Ray is parallel to ground, no intersection
         return None;
     }
 
-    let t = (ground_y - ray.origin.y) / ray.direction.y;
-
-    if t > 0.0 {
-        Some(ray.origin + ray.direction * t)
-    } else {
-        // Intersection is behind camera
-        None
+    // First, get approximate intersection with Y=0 plane
+    let t_ground = -ray.origin.y / ray.direction.y;
+    if t_ground <= 0.0 {
+        return None;
     }
+
+    let mut hit_point = ray.origin + ray.direction * t_ground;
+
+    // If we have a heightmap, refine the hit point using iterative search
+    if let Some(hm) = heightmap {
+        // Binary search along the ray to find terrain intersection
+        let mut t_min = 0.0f32;
+        let mut t_max = t_ground * 2.0; // Search a bit beyond the flat ground intersection
+
+        for _ in 0..16 { // 16 iterations should be plenty for good accuracy
+            let t_mid = (t_min + t_max) / 2.0;
+            let test_point = ray.origin + ray.direction * t_mid;
+            let terrain_height = hm.sample_height(test_point.x, test_point.z);
+
+            if test_point.y > terrain_height {
+                // We're above terrain, search further along ray
+                t_min = t_mid;
+            } else {
+                // We're below terrain, search closer
+                t_max = t_mid;
+            }
+        }
+
+        // Final intersection point
+        hit_point = ray.origin + ray.direction * ((t_min + t_max) / 2.0);
+        hit_point.y = hm.sample_height(hit_point.x, hit_point.z);
+    }
+
+    Some(hit_point)
 }
 
 /// Calculate actual squad centers from unit positions

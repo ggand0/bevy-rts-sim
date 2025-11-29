@@ -4,10 +4,11 @@ use bevy::window::PrimaryWindow;
 use crate::types::*;
 use crate::constants::*;
 use crate::formation::calculate_formation_offset;
+use crate::terrain::TerrainHeightmap;
 
 use super::state::{SelectionState, OrientationArrowVisual};
 use super::groups::check_is_complete_group;
-use super::utils::{screen_to_ground, calculate_default_facing, calculate_filtered_squad_centers, horizontal_distance, horizontal_direction};
+use super::utils::{screen_to_ground_with_heightmap, calculate_default_facing, calculate_filtered_squad_centers, horizontal_distance, horizontal_direction};
 use super::visuals::{spawn_move_indicator, spawn_move_indicator_with_color, spawn_path_line};
 
 /// System: Handle right-click move commands for selected squads
@@ -23,13 +24,16 @@ pub fn move_command_system(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     arrow_query: Query<Entity, With<OrientationArrowVisual>>,
+    heightmap: Option<Res<TerrainHeightmap>>,
 ) {
     let Ok(window) = window_query.get_single() else { return };
     let Ok((camera, camera_transform)) = camera_query.get_single() else { return };
     let Some(cursor_pos) = window.cursor_position() else { return };
 
+    let hm = heightmap.as_ref().map(|h| h.as_ref());
+
     // Get current world position under cursor
-    let current_world_pos = screen_to_ground(cursor_pos, camera, camera_transform);
+    let current_world_pos = screen_to_ground_with_heightmap(cursor_pos, camera, camera_transform, hm);
 
     // Handle right mouse button press - start potential drag
     if mouse_button.just_pressed(MouseButton::Right) {

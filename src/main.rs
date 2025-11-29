@@ -12,8 +12,10 @@ mod particles;
 mod wfx_materials;
 mod wfx_spawn;
 mod selection;
+mod terrain;
 use explosion_shader::ExplosionShaderPlugin;
 use particles::ParticleEffectsPlugin;
+use terrain::TerrainPlugin;
 use wfx_materials::{SmokeScrollMaterial, AdditiveMaterial, SmokeOnlyMaterial};
 
 use bevy::prelude::*;
@@ -29,6 +31,7 @@ fn main() {
         .add_plugins(bevy::diagnostic::FrameTimeDiagnosticsPlugin)
         .add_plugins(ExplosionShaderPlugin)
         .add_plugins(ParticleEffectsPlugin)
+        .add_plugins(TerrainPlugin)
         .add_plugins(MaterialPlugin::<SmokeScrollMaterial>::default())
         .add_plugins(MaterialPlugin::<AdditiveMaterial>::default())
         .add_plugins(MaterialPlugin::<SmokeOnlyMaterial>::default())
@@ -37,7 +40,9 @@ fn main() {
         .insert_resource(GameState::default())
         .insert_resource(ExplosionDebugMode::default())
         .insert_resource(selection::SelectionState::default())
-        .add_systems(Startup, (setup::setup_scene, setup::spawn_army_with_squads, spawn_uplink_towers, spawn_objective_ui))
+        .add_systems(Startup, (setup::setup_scene, spawn_uplink_towers, spawn_objective_ui))
+        // Army spawning runs after terrain is ready (terrain spawns in TerrainPlugin's Startup)
+        .add_systems(Startup, setup::spawn_army_with_squads.after(terrain::spawn_initial_terrain))
         .add_systems(Update, (
             // Formation and squad management systems run first
             squad_formation_system,

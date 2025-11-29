@@ -17,8 +17,9 @@ pub const INTER_SQUAD_SPACING: f32 = 12.0; // Tactical spacing for combined arms
 pub const CAMERA_SPEED: f32 = 50.0;
 pub const CAMERA_ZOOM_SPEED: f32 = 10.0;
 pub const CAMERA_MIN_HEIGHT: f32 = 20.0;
-pub const CAMERA_MAX_HEIGHT: f32 = 200.0;
+pub const CAMERA_MAX_HEIGHT: f32 = 500.0;  // Increased for terrain overview
 pub const CAMERA_ROTATION_SPEED: f32 = 0.005;
+pub const CAMERA_INITIAL_HEIGHT: f32 = 250.0;  // Higher starting position for terrain
 
 // Laser projectile settings
 pub const LASER_SPEED: f32 = 100.0;
@@ -59,3 +60,12 @@ pub const MOVE_INDICATOR_LIFETIME: f32 = 1.5;       // Seconds before move indic
 pub const SQUAD_ROTATION_SPEED: f32 = 2.0;          // Radians per second for squad rotation
 pub const MULTI_SQUAD_SPACING: f32 = 25.0;          // Spacing between squads when moving multiple
 pub const SQUAD_ARRIVAL_THRESHOLD: f32 = 5.0;       // Distance at which squads are considered "arrived" at destination
+
+// Terrain generation settings
+pub const TERRAIN_GRID_SIZE: usize = 100;           // 100x100 vertices for terrain mesh
+pub const TERRAIN_SIZE: f32 = 800.0;                // Match current ground size
+pub const TERRAIN_MAX_HEIGHT: f32 = 50.0;           // Maximum hill height
+pub const PERLIN_SCALE: f64 = 0.02;                 // Noise frequency (lower = larger hills)
+pub const PERLIN_OCTAVES: usize = 4;                // Detail levels for fractal noise
+pub const PERLIN_PERSISTENCE: f64 = 0.5;            // How much each octave contributes
+pub const PERLIN_LACUNARITY: f64 = 2.0;             // Frequency multiplier per octave

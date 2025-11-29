@@ -1,64 +1,22 @@
 // Scene setup and army spawning module
 use bevy::prelude::*;
-use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use bevy::core_pipeline::prepass::DepthPrepass;
 use rand::Rng;
 use std::f32::consts::PI;
 use crate::types::*;
 use crate::constants::*;
 use crate::formation::*;
+use crate::terrain::TerrainHeightmap;
 
 pub fn setup_scene(
     mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    mut images: ResMut<Assets<Image>>,
+    _meshes: ResMut<Assets<Mesh>>,
+    _materials: ResMut<Assets<StandardMaterial>>,
+    _images: ResMut<Assets<Image>>,
     asset_server: Res<AssetServer>,
 ) {
-    // Create a simple checkerboard texture for the ground
-    let mut image = Image::new_fill(
-        Extent3d {
-            width: 32,
-            height: 32,
-            depth_or_array_layers: 1,
-        },
-        TextureDimension::D2,
-        &[100, 50, 30, 255],
-        TextureFormat::Rgba8UnormSrgb,
-        bevy::render::render_asset::RenderAssetUsages::RENDER_WORLD,
-    );
-    
-    // Create checkerboard pattern
-    for y in 0..32 {
-        for x in 0..32 {
-            let index = (y * 32 + x) * 4;
-            if (x + y) % 2 == 0 {
-                image.data[index] = 120;     // R
-                image.data[index + 1] = 80;  // G
-                image.data[index + 2] = 40;  // B
-                image.data[index + 3] = 255; // A
-            } else {
-                image.data[index] = 80;      // R
-                image.data[index + 1] = 60;  // G
-                image.data[index + 2] = 30;  // B
-                image.data[index + 3] = 255; // A
-            }
-        }
-    }
-    let ground_texture = images.add(image);
-
-    // Ground plane (expanded for marching distance)
-    commands.spawn((
-        Mesh3d(meshes.add(Rectangle::new(800.0, 800.0))),
-        MeshMaterial3d(materials.add(StandardMaterial {
-            base_color_texture: Some(ground_texture),
-            perceptual_roughness: 0.8,
-            metallic: 0.0,
-            ..default()
-        })),
-        Transform::from_xyz(0.0, -1.0, 0.0)
-            .with_rotation(Quat::from_rotation_x(-PI / 2.0)),
-    ));
+    // Ground is now handled by TerrainPlugin (terrain.rs)
+    // See terrain.rs for procedural heightmap generation
 
     // Directional light (sun)
     commands.spawn((
@@ -85,7 +43,7 @@ pub fn setup_scene(
     let initial_distance = 200.0;
     let initial_yaw = 0.0;
     let initial_pitch = -0.5; // Looking down at battlefield
-    
+
     commands.spawn((
         Camera3d::default(),
         Camera::default(),
@@ -136,6 +94,7 @@ pub fn spawn_army_with_squads(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut squad_manager: ResMut<SquadManager>,
+    heightmap: Res<TerrainHeightmap>,
 ) {
     // Create battle droid mesh (simple humanoid shape using cubes)
     let droid_mesh = create_battle_droid_mesh(&mut meshes);
@@ -222,9 +181,10 @@ pub fn spawn_army_with_squads(
         Vec3::new(1.0, 0.0, 0.0), // Facing right
         squads_per_team,
         squads_per_row,
+        &heightmap,
     );
-    
-    // Spawn Team B squads (right side, facing left) 
+
+    // Spawn Team B squads (right side, facing left)
     spawn_team_squads(
         &mut commands,
         &mut squad_manager,
@@ -240,6 +200,7 @@ pub fn spawn_army_with_squads(
         Vec3::new(-1.0, 0.0, 0.0), // Facing left
         squads_per_team,
         squads_per_row,
+        &heightmap,
     );
     
     info!("Spawned {} squads per team ({} droids per squad, {} total units)", 
@@ -261,6 +222,7 @@ fn spawn_team_squads(
     facing_direction: Vec3,
     total_squads: usize,
     squads_per_row: usize,
+    heightmap: &TerrainHeightmap,
 ) {
     for squad_index in 0..total_squads {
         let squad_row = squad_index / squads_per_row;
@@ -321,9 +283,12 @@ fn spawn_team_squads(
                 col,
                 facing_direction,
             );
+            // Calculate XZ position first, then sample terrain height
+            let xz_position = squad_center + formation_offset;
+            let terrain_height = heightmap.sample_height(xz_position.x, xz_position.z);
             // Offset Y to place feet at ground level (mesh feet are at Y=-1.6, scaled by 0.8 = -1.28)
-            // Ground is at Y=-1.0, so spawn at Y=0.3 to have feet slightly above ground
-            let unit_position = squad_center + formation_offset + Vec3::new(0.0, 0.3, 0.0);
+            // Add 0.3 visual offset above terrain height
+            let unit_position = Vec3::new(xz_position.x, terrain_height + 0.3, xz_position.z);
             
             // Add some randomness to march timing but reduce speed variance
             let march_offset = rng.gen_range(0.0..2.0 * PI);
