@@ -708,14 +708,15 @@ pub fn update_squad_path_arrows(
             let target_pos = squad.target_position;
 
             // Check if squad is moving (target is significantly different from current)
+            // Use threshold of 5.0 to match formation system's arrival detection
             let distance = Vec3::new(
                 target_pos.x - current_pos.x,
                 0.0,
                 target_pos.z - current_pos.z,
             ).length();
 
-            if distance > 2.0 {
-                // Squad is moving toward a target
+            if distance > 5.0 {
+                // Squad is still moving toward a target
                 squads_needing_arrows.push((squad_id, current_pos, target_pos));
             }
         }
@@ -734,7 +735,7 @@ pub fn update_squad_path_arrows(
         let direction = Vec3::new(target_pos.x - current_pos.x, 0.0, target_pos.z - current_pos.z);
         let length = direction.length();
 
-        if length < 2.0 {
+        if length < 5.0 {
             continue;
         }
 
