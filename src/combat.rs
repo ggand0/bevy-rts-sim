@@ -2,6 +2,7 @@ use bevy::prelude::*;
 use rand::Rng;
 use crate::types::*;
 use crate::constants::*;
+use crate::terrain::TerrainHeightmap;
 
 // Helper function to calculate proper laser orientation
 pub fn calculate_laser_orientation(
@@ -171,25 +172,36 @@ pub fn update_projectiles(
     mut commands: Commands,
     mut projectile_query: Query<(Entity, &mut Transform, &mut LaserProjectile)>,
     camera_query: Query<&Transform, (With<RtsCamera>, Without<LaserProjectile>)>,
+    heightmap: Option<Res<TerrainHeightmap>>,
 ) {
     let delta_time = time.delta_secs();
 
     // Get camera position for billboarding
     let camera_transform = camera_query.get_single().ok();
-    
+
     for (entity, mut transform, mut laser) in projectile_query.iter_mut() {
         // Update lifetime
         laser.lifetime -= delta_time;
-        
+
         // Despawn if lifetime expired
         if laser.lifetime <= 0.0 {
             commands.entity(entity).despawn();
             continue;
         }
-        
+
         // Move projectile
         transform.translation += laser.velocity * delta_time;
-        
+
+        // Check terrain collision
+        if let Some(ref hm) = heightmap {
+            let terrain_y = hm.sample_height(transform.translation.x, transform.translation.z);
+            if transform.translation.y < terrain_y {
+                // Laser hit terrain - despawn it
+                commands.entity(entity).despawn();
+                continue;
+            }
+        }
+
         // Update orientation using our improved calculation
         if let Some(cam_transform) = camera_transform {
             transform.rotation = calculate_laser_orientation(

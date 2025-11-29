@@ -287,8 +287,7 @@ fn spawn_team_squads(
             let xz_position = squad_center + formation_offset;
             let terrain_height = heightmap.sample_height(xz_position.x, xz_position.z);
             // Offset Y to place feet at ground level (mesh feet are at Y=-1.6, scaled by 0.8 = -1.28)
-            // Add 0.3 visual offset above terrain height
-            let unit_position = Vec3::new(xz_position.x, terrain_height + 0.3, xz_position.z);
+            let unit_position = Vec3::new(xz_position.x, terrain_height + 1.28, xz_position.z);
             
             // Add some randomness to march timing but reduce speed variance
             let march_offset = rng.gen_range(0.0..2.0 * PI);

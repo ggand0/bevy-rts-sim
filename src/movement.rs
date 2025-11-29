@@ -3,10 +3,15 @@ use bevy::prelude::*;
 use bevy::input::mouse::{MouseScrollUnit, MouseWheel, MouseMotion};
 use crate::types::*;
 use crate::constants::*;
+use crate::terrain::TerrainHeightmap;
+
+/// Unit Y offset above terrain (mesh feet are at Y=-1.6, scaled by 0.8 = -1.28)
+const UNIT_TERRAIN_OFFSET: f32 = 1.28;
 
 pub fn animate_march(
     time: Res<Time>,
     squad_manager: Res<SquadManager>,
+    heightmap: Option<Res<TerrainHeightmap>>,
     mut query: Query<(&mut BattleDroid, &mut Transform, &SquadMember)>,
 ) {
     let time_seconds = time.elapsed_secs();
@@ -15,13 +20,19 @@ pub fn animate_march(
     for (droid, mut transform, squad_member) in query.iter_mut() {
         // Only move if explicitly commanded (no automatic cycling)
         let should_move = if droid.returning_to_spawn {
-            // Moving back to spawn position
-            let distance_to_spawn = transform.translation.distance(droid.spawn_position);
-            distance_to_spawn > 1.0
+            // Moving back to spawn position (use horizontal distance)
+            let dx = transform.translation.x - droid.spawn_position.x;
+            let dz = transform.translation.z - droid.spawn_position.z;
+            (dx * dx + dz * dz).sqrt() > 1.0
         } else {
             // Moving to target position (only if target is different from spawn)
-            let distance_to_target = transform.translation.distance(droid.target_position);
-            distance_to_target > 1.0 && droid.target_position != droid.spawn_position
+            let dx = transform.translation.x - droid.target_position.x;
+            let dz = transform.translation.z - droid.target_position.z;
+            let distance_to_target = (dx * dx + dz * dz).sqrt();
+            let dx_spawn = droid.target_position.x - droid.spawn_position.x;
+            let dz_spawn = droid.target_position.z - droid.spawn_position.z;
+            let target_spawn_dist = (dx_spawn * dx_spawn + dz_spawn * dz_spawn).sqrt();
+            distance_to_target > 1.0 && target_spawn_dist > 0.1
         };
 
         if should_move {
@@ -31,25 +42,33 @@ pub fn animate_march(
                 droid.target_position
             };
 
-            // Calculate direction to target
-            let direction = (current_target - transform.translation).normalize_or_zero();
+            // Calculate horizontal direction to target (ignore Y for direction)
+            let horizontal_dir = Vec3::new(
+                current_target.x - transform.translation.x,
+                0.0,
+                current_target.z - transform.translation.z,
+            ).normalize_or_zero();
 
-            // Move towards target
-            let movement = direction * MARCH_SPEED * delta_time * droid.march_speed;
-            transform.translation += movement;
+            // Move horizontally towards target
+            let movement = horizontal_dir * MARCH_SPEED * delta_time * droid.march_speed;
+            transform.translation.x += movement.x;
+            transform.translation.z += movement.z;
+
+            // Sample terrain height at new position and set Y accordingly
+            if let Some(ref hm) = heightmap {
+                let terrain_y = hm.sample_height(transform.translation.x, transform.translation.z);
+                transform.translation.y = terrain_y + UNIT_TERRAIN_OFFSET;
+            }
 
             // Add marching animation - subtle bobbing motion
             let march_cycle = (time_seconds * droid.march_speed * 4.0 + droid.march_offset).sin();
             let bob_height = march_cycle * 0.008; // Very subtle up/down movement
             transform.translation.y += bob_height;
 
-            // Prevent units from sinking below their spawn height
-            transform.translation.y = transform.translation.y.max(droid.spawn_position.y);
-
             // Slight rotation for more natural look and face movement direction
             let sway = (time_seconds * droid.march_speed * 2.0 + droid.march_offset).sin() * 0.01;
-            if direction.length() > 0.1 {
-                let forward_rotation = Quat::from_rotation_y(direction.x.atan2(direction.z));
+            if horizontal_dir.length() > 0.1 {
+                let forward_rotation = Quat::from_rotation_y(horizontal_dir.x.atan2(horizontal_dir.z));
                 transform.rotation = forward_rotation * Quat::from_rotation_y(sway);
             }
         } else {

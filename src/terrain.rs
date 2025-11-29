@@ -390,10 +390,10 @@ fn terrain_map_switching(
                         base_height: 0.0,
                     });
 
-                    // Create terrain material (brownish ground color)
+                    // Create terrain material (Mars-like dark reddish-brown)
                     let terrain_material = materials.add(StandardMaterial {
-                        base_color: Color::srgb(0.45, 0.35, 0.25),
-                        perceptual_roughness: 0.9,
+                        base_color: Color::srgb(0.35, 0.18, 0.12),
+                        perceptual_roughness: 0.95,
                         metallic: 0.0,
                         ..default()
                     });
@@ -417,16 +417,29 @@ fn terrain_map_switching(
     }
 }
 
-/// System to reposition units and towers when map is switched
+/// Unit Y offset above terrain (mesh feet are at Y=-1.6, scaled by 0.8 = -1.28)
+/// For flat ground at Y=-1.0, this gives spawn at Y=0.28
+/// For procedural terrain at Y=0+, this gives spawn at terrain_y + 1.28
+const UNIT_TERRAIN_OFFSET: f32 = 1.28;
+
+/// System to reposition units, towers, and reset game state when map is switched
 fn handle_map_switch_units(
     mut map_switch_events: EventReader<MapSwitchEvent>,
     heightmap: Res<TerrainHeightmap>,
     mut droid_query: Query<(&mut Transform, &mut BattleDroid, &SquadMember)>,
-    mut tower_query: Query<&mut Transform, (With<UplinkTower>, Without<BattleDroid>)>,
+    mut tower_query: Query<(&mut Transform, &mut Health), (With<UplinkTower>, Without<BattleDroid>)>,
     mut squad_manager: ResMut<SquadManager>,
+    mut game_state: ResMut<GameState>,
 ) {
     for event in map_switch_events.read() {
         info!("Repositioning units for map: {:?}", event.new_map);
+
+        // Reset game state
+        game_state.team_a_tower_destroyed = false;
+        game_state.team_b_tower_destroyed = false;
+        game_state.game_ended = false;
+        game_state.winner = None;
+        info!("Game state reset");
 
         // Reposition all units to terrain height
         for (mut transform, mut droid, _squad_member) in droid_query.iter_mut() {
@@ -434,8 +447,8 @@ fn handle_map_switch_units(
             let z = transform.translation.z;
             let terrain_y = heightmap.sample_height(x, z);
 
-            // Update unit position
-            let new_y = terrain_y + 0.3; // Visual offset
+            // Update unit position with proper offset for feet placement
+            let new_y = terrain_y + UNIT_TERRAIN_OFFSET;
             transform.translation.y = new_y;
 
             // Update spawn position so retreat works correctly
@@ -446,18 +459,21 @@ fn handle_map_switch_units(
         // Update squad center positions
         for (_squad_id, squad) in squad_manager.squads.iter_mut() {
             let terrain_y = heightmap.sample_height(squad.center_position.x, squad.center_position.z);
-            squad.center_position.y = terrain_y + 0.3;
-            squad.target_position.y = terrain_y + 0.3;
+            squad.center_position.y = terrain_y + UNIT_TERRAIN_OFFSET;
+            squad.target_position.y = terrain_y + UNIT_TERRAIN_OFFSET;
         }
 
-        // Reposition towers to terrain height
-        for mut transform in tower_query.iter_mut() {
+        // Reposition towers and reset health
+        for (mut transform, mut health) in tower_query.iter_mut() {
             let x = transform.translation.x;
             let z = transform.translation.z;
             let terrain_y = heightmap.sample_height(x, z);
             transform.translation.y = terrain_y;
+
+            // Reset tower health
+            health.current = health.max;
         }
 
-        info!("Units and towers repositioned to terrain height");
+        info!("Units and towers repositioned, game state reset");
     }
 }
