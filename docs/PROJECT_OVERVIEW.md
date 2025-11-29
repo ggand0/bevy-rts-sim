@@ -1,13 +1,13 @@
 # Bevy Mass Render - RTS Game Project Overview
 
-**Last Updated:** November 12, 2025  
+**Last Updated:** November 29, 2025  
 **Bevy Version:** 0.14.2  
 **Rust Version:** 1.90.0  
 **Platform:** Linux (tested on Ubuntu with AMD Radeon RX 7900 XTX)
 
 ---
 
-## 🎮 Game Concept
+## Game Concept
 
 A 3D real-time strategy (RTS) game inspired by **Star Wars: Empire at War**, featuring massive-scale battles with thousands of units. The game simulates epic confrontations between two armies of battle droids fighting to destroy each other's command uplink towers.
 
@@ -17,10 +17,11 @@ A 3D real-time strategy (RTS) game inspired by **Star Wars: Empire at War**, fea
 - **Tower Cascade System:** When a tower is destroyed, all friendly units within range explode dramatically
 - **Formation Combat:** Squad-based movement with tactical formations
 - **Real-time Combat:** Automatic targeting and projectile-based weapon systems
+- **RTS Controls:** Click/box selection, group formations, orientation control
 
 ---
 
-## 🏗️ Architecture Overview
+## Architecture Overview
 
 ### Module Structure
 
@@ -34,16 +35,40 @@ src/
 ├── movement.rs          # Unit animation, camera controls
 ├── combat.rs            # Targeting, firing, collision detection
 ├── commander.rs         # Commander promotion and visual markers
-├── objective.rs         # Tower mechanics, destruction cascade
-└── explosion_shader.rs  # Sprite sheet explosion system
+├── objective.rs         # Tower mechanics, destruction cascade, debug systems
+├── explosion_system.rs  # Explosion orchestration (pending explosions, effects)
+├── explosion_shader.rs  # Legacy flipbook explosion (unit deaths)
+├── particles.rs         # Particle system plugin (debris, sparks)
+├── wfx_materials.rs     # Custom materials (smoke scroll, additive, etc.)
+├── wfx_spawn.rs         # War FX explosion spawning and animation
+└── selection/           # Selection and grouping system
+    ├── mod.rs           # Module exports, system registration
+    ├── state.rs         # SelectionState resource, marker components
+    ├── groups.rs        # Squad grouping logic, formation preservation
+    ├── input.rs         # Click and box selection input handling
+    ├── movement.rs      # Move commands with orientation drag
+    ├── obb.rs           # Oriented Bounding Box calculations
+    ├── utils.rs         # Shared utility functions
+    └── visuals/         # Visual feedback systems
+        ├── mod.rs       # Re-exports for clean API
+        ├── selection.rs # Selection rings, box selection visuals
+        ├── movement.rs  # Move indicators, path arrows
+        └── group.rs     # Group orientation markers, OBB debug
 
 assets/
 ├── shaders/
 │   └── explosion.wgsl   # Custom shader for flipbook animation
 ├── textures/
-│   └── Explosion02HD_5x5.tga  # 5x5 sprite sheet (25 frames)
+│   ├── Explosion02HD_5x5.tga      # 5x5 sprite sheet (unit deaths)
+│   └── wfx_explosivesmoke_big/    # War FX textures (tower explosions)
+│       ├── Center_glow.tga        # Center glow billboard
+│       ├── FireFlameB_00.tga      # Flame animation frames
+│       ├── smoke.tga              # Smoke particles
+│       ├── GlowCircle.tga         # Sparkle particles
+│       └── SmallDots.tga          # Dot particles
 └── audio/
-    └── sfx/             # Laser sound effects
+    ├── sfx/                       # Laser sound effects
+    └── explosion.ogg              # Explosion sound
 ```
 
 ### Key Systems (Update Order)
@@ -69,26 +94,49 @@ assets/
    - `update_projectiles` - Moves projectiles
    - `collision_detection_system` - Detects hits and applies damage
 
-4. **Objective System**
+4. **Objective & Explosion Systems**
    - `tower_targeting_system` - Units target towers when in range
    - `tower_destruction_system` - Handles tower death and cascade
-   - `pending_explosion_system` - Manages delayed explosions
-   - `explosion_effect_system` - Updates visual effects
+   - `pending_explosion_system` - Manages delayed explosions (from explosion_system.rs)
+   - `explosion_effect_system` - Updates visual effects (from explosion_system.rs)
    - `win_condition_system` - Checks for game end
    - `update_objective_ui_system` - Updates tower health UI
-   - `debug_explosion_hotkey_system` - Debug controls (E key)
+   - `update_debug_mode_ui` - Shows/hides debug mode indicator
+   - `debug_explosion_hotkey_system` - Debug controls (E key triggers tower death)
+   - `debug_warfx_test_system` - WFX debug spawning (0 to toggle, then 1-6)
 
-5. **Explosion System** (from ExplosionShaderPlugin)
+5. **Selection & Grouping Systems**
+   - `selection_input_system` - Mouse click selection
+   - `box_selection_system` - Drag-to-select multiple squads
+   - `move_command_system` - Right-click move orders with orientation
+   - `group_selection_system` - G/U key grouping controls
+   - `squad_rotation_system` - Smooth facing rotation
+   - `selection_visual_system` - Cyan/yellow selection rings
+   - `box_selection_visual_system` - Box selection rectangle
+   - `orientation_arrow_system` - Green arrow during right-click drag
+   - `update_squad_path_arrows` - Persistent path arrows for moving squads
+   - `move_visual_cleanup_system` - Fade-out for move indicators
+   - `update_group_orientation_markers` - Yellow triangle for group facing
+   - `update_group_bounding_box_debug` - Magenta OBB wireframe (optional)
+
+6. **War FX Explosion System** (from wfx_spawn.rs)
+   - `update_warfx_explosions` - Manages combined explosion lifetimes
+   - `animate_explosion_flames` - Animates flame particles
+   - `animate_warfx_billboards` - Animates center glow billboards
+   - `animate_warfx_smoke_billboards` - Animates smoke particles
+   - `animate_explosion_billboards` - Animates explosion billboards
+   - `animate_smoke_only_billboards` - Animates lingering smoke
+   - `animate_glow_sparkles` - Animates sparkle particles with gravity
+
+7. **Legacy Explosion System** (from ExplosionShaderPlugin)
    - `setup_explosion_assets` - Loads sprite sheet and creates materials
    - `update_explosion_timers` - Manages explosion lifetimes
-   - `animate_sprite_explosions` - Animates StandardMaterial explosions
-   - `animate_custom_shader_explosions` - Animates custom shader explosions
+   - `animate_custom_shader_explosions` - Animates flipbook explosions (unit deaths)
    - `cleanup_finished_explosions` - Removes expired explosions
-   - `debug_test_explosions` - Debug spawning (Y/U/I keys)
 
 ---
 
-## 📊 Game Configuration (constants.rs)
+## Game Configuration (constants.rs)
 
 ### Army & Formation
 - `ARMY_SIZE_PER_TEAM`: 5,000 units per team
@@ -135,9 +183,20 @@ assets/
 - `GRID_CELL_SIZE`: 10.0 units per cell
 - `GRID_SIZE`: 100 cells per side (covers 1000×1000 area)
 
+### Selection & Grouping
+- `SELECTION_CLICK_RADIUS`: 15.0 units (generous for usability)
+- `SELECTION_RING_INNER_RADIUS`: 8.0 units
+- `SELECTION_RING_OUTER_RADIUS`: 10.0 units
+- `BOX_SELECT_DRAG_THRESHOLD`: 8.0 pixels
+- `MOVE_INDICATOR_RADIUS`: 3.0 units
+- `MOVE_INDICATOR_LIFETIME`: 1.5 seconds
+- `SQUAD_ROTATION_SPEED`: 2.0 radians/sec
+- `MULTI_SQUAD_SPACING`: 25.0 units
+- `SQUAD_ARRIVAL_THRESHOLD`: 5.0 units (arrival detection)
+
 ---
 
-## 🎨 Visual Design
+## Visual Design
 
 ### Unit Design - Battle Droids
 Procedurally generated using simple boxes:
@@ -162,11 +221,28 @@ Procedurally generated futuristic data towers:
 - **Team Colors:** Distinct materials for Team A vs Team B
 
 ### Explosion Effects
-See `EXPLOSION_SYSTEM.md` for detailed information.
+
+**Dual System Approach:**
+- **Unit Deaths:** Legacy flipbook system (5×5 sprite sheet, 25 frames)
+- **Tower Explosions:** War FX particle system (multi-emitter combined effect)
+
+**War FX Explosion Components** (from Unity Asset Store - War FX):
+1. **Center Glow:** Bright orange/yellow expanding sphere (2 billboards)
+2. **Flame Particles:** 57 fire/smoke particles with spherical emission
+3. **Smoke Emitter:** Lingering smoke trail (6 particles, delayed start)
+4. **Glow Sparkles:** 25 fast-moving embers with gravity
+5. **Dot Sparkles:** 75 + 15 small particles (falling + floating)
+
+**Custom Materials:**
+- `SmokeScrollMaterial`: Scrolling UV animation for smoke
+- `AdditiveMaterial`: Additive blending for glow/fire
+- `SmokeOnlyMaterial`: Alpha-blended smoke
+
+**Scale Parameter:** Tower explosions use 4.0× scale for dramatic impact
 
 ---
 
-## 🎮 Controls
+## Controls
 
 ### Camera Controls (RTS-Style)
 - **WASD:** Pan camera horizontally
@@ -174,26 +250,39 @@ See `EXPLOSION_SYSTEM.md` for detailed information.
 - **Scroll Wheel:** Zoom in/out
 - **Focus:** Auto-centers on battlefield
 
+### Selection & Movement (RTS Controls)
+- **Left-Click:** Select squad at cursor (15-unit radius, player team only)
+- **Shift+Click:** Add/remove squad from selection
+- **Left-Click Drag:** Box selection (8-pixel threshold before activating)
+- **Right-Click:** Move selected squads to cursor position
+- **Right-Click Drag:** Move + set orientation (CoH1-style)
+- **G Key:** Group 2+ selected squads with formation preservation
+- **U Key:** Ungroup selected squads
+
 ### Combat Commands
 - **F Key:** Volley Fire - coordinated attack from all units
-- **G Key:** Advance formation
+- **T Key:** Advance formation (changed from G to avoid grouping conflict)
 - **H Key:** Retreat formation
 
 ### Formation Commands
 - **Q Key:** Rectangular formation
 - **E Key:** Line formation
 - **R Key:** Box formation
-- **T Key:** Wedge formation
 
 ### Debug Controls
-- **E Key:** Trigger Team B tower destruction (for testing explosions)
-- **Y Key:** Spawn test animated sprite explosion (StandardMaterial)
-- **U Key:** Spawn test custom shader explosion (primary method)
-- **I Key:** Spawn test solid color explosion (positioning test)
+- **E Key:** Trigger Team B tower destruction (cascade explosion test)
+- **0 Key:** Toggle explosion debug mode (shows UI indicator)
+  - When active, keys 1-6 spawn individual WFX emitters:
+  - **1:** Center glow only
+  - **2:** Flame particles only
+  - **3:** Smoke emitter only
+  - **4:** Glow sparkles only
+  - **5:** Combined explosion (all emitters)
+  - **6:** Dot sparkles (falling + floating)
 
 ---
 
-## 🔧 Technical Details
+## Technical Details
 
 ### Performance Optimizations
 1. **Spatial Partitioning:** 10×10 grid system for efficient collision detection
@@ -206,9 +295,13 @@ See `EXPLOSION_SYSTEM.md` for detailed information.
 ### Rendering
 - **Backend:** Vulkan (with AMD GPU workarounds required)
 - **Materials:** PBR StandardMaterial for units/towers
-- **Custom Shaders:** Used for explosion sprite sheet animation
-- **Billboard Quads:** Explosions always face camera
-- **Shadow Control:** Units cast/receive shadows; explosions do not
+- **Custom Shaders:**
+  - Flipbook animation (legacy unit explosions)
+  - Scrolling UV (smoke particles)
+  - Additive blending (glow/fire)
+- **Billboard Quads:** All particles face camera using custom Transform calculations
+- **Shadow Control:** Units cast/receive shadows; particles do not
+- **Material Plugins:** Custom material plugins for specialized effects (smoke, additive, etc.)
 
 ### AMD GPU Compatibility
 
@@ -221,71 +314,86 @@ This works around segfault issues with AMD drivers on Linux.
 
 ---
 
-## 🐛 Known Issues & Limitations
+## Known Issues & Limitations
 
 ### Current Limitations
-1. **Static Explosions:** Billboarded sprite quads, no 3D volume
-2. **No Particle Systems:** Pure sprite sheet approach (planned enhancement)
-3. **Limited Audio:** Only laser sound effects, no explosion sounds yet
-4. **No Unit Selection:** No RTS-style unit selection/commands (planned)
-5. **Fixed Formations:** Formations are preset, not customizable in-game
-6. **No Pathfinding:** Units march in straight lines, no obstacle avoidance
-7. **Simple AI:** Units auto-target nearest enemy, no tactics
+1. **Dual Explosion Systems:** Unit deaths use legacy flipbook; towers use War FX (intentional)
+2. **2D Particles:** Billboard quads, no 3D volumetric effects
+3. **Limited Audio:** Explosion sounds only on tower destruction
+4. **Fixed Formations:** Formations are preset, not customizable in-game
+5. **No Pathfinding:** Units march in straight lines, no obstacle avoidance
+6. **Simple AI:** Units auto-target nearest enemy, no tactics
 
 ### Known Bugs
-- ✅ Fixed: Explosion shadows (added NotShadowCaster/NotShadowReceiver)
-- ✅ Fixed: Overlapping explosions (disabled phase transitions)
-- ✅ Fixed: White quad explosions (updated to use sprite sheet)
-- ✅ Fixed: Entity despawn panic (added safe entity checks)
-- ⚠️ In Progress: Explosion animation not playing properly
+- Fixed: Explosion shadows (added NotShadowCaster/NotShadowReceiver)
+- Fixed: Overlapping explosions (disabled phase transitions)
+- Fixed: White quad explosions (updated to use sprite sheet)
+- Fixed: Entity despawn panic (added safe entity checks)
+- Fixed: Glow hard-cut (proper fade-out curve)
+- Fixed: Explosion lag spikes (frame limit + quantized timing)
 
 ---
 
-## 🎯 Design Goals
+## Design Goals
 
 ### Achieved
-- ✅ Massive unit counts (10,000 concurrent units)
-- ✅ Performant rendering and simulation
-- ✅ Squad-based formation system
-- ✅ Objective-based gameplay (tower destruction)
-- ✅ Dramatic cascade explosion system
-- ✅ RTS-style camera controls
-- ✅ Procedural unit and tower generation
-- ✅ Sprite sheet explosion system
+- Massive unit counts (10,000 concurrent units)
+- Performant rendering and simulation
+- Squad-based formation system
+- Objective-based gameplay (tower destruction)
+- Dramatic cascade explosion system
+- RTS-style camera controls
+- Procedural unit and tower generation
+- War FX particle system (multi-emitter explosions)
+- Custom material system (scrolling smoke, additive glow)
+- Explosion audio integration
+- Billboard particle rendering
+- Squad selection and grouping system
+- Total War-style formation preservation
+- CoH1-style orientation control
+- Visual feedback (selection rings, path arrows, group markers)
 
 ### Planned Enhancements
-- 🔲 GPU-based particle systems for debris/sparks
-- 🔲 Explosion audio integration
-- 🔲 Screen-space distortion effects (heat waves)
-- 🔲 Camera shake on explosions
-- 🔲 Unit ragdoll/death animations
-- 🔲 Physics-based debris
-- 🔲 LOD system for distant units
-- 🔲 Explosion pooling for performance
-- 🔲 More formation types
-- 🔲 Unit selection and manual commands
-- 🔲 Pathfinding system
-- 🔲 Tactical AI behaviors
+- Screen-space distortion effects (heat waves)
+- Camera shake on explosions
+- Unit ragdoll/death animations
+- Physics-based debris
+- LOD system for distant units
+- Control groups (number keys 1-9 for saved selections)
+- Formation templates (line, column, wedge, box)
+- Pathfinding system
+- Tactical AI behaviors
+- Minimap with selection indicators
+- Merge dual explosion systems into unified approach
 
 ---
 
-## 📚 Project History
+## Project History
 
 ### Evolution of Explosion System
 1. **Procedural Approach (v1):** Complex noise-based shaders - "super ugly", abandoned
 2. **Smoke-Only Sprites (v2):** Sprite sheet with normal maps - "didn't work well"
 3. **8×8 Flipbook (v3):** Initial sprite sheet approach with 64 frames
-4. **5×5 Flipbook (v4, Current):** Self-contained explosion with 25 frames, all phases baked in
+4. **5×5 Flipbook (v4):** Self-contained explosion with 25 frames, all phases baked in
+5. **War FX Integration (v5, Current):** Multi-emitter particle system for towers, flipbook for units
 
 ### Major Milestones
 - **Initial Development:** 10,000 unit simulation with basic combat
 - **June 2025:** Implemented sprite sheet explosion system
 - **June 15, 2025:** Fixed shadow artifacts and overlapping explosions
 - **November 12, 2025:** Updated to Bevy 0.14.2, fixed AMD GPU compatibility
+- **November 29, 2025:**
+  - War FX particle system integration (6 emitter types)
+  - Custom material system (smoke scroll, additive blending)
+  - Module refactoring (explosion_system.rs extraction)
+  - Nested debug shortcuts with UI indicator
+  - Selection and grouping system (Total War-style formation preservation)
+  - Visual feedback overhaul (rings, arrows, orientation markers)
+  - Oriented Bounding Box (OBB) implementation
 
 ---
 
-## 🛠️ Build & Run
+## Build & Run
 
 ### Development Build
 ```bash
@@ -316,7 +424,7 @@ codegen-units = 1
 
 ---
 
-## 📝 Code Style & Conventions
+## Code Style & Conventions
 
 ### Naming Conventions
 - **Components:** PascalCase (e.g., `BattleDroid`, `UplinkTower`)
@@ -342,26 +450,40 @@ codegen-units = 1
 
 ---
 
-## 🤝 For Future AI Agents
+## For Future AI Agents
 
 ### Key Files to Understand
 1. **types.rs** - Core data structures, understand these first
 2. **constants.rs** - All tunable parameters
 3. **main.rs** - System registration order (important!)
-4. **explosion_shader.rs** - See EXPLOSION_SYSTEM.md for details
+4. **selection/** - Selection and grouping system (1,716 lines across submodules)
+5. **wfx_spawn.rs** - War FX explosion system (tower explosions)
+6. **explosion_system.rs** - Explosion orchestration (pending, timing)
+7. **explosion_shader.rs** - Legacy flipbook system (unit deaths)
 
 ### Common Tasks
 - **Adding new unit types:** Modify `setup.rs`, add to `types.rs`
 - **Tweaking gameplay:** Edit `constants.rs` values
 - **New formations:** Add to `formation.rs`
 - **Combat changes:** Modify `combat.rs` systems
-- **Visual effects:** Update `explosion_shader.rs` or materials
+- **Selection/grouping changes:**
+  - Input handling: `selection/input.rs`
+  - Move commands: `selection/movement.rs`
+  - Visual feedback: `selection/visuals/*.rs`
+  - Formation preservation: `selection/groups.rs`
+- **Visual effects:**
+  - New particles: Add to `wfx_spawn.rs`
+  - New materials: Add to `wfx_materials.rs`
+  - Explosion timing: Modify `explosion_system.rs`
 
 ### Debugging Tips
 - Use `info!()` macros for logging (already extensively used)
 - Check entity counts with queries in debug systems
 - Monitor FPS with bevy's diagnostic plugin (already integrated)
-- Use the debug keys (E, Y, U, I) to test specific features
+- Use the debug keys:
+  - **E:** Trigger tower destruction cascade
+  - **0:** Toggle explosion debug mode
+  - **1-6:** Spawn individual WFX emitters (when debug mode active)
 
 ### Performance Considerations
 - This project pushes Bevy's limits with 10,000+ entities
@@ -371,7 +493,7 @@ codegen-units = 1
 
 ---
 
-## 📞 Support & Resources
+## Support & Resources
 
 ### Bevy Resources
 - **Bevy Documentation:** https://bevyengine.org/learn/
@@ -380,6 +502,7 @@ codegen-units = 1
 
 ### Project-Specific Documentation
 - **EXPLOSION_SYSTEM.md** - Detailed explosion implementation
+- **SELECTION_GROUPING.md** - Selection and grouping system details
 - **devlogs/** - Historical development notes and fixes
 
 ---

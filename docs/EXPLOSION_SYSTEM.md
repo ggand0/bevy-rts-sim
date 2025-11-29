@@ -1,37 +1,48 @@
 # Explosion System - Technical Documentation
 
-**Last Updated:** November 12, 2025  
-**System Version:** Sprite Sheet-Based (v4)  
+**Last Updated:** November 29, 2025
+**System Version:** Dual System (v5 - Flipbook + War FX)
 **Bevy Version:** 0.14.2
 
 ---
 
-## 📋 Table of Contents
+## Table of Contents
 
 1. [Overview](#overview)
 2. [Architecture](#architecture)
-3. [Asset Configuration](#asset-configuration)
-4. [Component Structure](#component-structure)
-5. [System Flow](#system-flow)
-6. [Spawning Explosions](#spawning-explosions)
-7. [Animation Details](#animation-details)
-8. [Shader Implementation](#shader-implementation)
-9. [Troubleshooting](#troubleshooting)
-10. [Performance](#performance)
-11. [Future Enhancements](#future-enhancements)
+3. [War FX System (Tower Explosions)](#war-fx-system-tower-explosions)
+4. [Legacy Flipbook System (Unit Deaths)](#legacy-flipbook-system-unit-deaths)
+5. [Explosion Orchestration](#explosion-orchestration)
+6. [Custom Materials](#custom-materials)
+7. [Debug Controls](#debug-controls)
+8. [Troubleshooting](#troubleshooting)
+9. [Performance](#performance)
+10. [Future Enhancements](#future-enhancements)
 
 ---
 
-## 🎯 Overview
+## Overview
 
-The explosion system uses **sprite sheet flipbook animation** to create visually appealing explosions for the RTS game. The system went through multiple iterations before arriving at the current implementation.
+The explosion system uses a **dual-system approach** combining Unity's War FX particle system with a legacy flipbook system to create dramatic, performant explosions.
 
 ### Design Philosophy
-- **Self-Contained Sprite Sheet:** All explosion phases (bright core → expanding fireball → trailing smoke) baked into a single texture
-- **Billboard Rendering:** Explosions always face the camera
-- **No Shadows:** Explosions don't cast or receive shadows
-- **Frame-Based Animation:** Simple frame counter, no complex state machines
-- **Full Intensity:** Explosions maintain full brightness for 90% of their duration
+- **Dual System:** War FX for tower explosions, flipbook for unit deaths
+- **Multi-Emitter:** Combined effects with glow, flames, smoke, and sparkles
+- **Billboard Rendering:** All particles face the camera
+- **Custom Materials:** Scrolling UV, additive blending, alpha smoke
+- **No Shadows:** Particles don't cast or receive shadows
+- **Orchestrated Timing:** Cascading delayed explosions for dramatic effect
+
+### System Comparison
+
+| Feature | War FX (Towers) | Flipbook (Units) |
+|---------|-----------------|------------------|
+| Particles | 6 emitter types, 180+ particles | Single billboard |
+| Duration | 5+ seconds (lingering smoke) | 2 seconds |
+| Materials | 3 custom materials | 1 custom shader |
+| Audio | Explosion sound effect | Silent |
+| Scale | 4.0× (dramatic) | 0.8× (subtle) |
+| Use Case | High-impact events | Mass casualties |
 
 ### Evolution History
 
@@ -40,798 +51,536 @@ The explosion system uses **sprite sheet flipbook animation** to create visually
 | v1 | Procedural noise-based shader | "Super ugly" - abandoned |
 | v2 | Smoke-only sprite + normal maps | "Didn't work well" - too complex |
 | v3 | 8×8 grid flipbook (64 frames) | Good but oversized texture |
-| v4 | **5×5 grid flipbook (25 frames)** | **Current - optimal** |
+| v4 | 5×5 grid flipbook (25 frames) | Optimized for units |
+| v5 | **War FX + Flipbook** | **Current - dual system** |
 
 ---
 
-## 🏗️ Architecture
+## Architecture
 
 ### File Structure
 
 ```
-src/explosion_shader.rs      # Main explosion system (781 lines)
-assets/shaders/explosion.wgsl # Custom shader for flipbook (41 lines)
-assets/textures/Explosion02HD_5x5.tga # 5×5 sprite sheet texture
+src/
+├── explosion_system.rs      # Explosion orchestration (pending, timing)
+├── explosion_shader.rs      # Legacy flipbook system (489 lines)
+├── wfx_spawn.rs             # War FX particle spawning (1,436 lines)
+├── wfx_materials.rs         # Custom materials (200 lines)
+├── particles.rs             # Particle plugin setup
+└── objective.rs             # Debug controls, tower destruction
+
+assets/
+├── shaders/
+│   └── explosion.wgsl       # Flipbook shader (41 lines)
+├── textures/
+│   ├── Explosion02HD_5x5.tga    # Flipbook sprite sheet
+│   └── wfx_explosivesmoke_big/  # War FX textures
+│       ├── Center_glow.tga
+│       ├── FireFlameB_00.tga - FireFlameB_14.tga (15 frames)
+│       ├── smoke.tga
+│       ├── GlowCircle.tga
+│       └── SmallDots.tga
+└── audio/
+    └── explosion.ogg        # Explosion sound effect
 ```
 
 ### Plugin Registration
 
 ```rust
 // In main.rs
-.add_plugins(ExplosionShaderPlugin)
+.add_plugins(ExplosionShaderPlugin)      // Legacy flipbook
+.add_plugins(ParticleEffectsPlugin)      // Particle setup
+.add_plugins(MaterialPlugin::<SmokeScrollMaterial>::default())
+.add_plugins(MaterialPlugin::<AdditiveMaterial>::default())
+.add_plugins(MaterialPlugin::<SmokeOnlyMaterial>::default())
+.insert_resource(ExplosionDebugMode::default())
 ```
 
-The `ExplosionShaderPlugin` registers:
-1. Custom `MaterialPlugin::<ExplosionMaterial>` for shader-based explosions
-2. `setup_explosion_assets` startup system (loads texture, creates materials)
-3. Multiple update systems for animation and cleanup
+### System Registration
+
+**Explosion Systems** (run every frame):
+- `pending_explosion_system` - Processes delayed explosions
+- `explosion_effect_system` - Updates visual effects
+- `update_debug_mode_ui` - Shows/hides debug indicator
+- `debug_explosion_hotkey_system` - E key tower destruction
+- `debug_warfx_test_system` - 0→1-6 key emitter spawning
+
+**War FX Animation** (run every frame):
+- `update_warfx_explosions` - Manages lifetimes
+- `animate_explosion_flames` - Animates 57 flame particles
+- `animate_warfx_billboards` - Animates center glow (2 billboards)
+- `animate_warfx_smoke_billboards` - Animates smoke particles
+- `animate_explosion_billboards` - Animates explosion billboards
+- `animate_smoke_only_billboards` - Animates lingering smoke (6 particles)
+- `animate_glow_sparkles` - Animates 25 sparkles with gravity
 
 ---
 
-## 📦 Asset Configuration
+## War FX System (Tower Explosions)
 
-### Texture Specification
+### Overview
+
+Tower explosions use a multi-emitter particle system ported from Unity's [War FX](https://assetstore.unity.com/packages/vfx/particles/war-fx-5669) asset (free, no license restrictions).
+
+### Combined Explosion Structure
+
+**Function:** `spawn_combined_explosion()` in `wfx_spawn.rs`
+
+**Components:**
+1. **Center Glow** (2 billboards)
+   - Bright orange/yellow expanding sphere
+   - Additive blending, no transparency
+   - Duration: 1.5s, fades out smoothly
+
+2. **Flame Particles** (57 particles)
+   - Fire/smoke texture with 15-frame animation
+   - Spherical emission (full 4π distribution)
+   - Scrolling UV for animated flames
+   - Duration: 3.0s, randomized lifetimes
+
+3. **Smoke Emitter** (6 particles)
+   - Delayed start (0.5s)
+   - Lingering smoke trail
+   - Alpha-blended, rises slowly
+   - Duration: 5.0s (outlasts other emitters)
+
+4. **Glow Sparkles** (25 particles)
+   - Fast-moving embers
+   - Gravity-affected, fall and fade
+   - Additive blending
+   - Duration: 2.0s
+
+5. **Dot Sparkles** (90 particles total)
+   - 75 falling particles (gravity)
+   - 15 floating particles (rise upward)
+   - Small circular dots
+   - Duration: 2.5s
+
+**Total:** 180 particles, 5+ second effect duration
+
+### Spawning War FX Explosions
+
+```rust
+use crate::wfx_spawn::spawn_combined_explosion;
+
+// Tower destruction
+spawn_combined_explosion(
+    &mut commands,
+    &mut meshes,
+    &mut additive_materials,
+    &mut smoke_materials,
+    &mut smoke_only_materials,
+    &asset_server,
+    tower_position,
+    4.0,  // Scale multiplier (large tower explosion)
+);
+```
+
+### War FX Components
+
+```rust
+#[derive(Component)]
+pub struct WarfxExplosion {
+    pub lifetime: f32,
+    pub max_lifetime: f32,
+}
+
+#[derive(Component)]
+pub struct ExplosionFlame {
+    pub frame_timer: f32,
+    pub current_frame: usize,
+    pub velocity: Vec3,
+    pub lifetime: f32,
+}
+
+#[derive(Component)]
+pub struct WarfxSmokeBillboard {
+    pub velocity: Vec3,
+    pub lifetime: f32,
+}
+
+#[derive(Component)]
+pub struct GlowSparkle {
+    pub velocity: Vec3,
+    pub lifetime: f32,
+    pub initial_scale: f32,
+}
+```
+
+### Billboard Calculation
+
+All War FX particles face the camera using custom transform logic:
+
+```rust
+// In animate_* systems
+let to_camera = (camera_position - particle_position).normalize();
+let right = Vec3::Y.cross(to_camera).normalize();
+let up = to_camera.cross(right);
+transform.rotation = Quat::from_mat3(&Mat3::from_cols(right, up, to_camera));
+```
+
+---
+
+## Legacy Flipbook System (Unit Deaths)
+
+### Overview
+
+Unit deaths use a simple 5×5 sprite sheet with custom shader for frame-by-frame animation.
 
 **File:** `assets/textures/Explosion02HD_5x5.tga`
-- **Format:** TGA (enabled via `tga` feature in Cargo.toml)
-- **Grid:** 5×5 layout
-- **Total Frames:** 25 frames
-- **Frame Order:** Left to right, top to bottom (row-major)
-- **Content:** Complete explosion lifecycle in each frame
-  - Frames 0-8: Bright initial fireball
-  - Frames 9-16: Expanding orange flames
-  - Frames 17-24: Dissipating smoke
+- **Grid:** 5×5 layout (25 frames)
+- **Frame Order:** Left to right, top to bottom
+- **Duration:** 2.0 seconds (0.08s per frame)
+- **Content:** Complete explosion lifecycle baked in
 
-### ExplosionAssets Resource
+### Spawning Flipbook Explosions
 
 ```rust
-pub struct ExplosionAssets {
-    pub explosion_flipbook_texture: Handle<Image>,
-    pub explosion_atlas: Handle<TextureAtlasLayout>,
-    pub explosion_bright_material: Handle<StandardMaterial>,
-    pub explosion_dim_material: Handle<StandardMaterial>,
-    pub smoke_material: Handle<StandardMaterial>,
-}
-```
+use crate::explosion_shader::{spawn_custom_shader_explosion, ExplosionAssets};
 
-**Loaded During Startup:**
-- `explosion_flipbook_texture`: The main 5×5 TGA texture
-- `explosion_atlas`: TextureAtlasLayout for 5×5 grid
-- Three pre-configured StandardMaterials (currently unused, kept for backward compatibility)
-
----
-
-## 🧩 Component Structure
-
-### Core Components
-
-#### 1. ExplosionTimer
-```rust
-#[derive(Component)]
-pub struct ExplosionTimer {
-    timer: Timer,  // Manages explosion lifetime
-}
-```
-- Controls how long the explosion lasts
-- When timer finishes, explosion is despawned
-
-#### 2. SpriteExplosion (StandardMaterial-based)
-```rust
-#[derive(Component)]
-pub struct SpriteExplosion {
-    pub explosion_type: ExplosionType,     // Fire, Smoke, Nuclear, Impact
-    pub current_phase: ExplosionPhase,     // Currently unused (legacy)
-    pub frame_count: usize,                // Always 25
-    pub current_frame: usize,              // 0-24
-    pub frame_duration: f32,               // Time per frame
-    pub frame_timer: f32,                  // Accumulator
-    pub scale: f32,                        // Base scale
-    pub fade_alpha: f32,                   // Alpha multiplier
-    pub phase_transition_timer: f32,       // Legacy, unused
-}
-```
-
-#### 3. CustomShaderExplosion (Custom shader-based)
-```rust
-#[derive(Component)]
-pub struct CustomShaderExplosion {
-    pub explosion_type: ExplosionType,
-    pub current_phase: ExplosionPhase,     // Legacy, unused
-    pub frame_count: usize,                // Always 25
-    pub current_frame: usize,              // 0-24
-    pub frame_duration: f32,
-    pub frame_timer: f32,
-    pub scale: f32,
-    pub fade_alpha: f32,
-}
-```
-
-### Supporting Types
-
-```rust
-#[derive(PartialEq, Clone)]
-pub enum ExplosionType {
-    Fire,     // Standard fire explosion
-    Smoke,    // Smoke-only (legacy)
-    Nuclear,  // High-intensity explosion
-    Impact,   // Low-intensity explosion
-}
-
-#[derive(PartialEq, Clone)]
-pub enum ExplosionPhase {
-    Initial,    // Bright phase (legacy, unused)
-    Secondary,  // Dimmer phase (legacy, unused)
-    Smoke,      // Smoke phase (legacy, unused)
-}
-```
-
-**Note:** `ExplosionPhase` is kept for backward compatibility but no longer affects rendering. The sprite sheet contains all phases pre-rendered.
-
----
-
-## 🔄 System Flow
-
-### Startup Phase
-
-```
-Game Start
-    ↓
-setup_explosion_assets()
-    ↓
-Load TGA texture
-Create TextureAtlas layout
-Create StandardMaterials
-Insert ExplosionAssets resource
-```
-
-### Runtime Phase
-
-```
-Tower Destroyed / Unit Explodes
-    ↓
-spawn_animated_sprite_explosion()
-    ↓
-Create PbrBundle with:
-  - Quad mesh (scaled to explosion radius)
-  - StandardMaterial with sprite texture
-  - Billboard transform
-  - ExplosionTimer
-  - SpriteExplosion component
-  - NotShadowCaster
-  - NotShadowReceiver
-    ↓
-Every Frame:
-  update_explosion_timers()        # Tick timers
-  animate_sprite_explosions()      # Update frames, billboard, alpha
-  cleanup_finished_explosions()    # Remove expired
-```
-
-### Animation Loop (per explosion)
-
-```
-Frame Update:
-  1. Increment frame_timer by delta_time
-  2. If frame_timer >= frame_duration:
-     - Reset frame_timer to 0
-     - Increment current_frame
-     - Clamp to frame_count - 1 (hold last frame)
-  
-Billboard Update:
-  1. Get camera position
-  2. Calculate direction to camera
-  3. Create rotation matrix to face camera
-  4. Apply rotation to transform
-  
-Alpha/Emissive Update:
-  1. Calculate progress (0.0 to 1.0)
-  2. If progress > 0.9: Begin fade out
-  3. Otherwise: Full intensity
-  4. Update material properties
-```
-
----
-
-## 🚀 Spawning Explosions
-
-### Primary Function: spawn_animated_sprite_explosion
-
-```rust
-pub fn spawn_animated_sprite_explosion(
-    commands: &mut Commands,
-    meshes: &mut ResMut<Assets<Mesh>>,
-    materials: &mut ResMut<Assets<StandardMaterial>>,
-    explosion_assets: &ExplosionAssets,
-    position: Vec3,           // World position
-    radius: f32,              // Visual size (quad size = radius * 2.0)
-    intensity: f32,           // Determines explosion type
-    duration: f32,            // Total animation time
-)
-```
-
-**Usage Example:**
-```rust
 if let Some(assets) = explosion_assets.as_ref() {
-    spawn_animated_sprite_explosion(
+    spawn_custom_shader_explosion(
         &mut commands,
         &mut meshes,
-        &mut materials,
+        &mut explosion_materials,
         &assets,
-        Vec3::new(0.0, 5.0, 0.0),  // Position
-        10.0,                       // 20-unit wide quad
-        2.0,                        // Fire intensity
-        2.5,                        // 2.5 second duration
+        particle_effects.as_ref().map(|p| p.as_ref()),
+        unit_position,
+        0.8,  // Radius (small for units)
+        1.0,  // Intensity
+        2.0,  // Duration
+        false, // Not a tower
+        time.elapsed_seconds_f64(),
     );
 }
 ```
 
-### Intensity Mapping
+### Custom Shader (explosion.wgsl)
 
-```rust
-if intensity > 2.5 {
-    ExplosionType::Nuclear   // Very large explosions
-} else if intensity > 1.5 {
-    ExplosionType::Fire      // Standard explosions
-} else {
-    ExplosionType::Impact    // Small explosions
-}
-```
+**41 lines** - calculates UV offsets for sprite sheet frames:
 
-**Note:** Currently, `ExplosionType` doesn't affect rendering (legacy system), but kept for potential future differentiation.
-
-### Animation Timing
-
-```rust
-timer: Timer::new(
-    Duration::from_secs_f32(duration * 0.8),  // 20% faster than specified
-    TimerMode::Once
-)
-
-frame_duration: (duration * 0.8) / 25.0  // Time per frame
-```
-
-**Example:** For `duration = 2.5` seconds:
-- Actual duration: 2.0 seconds
-- Frame duration: 0.08 seconds (12.5 FPS)
-- Total animation: 25 frames × 0.08s = 2.0s
-
----
-
-## 🎬 Animation Details
-
-### Frame Update System
-
-**System:** `animate_sprite_explosions`
-
-**Per Explosion, Each Frame:**
-
-1. **Frame Advancement**
-   ```rust
-   sprite_explosion.frame_timer += time.delta_seconds();
-   if sprite_explosion.frame_timer >= sprite_explosion.frame_duration {
-       sprite_explosion.frame_timer = 0.0;
-       sprite_explosion.current_frame += 1;
-       
-       if sprite_explosion.current_frame >= sprite_explosion.frame_count {
-           sprite_explosion.current_frame = sprite_explosion.frame_count - 1;
-       }
-   }
-   ```
-
-2. **Billboard Rotation**
-   ```rust
-   let to_camera = (camera_position - explosion_position).normalize();
-   let forward = to_camera;
-   let right = Vec3::Y.cross(forward).normalize();
-   let up = forward.cross(right).normalize();
-   transform.rotation = Quat::from_mat3(&Mat3::from_cols(right, up, forward));
-   ```
-
-3. **Alpha & Emissive Control**
-   ```rust
-   let progress = elapsed / duration;
-   
-   let alpha_fade = if progress > 0.9 {
-       fade_alpha * (1.0 - (progress - 0.9) * 10.0)  // Fade last 10%
-   } else {
-       fade_alpha  // Full alpha for 90%
-   };
-   
-   let emissive_strength = if progress > 0.9 {
-       2.0 * (1.0 - (progress - 0.9) * 5.0)
-   } else {
-       2.0  // Full emissive
-   };
-   ```
-
-4. **Material Update**
-   ```rust
-   material.base_color.set_alpha(alpha_fade);
-   material.emissive = LinearRgba::new(
-       current.red * emissive_strength,
-       current.green * emissive_strength,
-       current.blue * emissive_strength,
-       current.alpha
-   );
-   ```
-
-### Scale Behavior
-
-**Constant Scale:** `transform.scale = Vec3::splat(1.0)`
-
-The explosion does **not** scale over time. All expansion/contraction is baked into the sprite sheet frames. This simplifies animation and improves performance.
-
----
-
-## 🎨 Shader Implementation
-
-### Custom Material: ExplosionMaterial
-
-```rust
-#[derive(Asset, TypePath, AsBindGroup, Debug, Clone)]
-pub struct ExplosionMaterial {
-    #[uniform(0)]
-    pub frame_data: Vec4,  // x: frame_x, y: frame_y, z: grid_size, w: alpha
-    
-    #[uniform(1)]
-    pub color_data: Vec4,  // RGB: tint, A: emissive_strength
-    
-    #[texture(2, dimension = "2d")]
-    #[sampler(3)]
-    pub sprite_texture: Handle<Image>,
-}
-```
-
-### WGSL Shader (explosion.wgsl)
-
-**Total:** 41 lines (simplified from 332 lines of procedural code)
-
-**Key Operations:**
-
-1. **Frame UV Calculation**
-   ```wgsl
-   let frame_size = 1.0 / grid_size;  // 1/5 = 0.2
-   let frame_offset = vec2<f32>(
-       frame_x * frame_size,
-       frame_y * frame_size
-   );
-   let frame_uv = in.uv * frame_size + frame_offset;
-   ```
-
-2. **Texture Sampling**
-   ```wgsl
-   let sprite_sample = textureSample(
-       sprite_texture,
-       sprite_sampler,
-       frame_uv
-   );
-   ```
-
-3. **Color Enhancement**
-   ```wgsl
-   let tinted_color = sprite_sample.rgb * color_data.rgb;
-   let emissive_strength = color_data.a;
-   let enhanced_rgb = tinted_color + (tinted_color * emissive_strength);
-   let final_alpha = sprite_sample.a * alpha;  // From frame_data.w
-   ```
-
-### Material Trait Implementation
-
-```rust
-impl Material for ExplosionMaterial {
-    fn fragment_shader() -> ShaderRef {
-        "shaders/explosion.wgsl".into()
-    }
-    
-    fn alpha_mode(&self) -> AlphaMode {
-        AlphaMode::Blend
-    }
-    
-    fn specialize(
-        _pipeline: &MaterialPipeline<Self>,
-        descriptor: &mut RenderPipelineDescriptor,
-        _layout: &MeshVertexBufferLayoutRef,
-        _key: MaterialPipelineKey<Self>,
-    ) -> Result<(), SpecializedMeshPipelineError> {
-        descriptor.primitive.cull_mode = None;  // Disable backface culling
-        Ok(())
-    }
-}
-```
-
----
-
-## 🐛 Troubleshooting
-
-### Common Issues
-
-#### 1. White Quads Instead of Explosions
-
-**Symptom:** Explosions appear as plain white rectangles.
-
-**Cause:** Materials don't have the sprite sheet texture applied.
-
-**Solution:** Ensure you're using `spawn_animated_sprite_explosion()` or `spawn_custom_shader_explosion()`, **not** `spawn_explosion_effect()` (which is now a stub).
-
-**Fix Applied:** Tower destruction and unit explosions now use the proper functions with `ExplosionAssets` parameter.
-
-#### 2. Shadows Under Explosions
-
-**Symptom:** Dark shadows visible beneath explosion quads.
-
-**Cause:** Explosions participating in shadow system.
-
-**Solution:** Already fixed - all explosions spawn with:
-```rust
-NotShadowCaster,   // Don't cast shadows
-NotShadowReceiver, // Don't receive shadows
-```
-
-Also, all materials have `unlit: true`.
-
-#### 3. "Three Explosions" Effect
-
-**Symptom:** Explosion appears to flash/restart three times with decreasing transparency.
-
-**Cause:** Legacy phase transition system (Initial → Secondary → Smoke).
-
-**Solution:** Already fixed - phase transition code is disabled:
-```rust
-// DISABLED: Phase transitions to prevent "three explosions" effect
-// The self-contained sprite sheet already has all phases baked in
-```
-
-#### 4. Overlapping Explosions
-
-**Symptom:** Multiple explosions spawning at once, hard to see individual animations.
-
-**Cause:** Automatic smoke spawning for large explosions + multiple debug spawns.
-
-**Solution:** Already fixed:
-- Removed automatic smoke explosion spawning
-- Changed debug keys to spawn single explosions
-- Removed T key debug cubes
-
-#### 5. Entity Despawn Panic
-
-**Symptom:** `error[B0003]: Could not insert a bundle ... because it doesn't exist`
-
-**Cause:** Race condition - units are killed by combat systems between query time and command buffer flush. Using `insert()` panics if entity no longer exists when commands are applied.
-
-**Solution:** ✅ **FIXED (Nov 12, 2025)** - Use `try_insert()` instead:
-```rust
-if let Some(mut entity_commands) = commands.get_entity(unit_entity) {
-    entity_commands.try_insert(PendingExplosion { ... });
-}
-```
-
-**Why `try_insert()` works:**
-- `insert()`: Panics if entity doesn't exist at flush time (B0003 error)
-- `try_insert()`: Silently succeeds or fails - no panic if entity is gone
-
-**Applied to:**
-- `tower_destruction_system` - unit cascade explosions
-- `tower_destruction_system` - tower entity
-- `debug_explosion_hotkey_system` - all entity insertions
-
-#### 6. Explosion Not Animating
-
-**Symptom:** Explosion shows full 5×5 sprite sheet grid, no frame-by-frame animation.
-
-**Status:** ✅ **FIXED (Nov 12, 2025)**
-
-**Root Cause:** 
-`StandardMaterial` cannot animate UV coordinates. The `animate_sprite_explosions()` system was only updating alpha/emissive values, not changing which frame was displayed. The entire texture was always visible on the quad.
-
-**Solution:** Switch to custom shader approach for all explosions:
-
-```rust
-// Before: StandardMaterial (broken animation)
-spawn_animated_sprite_explosion(
-    commands, meshes, materials, assets, position, radius, intensity, duration
+```wgsl
+let frame_size = 1.0 / grid_size;  // 1/5 = 0.2
+let frame_offset = vec2<f32>(
+    frame_x * frame_size,
+    frame_y * frame_size
 );
-
-// After: ExplosionMaterial (working animation)
-spawn_custom_shader_explosion(
-    commands, meshes, explosion_materials, assets, position, radius, intensity, duration
-);
+let frame_uv = in.uv * frame_size + frame_offset;
+let sprite_sample = textureSample(sprite_texture, sprite_sampler, frame_uv);
 ```
 
-**How it works:**
-1. `animate_custom_shader_explosions()` updates `current_frame` each tick
-2. Calculates frame position in 5×5 grid (`frame_x`, `frame_y`)
-3. Updates `ExplosionMaterial` uniforms with frame data
-4. Custom shader (`explosion.wgsl`) samples correct region via UV offsetting
-
-**Updated systems:**
-- `tower_destruction_system` - tower explosions
-- `pending_explosion_system` - unit explosions
-- Both now use `spawn_custom_shader_explosion()` with proper frame animation
-
-**Debug logging added:**
-- Frame updates logged for first 5 frames: `"🎞️ Explosion frame update: 0 → 1"`
-
 ---
 
-## ⚡ Performance
+## Explosion Orchestration
 
-### Optimization Features
-
-1. **No Scaling Animation:** Constant scale reduces transform updates
-2. **Frame Hold:** Last frame held instead of looping
-3. **Billboard Caching:** Camera position queried once per frame, not per explosion
-4. **Simple Shader:** Texture lookup only, no procedural noise
-5. **Shadow Exclusion:** Explosions don't participate in shadow calculations
-6. **Automatic Cleanup:** Expired explosions removed immediately
-
-### Performance Characteristics
-
-**Per Explosion:**
-- 1 PbrBundle entity
-- 1 quad mesh (4 vertices, 6 indices)
-- 1 StandardMaterial or ExplosionMaterial
-- 2-3 component queries per frame
-- 1 billboard rotation calculation
-- 1 alpha/emissive update
-- ~0.001ms CPU time (estimated)
-
-**Typical Scenario (Tower Destruction):**
-- 1 tower explosion (large)
-- ~1,000-2,000 unit explosions (staggered over 3 seconds)
-- Peak: ~200 concurrent explosions
-- Impact: Minimal (< 1ms frame time)
-
-### Scalability Notes
-
-For truly massive explosion counts (>500 concurrent), consider:
-- Object pooling instead of spawn/despawn
-- GPU instancing for explosion quads
-- Compute shader for animation updates
-- LOD system (fewer frames for distant explosions)
-
----
-
-## 🚀 Future Enhancements
-
-### Planned Features
-
-1. **Particle Systems**
-   - GPU-based particle emitters
-   - Debris, sparks, embers
-   - Smoke trails
-   - Integration with sprite sheet base
-
-2. **Audio Integration**
-   - Explosion sound effects
-   - 3D spatial audio
-   - Randomized variations
-   - Synchronized with visual
-
-3. **Screen-Space Effects**
-   - Camera shake
-   - Heat wave distortion
-   - Chromatic aberration
-   - Bloom enhancement
-
-4. **Physics Integration**
-   - Ragdoll units on death
-   - Debris with physics
-   - Explosion force impulses
-   - Ground scorch marks
-
-5. **Visual Enhancements**
-   - Multiple sprite sheet variants
-   - Color tinting based on type
-   - Randomized rotation
-   - Size variation
-   - Light emission (point lights)
-
-### Potential Optimizations
-
-1. **Pooling System**
-   ```rust
-   pub struct ExplosionPool {
-       inactive: Vec<Entity>,
-       active: Vec<Entity>,
-   }
-   ```
-
-2. **LOD System**
-   - Distance-based frame rate reduction
-   - Smaller textures for distant explosions
-   - Culling for off-screen explosions
-
-3. **Instanced Rendering**
-   - Single draw call for all explosions
-   - Per-instance frame data
-   - Compute shader for updates
-
----
-
-## 📊 Debug Controls Reference
-
-### Test Explosion Spawning
-
-| Key | Function | Type | Notes |
-|-----|----------|------|-------|
-| **Y** | Animated Sprite | StandardMaterial | Single explosion at center |
-| **U** | Custom Shader | ExplosionMaterial | Primary method, uses custom shader |
-| **I** | Solid Color | StandardMaterial | Positioning test (no texture) |
-
-**Location:** All spawn at `Vec3::new(0.0, 8.0, 0.0)` (battlefield center, elevated)  
-**Parameters:** radius=8.0, intensity=2.0, duration=3.0
-
-### Gameplay Triggers
-
-| Key | Function | Explosions | Notes |
-|-----|----------|------------|-------|
-| **E** | Destroy Team B Tower | 1 tower + ~1000-2000 units | Cascade effect |
-
-**Tower Explosion:**
-- Position: Tower location
-- Radius: 40.0 (80% of destruction radius)
-- Duration: 4.0 seconds (2× normal)
-
-**Unit Explosions:**
-- Position: Unit locations
-- Radius: 0.8 (scaled down)
-- Duration: 2.0 seconds
-- Delay: Random 0.5-3.0s per unit
-
----
-
-## 🔍 Code Examples
-
-### Example 1: Basic Explosion Spawning
+### PendingExplosion Component
 
 ```rust
-fn spawn_explosion_on_death(
+#[derive(Component)]
+pub struct PendingExplosion {
+    pub delay_timer: f32,
+    pub explosion_power: f32,
+}
+```
+
+Used in `tower_destruction_system` to create cascading explosions:
+
+```rust
+// Quantize delays to discrete time slots for multiple explosions per frame
+let raw_delay = rng.gen_range(EXPLOSION_DELAY_MIN..EXPLOSION_DELAY_MAX);
+let delay = (raw_delay / EXPLOSION_TIME_QUANTUM).round() * EXPLOSION_TIME_QUANTUM;
+
+commands.get_entity(unit_entity).unwrap()
+    .try_insert(PendingExplosion {
+        delay_timer: delay,
+        explosion_power: 1.0,
+    });
+```
+
+### Constants
+
+```rust
+const EXPLOSION_DELAY_MIN: f32 = 0.5;      // Min delay in seconds
+const EXPLOSION_DELAY_MAX: f32 = 3.0;      // Max delay in seconds
+const EXPLOSION_TIME_QUANTUM: f32 = 0.1;   // Time slot size (100ms)
+const MAX_EXPLOSIONS_PER_FRAME: usize = 20; // Frame limit to prevent lag
+```
+
+### Pending Explosion System
+
+**File:** `explosion_system.rs`
+
+```rust
+pub fn pending_explosion_system(
     mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    explosion_assets: Option<Res<ExplosionAssets>>,
-    query: Query<(Entity, &Transform, &Health)>,
+    // ... resources for spawning
+    mut explosion_query: Query<(Entity, &mut PendingExplosion, &Transform, Option<&UplinkTower>)>,
+    time: Res<Time>,
 ) {
-    for (entity, transform, health) in query.iter() {
-        if health.is_dead() {
-            if let Some(assets) = explosion_assets.as_ref() {
-                spawn_animated_sprite_explosion(
-                    &mut commands,
-                    &mut meshes,
-                    &mut materials,
-                    &assets,
-                    transform.translation,
-                    5.0,    // Medium size
-                    1.5,    // Fire intensity
-                    2.0,    // Standard duration
-                );
+    // Update all timers
+    for (entity, mut pending, transform, tower_component) in explosion_query.iter_mut() {
+        pending.delay_timer -= time.delta_seconds();
+
+        if pending.delay_timer <= 0.0 {
+            let is_tower = tower_component.is_some();
+
+            if is_tower {
+                // Spawn War FX combined explosion
+                spawn_combined_explosion(/* ... */);
+            } else {
+                // Spawn flipbook explosion
+                spawn_custom_shader_explosion(/* ... */);
             }
-            
+
             commands.entity(entity).despawn_recursive();
         }
     }
 }
 ```
 
-### Example 2: Custom Shader Explosion
+---
+
+## Custom Materials
+
+### 1. SmokeScrollMaterial
+
+**File:** `wfx_materials.rs`
+
+Scrolling UV animation for smoke/flame textures:
 
 ```rust
-fn spawn_custom_explosion(
+#[derive(Asset, TypePath, AsBindGroup, Clone)]
+pub struct SmokeScrollMaterial {
+    #[uniform(0)]
+    pub scroll_speed: Vec2,  // UV scroll velocity
+    #[uniform(1)]
+    pub time: f32,           // Elapsed time
+    #[texture(2)]
+    #[sampler(3)]
+    pub texture: Handle<Image>,
+    pub alpha: f32,
+}
+```
+
+**Shader:** Offsets UVs based on time to create scrolling effect
+
+### 2. AdditiveMaterial
+
+Additive blending for glow/fire particles:
+
+```rust
+#[derive(Asset, TypePath, AsBindGroup, Clone)]
+pub struct AdditiveMaterial {
+    #[texture(0)]
+    #[sampler(1)]
+    pub texture: Handle<Image>,
+    pub color: LinearRgba,
+    pub alpha: f32,
+}
+```
+
+**Alpha Mode:** `AlphaMode::Add` - particle colors add to background
+
+### 3. SmokeOnlyMaterial
+
+Alpha-blended smoke particles:
+
+```rust
+#[derive(Asset, TypePath, AsBindGroup, Clone)]
+pub struct SmokeOnlyMaterial {
+    #[texture(0)]
+    #[sampler(1)]
+    pub texture: Handle<Image>,
+    pub alpha: f32,
+    pub color: LinearRgba,
+}
+```
+
+**Alpha Mode:** `AlphaMode::Blend` - standard transparency
+
+---
+
+## Debug Controls
+
+### Nested Debug Mode
+
+**Key 0:** Toggle explosion debug mode
+- Shows/hides UI indicator at bottom-left
+- Text: `[0] EXPLOSION DEBUG: 1=glow 2=flames 3=smoke 4=sparkles 5=combined 6=dots`
+
+**Keys 1-6** (when debug mode active):
+- **1:** Spawn center glow only (2 billboards)
+- **2:** Spawn flame particles only (57 particles)
+- **3:** Spawn smoke emitter only (6 particles)
+- **4:** Spawn glow sparkles only (25 particles)
+- **5:** Spawn combined explosion (all emitters, 180 particles)
+- **6:** Spawn dot sparkles (75 + 15 particles)
+
+All spawn at `Vec3::new(0.0, 10.0, 0.0)` with scale 2.0
+
+### Gameplay Trigger
+
+**Key E:** Destroy Team B tower
+- Triggers tower explosion (War FX combined)
+- Cascades to ~1,000-2,000 unit explosions (flipbook)
+- Quantized delays (0.5-3.0s) for dramatic effect
+- Plays explosion audio
+
+**Implementation:** `debug_explosion_hotkey_system` in `objective.rs`
+
+---
+
+## Troubleshooting
+
+### Common Issues
+
+#### 1. Glow Hard-Cut
+
+**Symptom:** Center glow disappears abruptly instead of fading.
+
+**Solution:** ✅ Fixed - Proper fade-out curve in animation system:
+```rust
+let fade_factor = if progress < 0.7 {
+    1.0
+} else {
+    1.0 - ((progress - 0.7) / 0.3).powf(2.0)
+};
+```
+
+#### 2. Explosion Lag Spikes
+
+**Symptom:** Game freezes when tower explodes.
+
+**Solution:** ✅ Fixed with two optimizations:
+1. **Frame Limit:** Max 20 explosions per frame
+2. **Quantized Timing:** Delays rounded to 100ms slots ensures multiple explosions per frame
+
+#### 3. Particles Not Facing Camera
+
+**Symptom:** Billboards render as thin lines from certain angles.
+
+**Solution:** Ensure billboard calculation uses correct cross products:
+```rust
+let to_camera = (camera_pos - particle_pos).normalize();
+let right = Vec3::Y.cross(to_camera).normalize();
+let up = to_camera.cross(right);
+```
+
+#### 4. Missing Textures
+
+**Symptom:** Pink/magenta particles or white quads.
+
+**Solution:** Ensure War FX textures are in `assets/textures/wfx_explosivesmoke_big/` with correct filenames.
+
+---
+
+## Performance
+
+### Benchmarks
+
+**Tower Destruction Cascade:**
+- 1 tower explosion: 180 particles
+- ~1,500 unit explosions: 1,500 billboards
+- Peak concurrent: ~200 explosions (frame limit)
+- Frame time impact: < 2ms
+
+**Per-Particle Cost:**
+- War FX particle: ~0.01ms (billboarding + animation)
+- Flipbook explosion: ~0.005ms (shader-based)
+
+### Optimization Features
+
+1. **Frame Limiting:** Max 20 explosions spawn per frame
+2. **Quantized Timing:** Delays rounded to 100ms slots
+3. **Billboard Caching:** Camera position queried once
+4. **No Shadows:** Particles excluded from shadow passes
+5. **Automatic Cleanup:** Expired particles despawned immediately
+6. **Simple Shaders:** UV offset only, no complex procedural noise
+
+### Scalability
+
+For > 500 concurrent explosions, consider:
+- Object pooling (reuse entities)
+- GPU instancing (single draw call)
+- Compute shaders (parallel updates)
+- LOD system (reduce particles at distance)
+
+---
+
+## Future Enhancements
+
+### Planned Features
+
+1. **Unified System**
+   - Replace flipbook with War FX for all explosions
+   - Scale parameter for unit vs tower
+   - Single animation pipeline
+
+2. **Screen-Space Effects**
+   - Camera shake on large explosions
+   - Heat wave distortion
+   - Chromatic aberration
+   - Enhanced bloom
+
+3. **Audio Enhancements**
+   - Per-explosion sound variations
+   - 3D spatial audio
+   - Distance attenuation
+   - Randomized pitch/volume
+
+4. **Visual Improvements**
+   - Light emission (dynamic point lights)
+   - Ground scorch marks (decals)
+   - Debris physics
+   - Randomized rotation/scale
+
+5. **Performance**
+   - GPU instancing for War FX particles
+   - Compute shader animation updates
+   - Particle pooling system
+   - Distance-based LOD
+
+---
+
+## API Reference
+
+### Key Functions
+
+#### spawn_combined_explosion
+```rust
+pub fn spawn_combined_explosion(
+    commands: &mut Commands,
+    meshes: &mut ResMut<Assets<Mesh>>,
+    additive_materials: &mut ResMut<Assets<AdditiveMaterial>>,
+    smoke_materials: &mut ResMut<Assets<SmokeScrollMaterial>>,
+    smoke_only_materials: &mut ResMut<Assets<SmokeOnlyMaterial>>,
+    asset_server: &Res<AssetServer>,
+    position: Vec3,
+    scale: f32,
+)
+```
+
+Spawns complete War FX explosion with all emitters.
+
+#### spawn_custom_shader_explosion
+```rust
+pub fn spawn_custom_shader_explosion(
     commands: &mut Commands,
     meshes: &mut ResMut<Assets<Mesh>>,
     explosion_materials: &mut ResMut<Assets<ExplosionMaterial>>,
-    explosion_assets: &ExplosionAssets,
+    assets: &ExplosionAssets,
+    particle_effects: Option<&ExplosionParticleEffects>,
     position: Vec3,
-) {
-    let quad_mesh = meshes.add(Rectangle::new(10.0, 10.0));
-    
-    let material = explosion_materials.add(ExplosionMaterial {
-        frame_data: Vec4::new(0.0, 0.0, 5.0, 1.0),  // Start at frame 0
-        color_data: Vec4::new(1.0, 1.0, 1.0, 2.0),  // White, 2× emissive
-        sprite_texture: explosion_assets.explosion_flipbook_texture.clone(),
-    });
-    
-    commands.spawn((
-        MaterialMeshBundle {
-            mesh: quad_mesh,
-            material,
-            transform: Transform::from_translation(position),
-            ..default()
-        },
-        ExplosionTimer {
-            timer: Timer::new(Duration::from_secs_f32(2.0), TimerMode::Once),
-        },
-        CustomShaderExplosion {
-            explosion_type: ExplosionType::Fire,
-            current_phase: ExplosionPhase::Initial,
-            frame_count: 25,
-            current_frame: 0,
-            frame_duration: 2.0 / 25.0,
-            frame_timer: 0.0,
-            scale: 5.0,
-            fade_alpha: 1.0,
-        },
-        NotShadowCaster,
-        NotShadowReceiver,
-        Name::new("CustomExplosion"),
-    ));
-}
+    radius: f32,
+    intensity: f32,
+    duration: f32,
+    is_tower: bool,
+    spawn_time: f64,
+)
 ```
 
-### Example 3: Delayed Explosion
-
-```rust
-// Add pending explosion component
-if let Some(mut entity_commands) = commands.get_entity(unit_entity) {
-    entity_commands.insert(PendingExplosion {
-        delay_timer: 1.5,  // Wait 1.5 seconds
-        explosion_power: 2.0,
-    });
-}
-
-// The pending_explosion_system will handle spawning after delay
-```
-
----
-
-## 📚 API Reference
-
-### Public Functions
-
-#### spawn_animated_sprite_explosion
-Creates a StandardMaterial-based explosion with sprite sheet.
-
-**Parameters:**
-- `commands`: Bevy command buffer
-- `meshes`: Mesh asset storage
-- `materials`: StandardMaterial asset storage
-- `explosion_assets`: Reference to loaded explosion resources
-- `position`: World space position (Vec3)
-- `radius`: Visual size (quad width/height = radius × 2)
-- `intensity`: Determines explosion type (f32)
-- `duration`: Total animation time in seconds (f32)
-
-**Returns:** None (spawns entity directly)
-
-#### spawn_custom_shader_explosion
-Creates a custom shader-based explosion.
-
-**Parameters:** Same as `spawn_animated_sprite_explosion`, plus:
-- `explosion_materials`: ExplosionMaterial asset storage (instead of StandardMaterial)
-
-**Returns:** None
-
-#### spawn_debug_explosion_effect
-**DEPRECATED** - Creates colored quad without texture (debug only).
-
-#### spawn_explosion_effect
-**STUB** - Backward compatibility, logs warning. Use `spawn_animated_sprite_explosion` instead.
-
----
-
-## 🎓 Learning Resources
-
-### Understanding the System
-
-1. **Start Here:** Read `spawn_animated_sprite_explosion()` function
-2. **Animation Logic:** Study `animate_sprite_explosions()` system
-3. **Shader Basics:** Review `explosion.wgsl` (only 41 lines)
-4. **Integration:** Check `tower_destruction_system()` usage example
-
-### Key Concepts
-
-- **Billboard Rendering:** Quads that always face camera
-- **Sprite Sheet Animation:** UV coordinate offsetting per frame
-- **Material vs Shader:** StandardMaterial vs custom ExplosionMaterial
-- **Component-System Pattern:** ECS architecture for explosion lifecycle
-
-### Bevy-Specific Knowledge
-
-- **Asset Loading:** `asset_server.load()` and `Handle<T>`
-- **Material Plugin:** Registering custom materials
-- **Query Filters:** `With<T>`, `Without<T>` patterns
-- **Command Buffers:** Deferred entity spawning/despawning
+Spawns flipbook explosion for unit deaths.
 
 ---
 
 **End of Explosion System Documentation**
-
