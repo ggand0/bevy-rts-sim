@@ -324,14 +324,6 @@ This works around segfault issues with AMD drivers on Linux.
 5. **No Pathfinding:** Units march in straight lines, no obstacle avoidance
 6. **Simple AI:** Units auto-target nearest enemy, no tactics
 
-### Known Bugs
-- Fixed: Explosion shadows (added NotShadowCaster/NotShadowReceiver)
-- Fixed: Overlapping explosions (disabled phase transitions)
-- Fixed: White quad explosions (updated to use sprite sheet)
-- Fixed: Entity despawn panic (added safe entity checks)
-- Fixed: Glow hard-cut (proper fade-out curve)
-- Fixed: Explosion lag spikes (frame limit + quantized timing)
-
 ---
 
 ## Design Goals
@@ -353,7 +345,7 @@ This works around segfault issues with AMD drivers on Linux.
 - CoH1-style orientation control
 - Visual feedback (selection rings, path arrows, group markers)
 
-### Planned Enhancements
+### Potential Enhancements
 - Screen-space distortion effects (heat waves)
 - Camera shake on explosions
 - Unit ragdoll/death animations
