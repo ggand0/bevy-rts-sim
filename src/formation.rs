@@ -92,13 +92,11 @@ pub fn squad_formation_system(
                     let current_center = current_positions.iter().sum::<Vec3>() / current_positions.len() as f32;
 
                     // Check if squad is actively moving toward a target
-                    let distance_to_target = Vec3::new(
-                        current_center.x - squad.target_position.x,
-                        0.0,
-                        current_center.z - squad.target_position.z,
-                    ).length();
+                    let dx = current_center.x - squad.target_position.x;
+                    let dz = current_center.z - squad.target_position.z;
+                    let distance_to_target = (dx * dx + dz * dz).sqrt();
 
-                    if distance_to_target > 5.0 {
+                    if distance_to_target > SQUAD_ARRIVAL_THRESHOLD {
                         // Squad is moving - smoothly transition center toward target
                         // Use current average as the center (tracks actual unit positions during movement)
                         squad.center_position = current_center;
@@ -137,21 +135,19 @@ pub fn squad_formation_system(
             let distance = direction.length();
 
             // Check if unit has arrived at its target position
-            let distance_to_target = Vec3::new(
-                transform.translation.x - droid.target_position.x,
-                0.0,
-                transform.translation.z - droid.target_position.z,
-            ).length();
+            let dx = transform.translation.x - droid.target_position.x;
+            let dz = transform.translation.z - droid.target_position.z;
+            let distance_to_target = (dx * dx + dz * dz).sqrt();
 
             // Use a smooth transition zone for arrival detection
-            // Units start getting formation correction when within 5 units, full correction at 1 unit
-            let arrival_blend = if distance_to_target > 5.0 {
+            // Units start getting formation correction when within SQUAD_ARRIVAL_THRESHOLD, full correction at 1 unit
+            let arrival_blend = if distance_to_target > SQUAD_ARRIVAL_THRESHOLD {
                 0.0 // Not arrived yet
             } else if distance_to_target < 1.0 {
                 1.0 // Fully arrived
             } else {
-                // Smooth blend from 5.0 down to 1.0
-                1.0 - (distance_to_target - 1.0) / 4.0
+                // Smooth blend from SQUAD_ARRIVAL_THRESHOLD down to 1.0
+                1.0 - (distance_to_target - 1.0) / (SQUAD_ARRIVAL_THRESHOLD - 1.0)
             };
 
             // Skip correction entirely if moving or retreating

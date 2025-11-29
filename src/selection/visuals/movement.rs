@@ -6,7 +6,7 @@ use crate::types::*;
 use crate::constants::*;
 
 use super::super::state::*;
-use super::super::utils::calculate_squad_centers;
+use super::super::utils::{calculate_squad_centers, horizontal_distance, horizontal_direction};
 
 /// System: Fade out and cleanup move order visuals
 pub fn move_visual_cleanup_system(
@@ -75,7 +75,7 @@ pub fn orientation_arrow_system(
     };
 
     // Calculate arrow properties
-    let direction = Vec3::new(current.x - start.x, 0.0, current.z - start.z);
+    let direction = horizontal_direction(start, current);
     let length = direction.length();
 
     if length < 0.1 {
@@ -147,14 +147,9 @@ pub fn update_squad_path_arrows(
             let target_pos = squad.target_position;
 
             // Check if squad is moving (target is significantly different from current)
-            // Use threshold of 5.0 to match formation system's arrival detection
-            let distance = Vec3::new(
-                target_pos.x - current_pos.x,
-                0.0,
-                target_pos.z - current_pos.z,
-            ).length();
+            let distance = horizontal_distance(current_pos, target_pos);
 
-            if distance > 5.0 {
+            if distance > SQUAD_ARRIVAL_THRESHOLD {
                 // Squad is still moving toward a target
                 squads_needing_arrows.push((squad_id, current_pos, target_pos));
             }
@@ -171,10 +166,10 @@ pub fn update_squad_path_arrows(
 
     // Update or create arrows for squads that need them
     for (squad_id, current_pos, target_pos) in squads_needing_arrows {
-        let direction = Vec3::new(target_pos.x - current_pos.x, 0.0, target_pos.z - current_pos.z);
+        let direction = horizontal_direction(current_pos, target_pos);
         let length = direction.length();
 
-        if length < 5.0 {
+        if length < SQUAD_ARRIVAL_THRESHOLD {
             continue;
         }
 
@@ -336,7 +331,7 @@ pub fn spawn_path_line(
     start: Vec3,
     end: Vec3,
 ) {
-    let direction = Vec3::new(end.x - start.x, 0.0, end.z - start.z);
+    let direction = horizontal_direction(start, end);
     let length = direction.length();
 
     if length < 0.5 {

@@ -7,7 +7,7 @@ use crate::formation::calculate_formation_offset;
 
 use super::state::{SelectionState, OrientationArrowVisual};
 use super::groups::check_is_complete_group;
-use super::utils::{screen_to_ground, calculate_default_facing, calculate_filtered_squad_centers};
+use super::utils::{screen_to_ground, calculate_default_facing, calculate_filtered_squad_centers, horizontal_distance, horizontal_direction};
 use super::visuals::{spawn_move_indicator, spawn_move_indicator_with_color, spawn_path_line};
 
 /// System: Handle right-click move commands for selected squads
@@ -48,7 +48,7 @@ pub fn move_command_system(
             selection_state.move_drag_current = Some(current);
 
             // Check if drag exceeds threshold
-            let drag_distance = Vec3::new(current.x - start.x, 0.0, current.z - start.z).length();
+            let drag_distance = horizontal_distance(start, current);
             if drag_distance > super::state::ORIENTATION_DRAG_THRESHOLD {
                 selection_state.is_orientation_dragging = true;
             }
@@ -81,11 +81,7 @@ pub fn move_command_system(
         let unified_facing = if selection_state.is_orientation_dragging {
             // Use drag direction for orientation
             if let Some(current) = selection_state.move_drag_current {
-                let drag_dir = Vec3::new(
-                    current.x - destination.x,
-                    0.0,
-                    current.z - destination.z,
-                );
+                let drag_dir = horizontal_direction(destination, current);
                 if drag_dir.length() > 0.1 {
                     drag_dir.normalize()
                 } else {
@@ -289,8 +285,8 @@ fn execute_move_command(
     // Sort squads by distance to destination center (closest first gets priority)
     let mut sorted_squads = squad_positions.clone();
     sorted_squads.sort_by(|a, b| {
-        let dist_a = Vec3::new(a.1.x - destination.x, 0.0, a.1.z - destination.z).length();
-        let dist_b = Vec3::new(b.1.x - destination.x, 0.0, b.1.z - destination.z).length();
+        let dist_a = horizontal_distance(a.1, destination);
+        let dist_b = horizontal_distance(b.1, destination);
         dist_a.partial_cmp(&dist_b).unwrap_or(std::cmp::Ordering::Equal)
     });
 
@@ -300,7 +296,7 @@ fn execute_move_command(
         let mut best_distance = f32::MAX;
 
         for (idx, &slot) in available_slots.iter().enumerate() {
-            let dist = Vec3::new(squad_pos.x - slot.x, 0.0, squad_pos.z - slot.z).length();
+            let dist = horizontal_distance(squad_pos, slot);
             if dist < best_distance {
                 best_distance = dist;
                 best_slot_idx = idx;

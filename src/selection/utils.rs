@@ -3,6 +3,20 @@ use bevy::prelude::*;
 use std::collections::HashMap;
 use crate::types::*;
 
+/// Calculate horizontal distance between two points (ignoring Y axis)
+#[inline]
+pub fn horizontal_distance(a: Vec3, b: Vec3) -> f32 {
+    let dx = a.x - b.x;
+    let dz = a.z - b.z;
+    (dx * dx + dz * dz).sqrt()
+}
+
+/// Calculate horizontal direction from point a to point b (ignoring Y axis)
+#[inline]
+pub fn horizontal_direction(from: Vec3, to: Vec3) -> Vec3 {
+    Vec3::new(to.x - from.x, 0.0, to.z - from.z)
+}
+
 /// Convert screen cursor position to world position on the ground plane (Y = -1.0)
 pub fn screen_to_ground(
     cursor_pos: Vec2,
@@ -78,11 +92,7 @@ pub fn find_squad_at_position(
             }
         }
 
-        let distance = Vec3::new(
-            world_pos.x - center.x,
-            0.0,  // Ignore Y for horizontal distance
-            world_pos.z - center.z,
-        ).length();
+        let distance = horizontal_distance(world_pos, *center);
 
         if distance < closest_distance {
             closest_distance = distance;
@@ -144,9 +154,5 @@ pub fn calculate_default_facing(
         avg_pos /= count as f32;
     }
 
-    Vec3::new(
-        destination.x - avg_pos.x,
-        0.0,
-        destination.z - avg_pos.z,
-    ).normalize_or_zero()
+    horizontal_direction(avg_pos, destination).normalize_or_zero()
 }
