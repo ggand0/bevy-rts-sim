@@ -224,7 +224,7 @@ fn execute_move_command(
     unified_facing: Vec3,
 ) {
     // Check if this is a complete group move
-    if let Some(group_id) = check_is_complete_group(selection_state) {
+    if let Some(group_id) = check_is_complete_group(selection_state, squad_manager) {
         // Group move - maintain relative positions
         execute_group_move(
             commands,

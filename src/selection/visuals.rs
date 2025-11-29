@@ -369,7 +369,7 @@ pub fn update_group_orientation_markers(
     mut existing_markers: Query<(Entity, &GroupOrientationMarker, &mut Transform)>,
 ) {
     // Check if any group is currently selected
-    let selected_group_id = check_is_complete_group(&selection_state);
+    let selected_group_id = check_is_complete_group(&selection_state, &squad_manager);
 
     // Remove markers for groups that no longer exist or are not selected
     for (entity, marker, _) in existing_markers.iter() {
@@ -490,7 +490,7 @@ pub fn update_group_bounding_box_debug(
     mut existing_debug: Query<(Entity, &GroupBoundingBoxDebug, &mut Transform)>,
 ) {
     // Check if any group is currently selected
-    let selected_group_id = check_is_complete_group(&selection_state);
+    let selected_group_id = check_is_complete_group(&selection_state, &squad_manager);
 
     // Remove debug boxes for groups that no longer exist or are not selected
     for (entity, debug_marker, _) in existing_debug.iter() {

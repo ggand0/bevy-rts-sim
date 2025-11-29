@@ -15,8 +15,9 @@ pub struct SquadGroup {
     pub formation_facing: Vec3,                 // Current facing direction (updates with each move)
 }
 
-/// Check if the current selection is exactly one complete group (all squads in a group are selected)
-pub fn check_is_complete_group(selection_state: &SelectionState) -> Option<u32> {
+/// Check if the current selection is exactly one complete group (all living squads in a group are selected)
+/// Uses squad_manager to filter out dead squads (those with no members)
+pub fn check_is_complete_group(selection_state: &SelectionState, squad_manager: &SquadManager) -> Option<u32> {
     if selection_state.selected_squads.is_empty() {
         return None;
     }
@@ -37,11 +38,26 @@ pub fn check_is_complete_group(selection_state: &SelectionState) -> Option<u32> 
         }
     }
 
-    // Check if all squads in the group are selected
+    // Check if all LIVING squads in the group are selected
     if let Some(gid) = group_id {
         if let Some(group) = selection_state.groups.get(&gid) {
-            let all_in_selection = group.squad_ids.iter().all(|id| selection_state.selected_squads.contains(id));
-            if all_in_selection {
+            // Only consider squads that are still alive (have members)
+            let living_squad_ids: Vec<u32> = group.squad_ids.iter()
+                .filter(|&&id| {
+                    squad_manager.get_squad(id)
+                        .map_or(false, |s| !s.members.is_empty())
+                })
+                .copied()
+                .collect();
+
+            // Group needs at least 1 living squad to be valid
+            if living_squad_ids.is_empty() {
+                return None;
+            }
+
+            let all_living_in_selection = living_squad_ids.iter()
+                .all(|id| selection_state.selected_squads.contains(id));
+            if all_living_in_selection {
                 return Some(gid);
             }
         }
