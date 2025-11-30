@@ -615,7 +615,7 @@ pub fn create_turret_base_mesh(meshes: &mut ResMut<Assets<Mesh>>) -> Handle<Mesh
     let mut normals = Vec::new();
     let mut indices = Vec::new();
 
-    // Helper: Add Frustum (Tapered Cylinder)
+    // Helper: Add Frustum (Tapered Cylinder) with flat caps and correct winding
     fn add_frustum(
         vertices: &mut Vec<[f32; 3]>,
         normals: &mut Vec<[f32; 3]>,
@@ -626,7 +626,6 @@ pub fn create_turret_base_mesh(meshes: &mut ResMut<Assets<Mesh>>) -> Handle<Mesh
         height: f32,
         segments: u32,
     ) {
-        let base = vertices.len() as u32;
         let half_height = height / 2.0;
 
         // Calculate slope normal for side faces
@@ -635,14 +634,15 @@ pub fn create_turret_base_mesh(meshes: &mut ResMut<Assets<Mesh>>) -> Handle<Mesh
         let ny = dr / side_len;
         let nr = height / side_len; // radial component
 
-        // Side vertices
+        // 1. Side Faces
+        let side_base = vertices.len() as u32;
         for i in 0..segments {
             let angle = (i as f32 / segments as f32) * 2.0 * PI;
             let cos_a = angle.cos();
             let sin_a = angle.sin();
             let normal = [cos_a * nr, ny, sin_a * nr];
 
-            // Bottom ring
+            // Bottom ring vertex
             vertices.push([
                 center.x + cos_a * bottom_radius,
                 center.y - half_height,
@@ -650,7 +650,7 @@ pub fn create_turret_base_mesh(meshes: &mut ResMut<Assets<Mesh>>) -> Handle<Mesh
             ]);
             normals.push(normal);
 
-            // Top ring
+            // Top ring vertex
             vertices.push([
                 center.x + cos_a * top_radius,
                 center.y + half_height,
@@ -659,39 +659,59 @@ pub fn create_turret_base_mesh(meshes: &mut ResMut<Assets<Mesh>>) -> Handle<Mesh
             normals.push(normal);
         }
 
-        // Caps
-        // Bottom cap center
-        vertices.push([center.x, center.y - half_height, center.z]);
-        normals.push([0.0, -1.0, 0.0]);
-        let bottom_center = base + segments * 2;
-
-        // Top cap center
-        vertices.push([center.x, center.y + half_height, center.z]);
-        normals.push([0.0, 1.0, 0.0]);
-        let top_center = base + segments * 2 + 1;
-
-        // Indices
         for i in 0..segments {
             let next = (i + 1) % segments;
-            
-            // Side quads
-            let b = base + i * 2;
-            let t = base + i * 2 + 1;
-            let bn = base + next * 2;
-            let tn = base + next * 2 + 1;
+            let b = side_base + i * 2;
+            let t = side_base + i * 2 + 1;
+            let bn = side_base + next * 2;
+            let tn = side_base + next * 2 + 1;
 
-            indices.push(b); indices.push(tn); indices.push(t);
-            indices.push(b); indices.push(bn); indices.push(tn);
+            // CCW Winding for Sides
+            indices.push(b); indices.push(t); indices.push(tn);
+            indices.push(b); indices.push(tn); indices.push(bn);
+        }
 
-            // Bottom cap
-            indices.push(bottom_center);
-            indices.push(base + next * 2); 
-            indices.push(base + i * 2);
+        // 2. Bottom Cap
+        let bot_center_idx = vertices.len() as u32;
+        vertices.push([center.x, center.y - half_height, center.z]);
+        normals.push([0.0, -1.0, 0.0]);
+        
+        let bot_ring_start = vertices.len() as u32;
+        for i in 0..segments {
+            let angle = (i as f32 / segments as f32) * 2.0 * PI;
+            let x = angle.cos() * bottom_radius;
+            let z = angle.sin() * bottom_radius;
+            vertices.push([center.x + x, center.y - half_height, center.z + z]);
+            normals.push([0.0, -1.0, 0.0]);
+        }
 
-            // Top cap
-            indices.push(top_center);
-            indices.push(base + i * 2 + 1); 
-            indices.push(base + next * 2 + 1);
+        for i in 0..segments {
+            let next = (i + 1) % segments;
+            indices.push(bot_center_idx);
+            indices.push(bot_ring_start + next);
+            indices.push(bot_ring_start + i);
+        }
+
+        // 3. Top Cap
+        let top_center_idx = vertices.len() as u32;
+        vertices.push([center.x, center.y + half_height, center.z]);
+        normals.push([0.0, 1.0, 0.0]);
+        
+        let top_ring_start = vertices.len() as u32;
+        for i in 0..segments {
+            let angle = (i as f32 / segments as f32) * 2.0 * PI;
+            let x = angle.cos() * top_radius;
+            let z = angle.sin() * top_radius;
+            vertices.push([center.x + x, center.y + half_height, center.z + z]);
+            normals.push([0.0, 1.0, 0.0]);
+        }
+
+        for i in 0..segments {
+            let next = (i + 1) % segments;
+            indices.push(top_center_idx);
+            // FIXED: Reversed winding for Top Cap (next, i) to be CCW/Visible
+            indices.push(top_ring_start + next);
+            indices.push(top_ring_start + i);
         }
     }
 
