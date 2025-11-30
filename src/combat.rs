@@ -563,11 +563,11 @@ pub fn auto_fire_system(
                 if let Ok(target_transform) = target_transform {
                     let is_mg = mg_turret_opt.is_some();
 
-                    // Determine barrel configuration, fire rate, and laser speed
-                    let (barrel_positions, fire_interval, laser_speed) = if is_mg {
-                        (&mg_barrel_positions[..], 0.08, LASER_SPEED * 3.0) // Fast fire, 3x speed for MG
+                    // Determine barrel configuration, fire rate, laser speed, and bolt size
+                    let (barrel_positions, fire_interval, laser_speed, laser_length) = if is_mg {
+                        (&mg_barrel_positions[..], 0.05, LASER_SPEED * 3.0, LASER_LENGTH * 0.6) // MG: 20 shots/sec, shorter bolts
                     } else {
-                        (&standard_barrel_positions[..], AUTO_FIRE_INTERVAL, LASER_SPEED)
+                        (&standard_barrel_positions[..], AUTO_FIRE_INTERVAL, LASER_SPEED, LASER_LENGTH)
                     };
 
                     // Reset timer
@@ -583,7 +583,7 @@ pub fn auto_fire_system(
                         ..default()
                     });
 
-                    let laser_mesh = meshes.add(Rectangle::new(LASER_WIDTH, LASER_LENGTH));
+                    let laser_mesh = meshes.add(Rectangle::new(LASER_WIDTH, laser_length));
 
                     // Get current barrel position in local space
                     let local_barrel_pos = barrel_positions[turret.current_barrel_index % barrel_positions.len()];
