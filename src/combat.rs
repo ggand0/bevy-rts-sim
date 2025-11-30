@@ -350,6 +350,7 @@ pub fn auto_fire_system(
     all_towers_query: Query<(Entity, &GlobalTransform, &UplinkTower)>,
     camera_query: Query<&Transform, (With<RtsCamera>, Without<LaserProjectile>)>,
     audio_assets: Res<AudioAssets>,
+    heightmap: Option<Res<TerrainHeightmap>>,
 ) {
     let delta_time = time.delta_secs();
     
@@ -565,6 +566,15 @@ pub fn auto_fire_system(
 
                 if let Ok(target_transform) = target_transform {
                     let is_mg = mg_turret_opt.is_some();
+
+                    // Check line of sight before firing (critical for Map 2 terrain blocking)
+                    let shooter_pos = global_transform.translation();
+                    let target_pos = target_transform.translation();
+                    if !has_line_of_sight(shooter_pos, target_pos, heightmap.as_deref()) {
+                        // Clear target if line of sight is blocked
+                        combat_unit.current_target = None;
+                        continue;
+                    }
 
                     // Determine barrel configuration, fire rate, laser speed, and bolt size
                     let (barrel_positions, fire_interval, laser_speed, laser_length) = if is_mg {

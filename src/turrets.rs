@@ -1,7 +1,7 @@
 // Turret spawn systems module
 use bevy::prelude::*;
 use crate::types::*;
-use crate::terrain::TerrainHeightmap;
+use crate::terrain::{TerrainHeightmap, MapSwitchEvent};
 use crate::procedural_meshes::*;
 
 /// Spawn a functional MG turret
@@ -11,10 +11,11 @@ pub fn spawn_mg_turret(
     mut materials: ResMut<Assets<StandardMaterial>>,
     heightmap: Res<TerrainHeightmap>,
 ) {
-    // Sample terrain height at turret position (nearby existing one)
+    // Sample terrain height at turret position
     let x = 10.0;
     let z = 10.0;
     let terrain_height = heightmap.sample_height(x, z);
+    // MG base mesh bottom is at Y=0.0 in local space, so spawn at terrain height
     let turret_world_pos = Vec3::new(x, terrain_height, z);
 
     // Create meshes
@@ -91,6 +92,7 @@ pub fn spawn_functional_turret(
     let x = 30.0;
     let z = 30.0;
     let terrain_height = heightmap.sample_height(x, z);
+    // Heavy base mesh bottom is at Y=0.0 in local space, so spawn at terrain height
     let turret_world_pos = Vec3::new(x, terrain_height, z);
 
     // Create meshes
@@ -148,4 +150,149 @@ pub fn spawn_functional_turret(
     commands.entity(base_entity).add_children(&[assembly_entity]);
 
     info!("Spawned functional turret at position ({}, {}, {})", x, terrain_height, z);
+}
+
+/// System to respawn turrets when map switches
+pub fn respawn_turrets_on_map_switch(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    heightmap: Res<TerrainHeightmap>,
+    mut map_switch_events: EventReader<MapSwitchEvent>,
+    turret_base_query: Query<Entity, With<TurretBase>>,
+) {
+    // Only process if there's a map switch event
+    if map_switch_events.read().next().is_none() {
+        return;
+    }
+
+    // Despawn all existing turrets (both base and assembly entities)
+    for base_entity in turret_base_query.iter() {
+        commands.entity(base_entity).despawn_recursive();
+    }
+
+    info!("Respawning turrets for new terrain");
+
+    // Spawn MG turret
+    {
+        let x = 10.0;
+        let z = 10.0;
+        let terrain_height = heightmap.sample_height(x, z);
+        let turret_world_pos = Vec3::new(x, terrain_height, z);
+
+        let base_mesh = create_mg_turret_base_mesh(&mut meshes);
+        let assembly_mesh = create_mg_turret_assembly_mesh(&mut meshes);
+
+        let base_material = materials.add(StandardMaterial {
+            base_color: Color::srgb(0.2, 0.2, 0.2),
+            metallic: 0.8,
+            perceptual_roughness: 0.6,
+            ..default()
+        });
+
+        let gun_material = materials.add(StandardMaterial {
+            base_color: Color::srgb(0.3, 0.35, 0.3),
+            metallic: 0.9,
+            perceptual_roughness: 0.4,
+            ..default()
+        });
+
+        let base_entity = commands.spawn((
+            Mesh3d(base_mesh),
+            MeshMaterial3d(base_material),
+            Transform::from_translation(turret_world_pos),
+            TurretBase,
+            BuildingCollider { radius: 3.0 },
+        )).id();
+
+        let assembly_entity = commands.spawn((
+            Mesh3d(assembly_mesh),
+            MeshMaterial3d(gun_material),
+            Transform::from_xyz(0.0, 1.0, 0.0),
+            BattleDroid {
+                team: Team::A,
+                march_speed: 0.0,
+                spawn_position: turret_world_pos,
+                target_position: turret_world_pos,
+                march_offset: 0.0,
+                returning_to_spawn: false,
+            },
+            CombatUnit {
+                target_scan_timer: 0.0,
+                auto_fire_timer: 0.3,
+                current_target: None,
+            },
+            TurretRotatingAssembly {
+                current_barrel_index: 0,
+            },
+            MgTurret {
+                firing_mode: FiringMode::Continuous,
+                shots_in_burst: 0,
+                max_burst_shots: 45,
+                cooldown_timer: 0.0,
+                cooldown_duration: 1.5,
+            },
+        )).id();
+
+        commands.entity(base_entity).add_children(&[assembly_entity]);
+        info!("Respawned MG turret at ({}, {}, {})", x, terrain_height, z);
+    }
+
+    // Spawn heavy turret
+    {
+        let x = 30.0;
+        let z = 30.0;
+        let terrain_height = heightmap.sample_height(x, z);
+        let turret_world_pos = Vec3::new(x, terrain_height, z);
+
+        let base_mesh = create_turret_base_mesh(&mut meshes);
+        let assembly_mesh = create_turret_rotating_assembly_mesh(&mut meshes);
+
+        let base_material = materials.add(StandardMaterial {
+            base_color: Color::srgb(0.3, 0.3, 0.35),
+            metallic: 0.1,
+            perceptual_roughness: 0.8,
+            ..default()
+        });
+
+        let gun_material = materials.add(StandardMaterial {
+            base_color: Color::srgb(0.2, 0.25, 0.3),
+            metallic: 0.8,
+            perceptual_roughness: 0.4,
+            ..default()
+        });
+
+        let base_entity = commands.spawn((
+            Mesh3d(base_mesh),
+            MeshMaterial3d(base_material),
+            Transform::from_translation(turret_world_pos),
+            TurretBase,
+            BuildingCollider { radius: 4.0 },
+        )).id();
+
+        let assembly_entity = commands.spawn((
+            Mesh3d(assembly_mesh),
+            MeshMaterial3d(gun_material),
+            Transform::from_xyz(0.0, 2.7, 0.0),
+            BattleDroid {
+                team: Team::A,
+                march_speed: 0.0,
+                spawn_position: turret_world_pos,
+                target_position: turret_world_pos,
+                march_offset: 0.0,
+                returning_to_spawn: false,
+            },
+            CombatUnit {
+                target_scan_timer: 0.0,
+                auto_fire_timer: 2.0,
+                current_target: None,
+            },
+            TurretRotatingAssembly {
+                current_barrel_index: 0,
+            },
+        )).id();
+
+        commands.entity(base_entity).add_children(&[assembly_entity]);
+        info!("Respawned heavy turret at ({}, {}, {})", x, terrain_height, z);
+    }
 }

@@ -52,6 +52,10 @@ fn main() {
             spawn_mg_turret.after(terrain::spawn_initial_terrain),
         ))
         .add_systems(Update, (
+            // Map switching - respawn turrets when terrain changes
+            respawn_turrets_on_map_switch,
+        ))
+        .add_systems(Update, (
             // Formation and squad management systems run first
             squad_formation_system,
             squad_casualty_management_system,
