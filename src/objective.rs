@@ -1004,10 +1004,10 @@ pub fn create_mg_turret_base_mesh(meshes: &mut ResMut<Assets<Mesh>>) -> Handle<M
         }
     }
 
-    // 1. Hexagonal Base Platform
+    // 1. Hexagonal Base Platform (Reduced size)
     add_cylinder(&mut vertices, &mut normals, &mut indices,
         Vec3::new(0.0, 0.5, 0.0), 
-        3.5, 1.0, 6); // Radius 3.5, Height 1.0, 6 segments = Hexagon
+        2.8, 1.0, 6); // Radius reduced to 2.8
 
     // 2. Upper Mount Point (Smaller Hexagon)
     add_cylinder(&mut vertices, &mut normals, &mut indices,
@@ -1294,6 +1294,25 @@ pub fn create_mg_turret_assembly_mesh(meshes: &mut ResMut<Assets<Mesh>>) -> Hand
             Vec3::new(0.52, 2.0, z_pos), 
             Vec3::new(0.2, 0.6, 0.1));
     }
+
+    // 7. Ammo Magazines (Side boxes)
+    // Left Magazine
+    add_box(&mut vertices, &mut normals, &mut indices,
+        Vec3::new(-0.95, 2.1, 0.0), 
+        Vec3::new(0.5, 1.0, 1.4));
+    // Left Strut
+    add_box(&mut vertices, &mut normals, &mut indices,
+        Vec3::new(-0.6, 2.1, 0.0), 
+        Vec3::new(0.3, 0.4, 0.8));
+        
+    // Right Magazine
+    add_box(&mut vertices, &mut normals, &mut indices,
+        Vec3::new(0.95, 2.1, 0.0), 
+        Vec3::new(0.5, 1.0, 1.4));
+    // Right Strut
+    add_box(&mut vertices, &mut normals, &mut indices,
+        Vec3::new(0.6, 2.1, 0.0), 
+        Vec3::new(0.3, 0.4, 0.8));
 
     // 6. Hydraulic Details (Optional small cylinders)
     add_cylinder(&mut vertices, &mut normals, &mut indices,
