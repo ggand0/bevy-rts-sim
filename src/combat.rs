@@ -248,23 +248,24 @@ pub fn update_projectiles(
 
 pub fn target_acquisition_system(
     time: Res<Time>,
-    mut combat_query: Query<(Entity, &Transform, &BattleDroid, &mut CombatUnit)>,
-    tower_query: Query<(Entity, &Transform, &UplinkTower), With<UplinkTower>>,
+    mut combat_query: Query<(Entity, &GlobalTransform, &BattleDroid, &mut CombatUnit)>,
+    tower_query: Query<(Entity, &GlobalTransform, &UplinkTower), With<UplinkTower>>,
     heightmap: Option<Res<TerrainHeightmap>>,
 ) {
     let delta_time = time.delta_secs();
     let hm = heightmap.as_ref().map(|h| h.as_ref());
 
     // Collect all unit data first to avoid borrowing issues
+    // Use GlobalTransform to get world position (handles parent-child hierarchies like turrets)
     let all_units: Vec<(Entity, Vec3, Team)> = combat_query
         .iter()
-        .map(|(entity, transform, droid, _)| (entity, transform.translation, droid.team))
+        .map(|(entity, transform, droid, _)| (entity, transform.translation(), droid.team))
         .collect();
 
     // Collect all tower data
     let all_towers: Vec<(Entity, Vec3, Team)> = tower_query
         .iter()
-        .map(|(entity, transform, tower)| (entity, transform.translation, tower.team))
+        .map(|(entity, transform, tower)| (entity, transform.translation(), tower.team))
         .collect();
 
     for (entity, transform, droid, mut combat_unit) in combat_query.iter_mut() {
@@ -275,7 +276,7 @@ pub fn target_acquisition_system(
             combat_unit.target_scan_timer = TARGET_SCAN_INTERVAL;
 
             let mut closest_enemy: Option<Entity> = None;
-            let shooter_pos = transform.translation;
+            let shooter_pos = transform.translation();
 
             // Check enemy units first (they're the threat)
             // Collect all enemies in range with their distances
@@ -339,9 +340,9 @@ pub fn auto_fire_system(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    mut combat_query: Query<(&Transform, &BattleDroid, &mut CombatUnit)>,
-    target_query: Query<&Transform, With<BattleDroid>>,
-    tower_target_query: Query<&Transform, With<UplinkTower>>,
+    mut combat_query: Query<(&GlobalTransform, &BattleDroid, &mut CombatUnit)>,
+    target_query: Query<&GlobalTransform, With<BattleDroid>>,
+    tower_target_query: Query<&GlobalTransform, With<UplinkTower>>,
     camera_query: Query<&Transform, (With<RtsCamera>, Without<LaserProjectile>)>,
     audio_assets: Res<AudioAssets>,
 ) {
@@ -391,10 +392,11 @@ pub fn auto_fire_system(
                     };
                     
                     let laser_mesh = meshes.add(Rectangle::new(LASER_WIDTH, LASER_LENGTH));
-                    
+
                     // Calculate firing position and direction toward target
-                    let firing_pos = droid_transform.translation + Vec3::new(0.0, 0.8, 0.0);
-                    let target_pos = target_transform.translation + Vec3::new(0.0, 0.8, 0.0);
+                    // Use GlobalTransform to get world position (handles parent-child hierarchies like turrets)
+                    let firing_pos = droid_transform.translation() + Vec3::new(0.0, 0.8, 0.0);
+                    let target_pos = target_transform.translation() + Vec3::new(0.0, 0.8, 0.0);
                     let direction = (target_pos - firing_pos).normalize();
                     let velocity = direction * LASER_SPEED;
                     
@@ -498,15 +500,16 @@ pub fn collision_detection_system(
 /// Turret rotation system - smoothly rotates turret assembly to face current target
 pub fn turret_rotation_system(
     time: Res<Time>,
-    mut turret_query: Query<(&mut Transform, &CombatUnit), With<crate::types::TurretRotatingAssembly>>,
-    target_query: Query<&Transform, (With<BattleDroid>, Without<crate::types::TurretRotatingAssembly>)>,
+    mut turret_query: Query<(&mut Transform, &GlobalTransform, &CombatUnit), With<crate::types::TurretRotatingAssembly>>,
+    target_query: Query<&GlobalTransform, (With<BattleDroid>, Without<crate::types::TurretRotatingAssembly>)>,
 ) {
-    for (mut turret_transform, combat_unit) in turret_query.iter_mut() {
+    for (mut turret_transform, turret_global_transform, combat_unit) in turret_query.iter_mut() {
         if let Some(target_entity) = combat_unit.current_target {
-            if let Ok(target_transform) = target_query.get(target_entity) {
+            if let Ok(target_global_transform) = target_query.get(target_entity) {
                 // Calculate direction to target (horizontal plane only)
-                let turret_pos = turret_transform.translation;
-                let target_pos = target_transform.translation;
+                // Use GlobalTransform to get world positions for direction calculation
+                let turret_pos = turret_global_transform.translation();
+                let target_pos = target_global_transform.translation();
                 let direction = (target_pos - turret_pos).normalize();
 
                 // Create target rotation (Y-axis only, keep barrels horizontal)
