@@ -12,7 +12,7 @@ struct ShieldMaterial {
     fresnel_power: f32,
     hex_scale: f32,
     time: f32,
-    _padding1: f32,
+    health_percent: f32,
     shield_center: vec3<f32>,
     shield_radius: f32,
     ripple_data: array<vec4<f32>, MAX_RIPPLES>, // xyz = position, w = age
@@ -76,9 +76,16 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let ripple_alpha = ripple_intensity * 0.4;
     let total_alpha = base_alpha + edge_alpha + hex_intensity * pulse * 0.2 + ripple_alpha;
 
+    // Gradual color shift to white as health decreases
+    // damage_ratio: 0.0 at full health, 1.0 at zero health
+    let damage_ratio = 1.0 - material.health_percent;
+    let white_shift = damage_ratio * 0.7; // Scale the shift intensity
+    let white = vec3<f32>(1.0, 1.0, 1.0);
+    let damaged_color = material.color.rgb + (white - material.color.rgb) * white_shift;
+
     // Final color with emissive glow and ripple brightness
     let ripple_glow = ripple_intensity * 2.0;
-    let final_color = material.color.rgb * (1.0 + fresnel * 2.0 + hex_pattern * pulse * 0.5 + ripple_glow);
+    let final_color = damaged_color * (1.0 + fresnel * 2.0 + hex_pattern * pulse * 0.5 + ripple_glow);
 
     return vec4<f32>(final_color, total_alpha);
 }

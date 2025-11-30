@@ -131,7 +131,7 @@ pub struct ShieldMaterial {
     #[uniform(0)]
     pub time: f32,
     #[uniform(0)]
-    pub _padding1: f32,
+    pub health_percent: f32,                   // 0.0 = dead, 1.0 = full health
     #[uniform(0)]
     pub shield_center: Vec3,                   // Shield center for ripple calculation
     #[uniform(0)]
@@ -161,7 +161,7 @@ impl Default for ShieldMaterial {
             fresnel_power: 3.0,
             hex_scale: 8.0,
             time: 0.0,
-            _padding1: 0.0,
+            health_percent: 1.0,
             shield_center: Vec3::ZERO,
             shield_radius: 50.0,
             ripple_data: [Vec4::ZERO; MAX_RIPPLES],
@@ -242,7 +242,7 @@ pub fn spawn_shield(
         fresnel_power: 3.0,
         hex_scale: 8.0,
         time: 0.0,
-        _padding1: 0.0,
+        health_percent: 1.0,
         shield_center: position,
         shield_radius: radius,
         ripple_data: [Vec4::ZERO; MAX_RIPPLES],
@@ -279,8 +279,10 @@ pub fn shield_collision_system(
     time: Res<Time>,
     mut shield_query: Query<(Entity, &mut Shield)>,
     laser_query: Query<(Entity, &crate::types::LaserProjectile, &Transform)>,
+    particle_effects: Res<crate::particles::ExplosionParticleEffects>,
 ) {
     let current_time = time.elapsed_secs();
+    let current_time_f64 = time.elapsed_secs_f64();
 
     for (shield_entity, mut shield) in shield_query.iter_mut() {
         for (laser_entity, laser, laser_transform) in laser_query.iter() {
@@ -298,9 +300,23 @@ pub fn shield_collision_system(
                 // Shield blocks the laser
                 shield.take_damage(25.0, current_time);
 
-                // 25% chance to spawn ripple effect
+                // 25% chance to spawn ripple effect and particles
                 if rand::random::<f32>() < RIPPLE_SPAWN_CHANCE {
                     shield.add_ripple(laser_pos, current_time);
+
+                    // Calculate impact point on shield surface
+                    let dir_to_laser = (laser_pos - shield.center).normalize();
+                    let surface_pos = shield.center + dir_to_laser * (shield.radius + 0.5);
+
+                    info!("Spawning shield impact particles at {:?}", surface_pos);
+
+                    // Spawn particle effect at surface impact point
+                    crate::particles::spawn_shield_impact_particles(
+                        &mut commands,
+                        &particle_effects,
+                        surface_pos,
+                        current_time_f64,
+                    );
                 }
 
                 commands.entity(laser_entity).despawn();
@@ -389,14 +405,8 @@ pub fn shield_health_visual_system(
             let flash_intensity = shield.impact_flash_timer / SHIELD_IMPACT_FLASH_DURATION;
             let impact_alpha = flash_intensity * 0.5;
 
-            // Set final alpha (clamped)
-            let base_color = material.color;
-            material.color = LinearRgba {
-                red: base_color.red * (1.0 + flash_intensity),
-                green: base_color.green * (1.0 + flash_intensity),
-                blue: base_color.blue * (1.0 + flash_intensity),
-                alpha: (health_alpha + impact_alpha).min(0.8),
-            };
+            // Update health percent for shader (shader will interpolate color to white)
+            material.health_percent = shield.health_percent();
 
             // Update ripple data for shader (pack position and time into Vec4)
             for (i, ripple) in shield.ripples.iter().enumerate() {
@@ -408,6 +418,27 @@ pub fn shield_health_visual_system(
                     ripple_age,
                 );
             }
+
+            // Set final alpha
+            material.color.alpha = (health_alpha + impact_alpha).min(0.8);
+        }
+    }
+}
+
+/// Despawns active shields when their tower is destroyed
+pub fn shield_tower_death_system(
+    mut commands: Commands,
+    shield_query: Query<(Entity, &Shield)>,
+    tower_query: Query<(&crate::types::UplinkTower, &crate::types::Health)>,
+) {
+    for (shield_entity, shield) in shield_query.iter() {
+        // Check if the tower for this shield's team is dead
+        let tower_dead = tower_query.iter()
+            .any(|(tower, health)| tower.team == shield.team && health.is_dead());
+
+        if tower_dead {
+            info!("Despawning shield for team {:?} - tower destroyed", shield.team);
+            commands.entity(shield_entity).despawn();
         }
     }
 }
@@ -419,10 +450,22 @@ pub fn shield_respawn_system(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ShieldMaterial>>,
     mut query: Query<(Entity, &mut DestroyedShield)>,
+    tower_query: Query<(&crate::types::UplinkTower, &crate::types::Health)>,
 ) {
     let delta = time.delta_secs();
 
     for (entity, mut destroyed) in query.iter_mut() {
+        // Check if the tower for this team is still alive
+        let tower_alive = tower_query.iter()
+            .any(|(tower, health)| tower.team == destroyed.team && !health.is_dead());
+
+        if !tower_alive {
+            // Tower is destroyed, don't respawn shield - just remove the marker
+            info!("Shield for team {:?} will not respawn - tower is destroyed", destroyed.team);
+            commands.entity(entity).despawn();
+            continue;
+        }
+
         destroyed.respawn_timer -= delta;
 
         if destroyed.respawn_timer <= 0.0 {

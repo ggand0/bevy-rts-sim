@@ -106,6 +106,7 @@ fn main() {
             shield::shield_regeneration_system,
             shield::shield_impact_flash_system,
             shield::shield_health_visual_system,
+            shield::shield_tower_death_system,
             shield::shield_respawn_system,
             shield::animate_shields,
         ).before(collision_detection_system))
