@@ -393,9 +393,21 @@ pub fn debug_explosion_hotkey_system(
     }
 }
 
-/// Resource to track explosion debug mode (key 0 toggles, then 1-6 spawn emitters)
-#[derive(Resource, Default)]
-pub struct ExplosionDebugMode(pub bool);
+/// Resource to track debug visualization modes (key 0 toggles debug menu)
+#[derive(Resource)]
+pub struct ExplosionDebugMode {
+    pub explosion_mode: bool,
+    pub show_collision_spheres: bool,
+}
+
+impl Default for ExplosionDebugMode {
+    fn default() -> Self {
+        Self {
+            explosion_mode: false,
+            show_collision_spheres: false,
+        }
+    }
+}
 
 /// System to update debug mode UI indicator
 pub fn update_debug_mode_ui(
@@ -407,8 +419,8 @@ pub fn update_debug_mode_ui(
     }
 
     for mut text in ui_query.iter_mut() {
-        if debug_mode.0 {
-            **text = "[0] EXPLOSION DEBUG: 1=glow 2=flames 3=smoke 4=sparkles 5=combined 6=dots".to_string();
+        if debug_mode.explosion_mode {
+            **text = "[0] EXPLOSION DEBUG: 1=glow 2=flames 3=smoke 4=sparkles 5=combined 6=dots | C=collision spheres".to_string();
         } else {
             **text = String::new();
         }
@@ -428,12 +440,19 @@ pub fn debug_warfx_test_system(
 ) {
     // 0 key: Toggle explosion debug mode
     if keyboard_input.just_pressed(KeyCode::Digit0) {
-        debug_mode.0 = !debug_mode.0;
+        debug_mode.explosion_mode = !debug_mode.explosion_mode;
+        return;
+    }
+
+    // C key: Toggle collision sphere visualization
+    if keyboard_input.just_pressed(KeyCode::KeyC) {
+        debug_mode.show_collision_spheres = !debug_mode.show_collision_spheres;
+        info!("Collision sphere visualization: {}", debug_mode.show_collision_spheres);
         return;
     }
 
     // Only process 1-6 keys when debug mode is active
-    if !debug_mode.0 {
+    if !debug_mode.explosion_mode {
         return;
     }
 

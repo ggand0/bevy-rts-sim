@@ -94,6 +94,7 @@ fn main() {
             update_projectiles,
             collision_detection_system,
             turret_rotation_system,
+            visualize_collision_spheres_system, // Debug visualization
         ))
         .add_systems(Update, (
             // Objective system

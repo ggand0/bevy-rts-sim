@@ -2,6 +2,8 @@ use bevy::prelude::*;
 use crate::types::*;
 use crate::constants::*;
 use crate::terrain::TerrainHeightmap;
+use bevy::render::mesh::{Indices, PrimitiveTopology};
+use bevy::render::render_asset::RenderAssetUsages;
 
 /// Check if there's a clear line of sight between shooter and target
 /// Returns true if the path is clear (no terrain blocking)
@@ -401,7 +403,8 @@ pub fn auto_fire_system(
                     // Calculate firing position and direction toward target
                     // Use GlobalTransform to get world position (handles parent-child hierarchies like turrets)
                     let firing_pos = droid_transform.translation() + Vec3::new(0.0, 0.8, 0.0);
-                    let target_pos = target_transform.translation() + Vec3::new(0.0, 0.8, 0.0);
+                    // Aim at center of collision sphere (ground level, where collision detection happens)
+                    let target_pos = target_transform.translation();
                     let direction = (target_pos - firing_pos).normalize();
                     let velocity = direction * LASER_SPEED;
                     
@@ -556,7 +559,7 @@ pub fn auto_fire_system(
 
             // Get or keep target
             if let Some(target_entity) = combat_unit.current_target {
-                // Try to get target as either a unit or a tower
+                // Double-check target still exists (critical for rapid-fire MG to avoid wasting shots)
                 let target_transform = target_query.get(target_entity)
                     .or_else(|_| tower_target_query.get(target_entity));
 
@@ -565,7 +568,7 @@ pub fn auto_fire_system(
 
                     // Determine barrel configuration, fire rate, laser speed, and bolt size
                     let (barrel_positions, fire_interval, laser_speed, laser_length) = if is_mg {
-                        (&mg_barrel_positions[..], 0.05, LASER_SPEED * 3.0, LASER_LENGTH * 0.6) // MG: 20 shots/sec, shorter bolts
+                        (&mg_barrel_positions[..], 0.05, LASER_SPEED * 3.0, LASER_LENGTH * 0.6) // MG: 20 shots/sec, 3x speed, shorter bolts
                     } else {
                         (&standard_barrel_positions[..], AUTO_FIRE_INTERVAL, LASER_SPEED, LASER_LENGTH)
                     };
@@ -592,7 +595,8 @@ pub fn auto_fire_system(
                     let world_barrel_offset = local_transform.rotation * local_barrel_pos;
                     let firing_pos = global_transform.translation() + world_barrel_offset;
 
-                    let target_pos = target_transform.translation() + Vec3::new(0.0, 0.8, 0.0);
+                    // Aim at center of collision sphere (ground level, where collision detection happens)
+                    let target_pos = target_transform.translation();
                     let direction = (target_pos - firing_pos).normalize();
                     let velocity = direction * laser_speed;
 
@@ -765,11 +769,14 @@ pub fn turret_rotation_system(
                 // Use GlobalTransform to get world positions for direction calculation
                 let turret_pos = turret_global_transform.translation();
                 let target_pos = target_global_transform.translation();
-                let direction = (target_pos - turret_pos).normalize();
 
-                // Create target rotation (Y-axis only, keep barrels horizontal)
-                let target_rotation = Transform::IDENTITY
-                    .looking_at(Vec3::new(direction.x, 0.0, direction.z), Vec3::Y)
+                // Flatten target position to horizontal plane (keep Y at turret's level)
+                let target_pos_flat = Vec3::new(target_pos.x, turret_pos.y, target_pos.z);
+
+                // Create target rotation using Transform's from_translation + looking_at
+                // This ensures the turret's -Z axis points at the target
+                let target_rotation = Transform::from_translation(turret_pos)
+                    .looking_at(target_pos_flat, Vec3::Y)
                     .rotation;
 
                 // Smooth rotation interpolation
@@ -780,5 +787,126 @@ pub fn turret_rotation_system(
                 );
             }
         }
+    }
+}
+
+// Marker component for debug spheres
+#[derive(Component)]
+pub struct DebugCollisionSphere;
+
+/// Create a wireframe sphere mesh for debug visualization
+fn create_debug_sphere_mesh(radius: f32, segments: usize) -> Mesh {
+    let mut mesh = Mesh::new(PrimitiveTopology::LineList, RenderAssetUsages::default());
+    let mut vertices = Vec::new();
+    let mut indices = Vec::new();
+
+    // Create sphere vertices using latitude/longitude
+    let rings = segments;
+    let sectors = segments * 2;
+
+    for ring in 0..=rings {
+        let theta = (ring as f32 / rings as f32) * std::f32::consts::PI;
+        let sin_theta = theta.sin();
+        let cos_theta = theta.cos();
+
+        for sector in 0..=sectors {
+            let phi = (sector as f32 / sectors as f32) * 2.0 * std::f32::consts::PI;
+            let sin_phi = phi.sin();
+            let cos_phi = phi.cos();
+
+            let x = sin_theta * cos_phi * radius;
+            let y = cos_theta * radius;
+            let z = sin_theta * sin_phi * radius;
+
+            vertices.push([x, y, z]);
+        }
+    }
+
+    // Create line indices for latitude circles
+    for ring in 0..rings {
+        for sector in 0..sectors {
+            let current = ring * (sectors + 1) + sector;
+            let next = current + 1;
+
+            indices.push(current as u32);
+            indices.push(next as u32);
+        }
+    }
+
+    // Create line indices for longitude circles
+    for sector in 0..=sectors {
+        for ring in 0..rings {
+            let current = ring * (sectors + 1) + sector;
+            let below = (ring + 1) * (sectors + 1) + sector;
+
+            indices.push(current as u32);
+            indices.push(below as u32);
+        }
+    }
+
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, vertices);
+    mesh.insert_indices(Indices::U32(indices));
+    mesh
+}
+
+/// System to visualize collision spheres for units (toggleable with C key when debug mode active)
+pub fn visualize_collision_spheres_system(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    droid_query: Query<(Entity, &Transform), (With<BattleDroid>, Without<DebugCollisionSphere>)>,
+    building_query: Query<(Entity, &GlobalTransform, &crate::types::BuildingCollider), Without<DebugCollisionSphere>>,
+    existing_spheres: Query<Entity, With<DebugCollisionSphere>>,
+    debug_mode: Res<crate::objective::ExplosionDebugMode>,
+) {
+    // Always remove existing debug spheres
+    for entity in existing_spheres.iter() {
+        commands.entity(entity).despawn_recursive();
+    }
+
+    // Only create new spheres if visualization is enabled
+    if !debug_mode.show_collision_spheres {
+        return;
+    }
+
+    // Create sphere mesh (reuse for all visualizations)
+    let unit_sphere_mesh = meshes.add(create_debug_sphere_mesh(COLLISION_RADIUS, 12));
+
+    // Semi-transparent green material for unit collision spheres
+    let unit_material = materials.add(StandardMaterial {
+        base_color: Color::srgba(0.0, 1.0, 0.0, 0.3),
+        alpha_mode: AlphaMode::Blend,
+        unlit: true,
+        cull_mode: None,
+        ..default()
+    });
+
+    // Visualize unit collision spheres
+    for (_entity, transform) in droid_query.iter() {
+        commands.spawn((
+            Mesh3d(unit_sphere_mesh.clone()),
+            MeshMaterial3d(unit_material.clone()),
+            Transform::from_translation(transform.translation),
+            DebugCollisionSphere,
+        ));
+    }
+
+    // Visualize building collision spheres (different color and size)
+    let building_material = materials.add(StandardMaterial {
+        base_color: Color::srgba(1.0, 0.5, 0.0, 0.3),
+        alpha_mode: AlphaMode::Blend,
+        unlit: true,
+        cull_mode: None,
+        ..default()
+    });
+
+    for (_entity, global_transform, collider) in building_query.iter() {
+        let building_sphere_mesh = meshes.add(create_debug_sphere_mesh(collider.radius, 16));
+        commands.spawn((
+            Mesh3d(building_sphere_mesh),
+            MeshMaterial3d(building_material.clone()),
+            Transform::from_translation(global_transform.translation()),
+            DebugCollisionSphere,
+        ));
     }
 } 
