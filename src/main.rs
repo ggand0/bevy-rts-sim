@@ -6,6 +6,7 @@ mod movement;
 mod setup;
 mod commander;
 mod objective;
+mod procedural_meshes;
 mod explosion_shader;
 mod explosion_system;
 mod particles;
