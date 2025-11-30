@@ -913,7 +913,7 @@ pub fn create_turret_rotating_assembly_mesh(meshes: &mut ResMut<Assets<Mesh>>) -
     meshes.add(mesh)
 }
 
-/// Create procedural mesh for the MG turret base (Simple 5x5 platform)
+/// Create procedural mesh for the MG turret base (Hexagonal platform)
 pub fn create_mg_turret_base_mesh(meshes: &mut ResMut<Assets<Mesh>>) -> Handle<Mesh> {
     let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::RENDER_WORLD);
 
@@ -921,53 +921,62 @@ pub fn create_mg_turret_base_mesh(meshes: &mut ResMut<Assets<Mesh>>) -> Handle<M
     let mut normals = Vec::new();
     let mut indices = Vec::new();
 
-    // Helper: Add Box
-    fn add_box(
+    // Helper: Add Cylinder (Y-aligned)
+    fn add_cylinder(
         vertices: &mut Vec<[f32; 3]>,
         normals: &mut Vec<[f32; 3]>,
         indices: &mut Vec<u32>,
         center: Vec3,
-        size: Vec3,
+        radius: f32,
+        height: f32,
+        segments: u32,
     ) {
-        let hw = size.x / 2.0;
-        let hh = size.y / 2.0;
-        let hd = size.z / 2.0;
-        
-        let raw_verts = [
-            [center.x - hw, center.y - hh, center.z - hd],
-            [center.x + hw, center.y - hh, center.z - hd],
-            [center.x + hw, center.y - hh, center.z + hd],
-            [center.x - hw, center.y - hh, center.z + hd],
-            [center.x - hw, center.y + hh, center.z - hd],
-            [center.x + hw, center.y + hh, center.z - hd],
-            [center.x + hw, center.y + hh, center.z + hd],
-            [center.x - hw, center.y + hh, center.z + hd],
-        ];
-        
-        let faces = [
-            ([0.0, -1.0, 0.0], [0, 1, 2, 3]), // Bottom
-            ([0.0, 1.0, 0.0], [4, 5, 6, 7]),  // Top
-            ([-1.0, 0.0, 0.0], [0, 3, 7, 4]), // Left
-            ([1.0, 0.0, 0.0], [1, 5, 6, 2]),  // Right
-            ([0.0, 0.0, -1.0], [0, 4, 5, 1]), // Back
-            ([0.0, 0.0, 1.0], [3, 2, 6, 7]),  // Front
-        ];
+        let base = vertices.len() as u32;
+        let half_height = height / 2.0;
 
-        for (normal, vert_indices) in faces {
-            let face_base = vertices.len() as u32;
-            for &idx in &vert_indices {
-                vertices.push(raw_verts[idx]);
-                normals.push(normal);
-            }
-            indices.push(face_base); indices.push(face_base + 1); indices.push(face_base + 2);
-            indices.push(face_base); indices.push(face_base + 2); indices.push(face_base + 3);
+        for i in 0..segments {
+            let angle = (i as f32 / segments as f32) * 2.0 * PI;
+            let n = [angle.cos(), 0.0, angle.sin()];
+            
+            vertices.push([center.x + n[0] * radius, center.y - half_height, center.z + n[2] * radius]);
+            normals.push(n);
+            vertices.push([center.x + n[0] * radius, center.y + half_height, center.z + n[2] * radius]);
+            normals.push(n);
+        }
+        
+        // Caps
+        vertices.push([center.x, center.y - half_height, center.z]);
+        normals.push([0.0, -1.0, 0.0]);
+        let bot = base + segments * 2;
+        
+        vertices.push([center.x, center.y + half_height, center.z]);
+        normals.push([0.0, 1.0, 0.0]);
+        let top = base + segments * 2 + 1;
+        
+        for i in 0..segments {
+            let next = (i + 1) % segments;
+            let b = base + i * 2;
+            let t = base + i * 2 + 1;
+            let bn = base + next * 2;
+            let tn = base + next * 2 + 1;
+            
+            indices.push(b); indices.push(tn); indices.push(t);
+            indices.push(b); indices.push(bn); indices.push(tn);
+            
+            indices.push(bot); indices.push(bn); indices.push(b);
+            indices.push(top); indices.push(t); indices.push(tn);
         }
     }
 
-    // 1. Simple Platform
-    add_box(&mut vertices, &mut normals, &mut indices,
+    // 1. Hexagonal Base Platform
+    add_cylinder(&mut vertices, &mut normals, &mut indices,
         Vec3::new(0.0, 0.5, 0.0), 
-        Vec3::new(5.0, 1.0, 5.0));
+        3.5, 1.0, 6); // Radius 3.5, Height 1.0, 6 segments = Hexagon
+
+    // 2. Upper Mount Point (Smaller Hexagon)
+    add_cylinder(&mut vertices, &mut normals, &mut indices,
+        Vec3::new(0.0, 1.2, 0.0), 
+        2.0, 0.4, 6);
 
     // Add UVs
     let uvs: Vec<[f32; 2]> = (0..vertices.len()).map(|_| [0.5, 0.5]).collect();
@@ -980,7 +989,7 @@ pub fn create_mg_turret_base_mesh(meshes: &mut ResMut<Assets<Mesh>>) -> Handle<M
     meshes.add(mesh)
 }
 
-/// Create procedural mesh for the MG turret assembly (Articulated arm with single barrel)
+/// Create procedural mesh for the MG turret assembly (Articulated arm with detailed barrel)
 pub fn create_mg_turret_assembly_mesh(meshes: &mut ResMut<Assets<Mesh>>) -> Handle<Mesh> {
     let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::RENDER_WORLD);
 
@@ -1125,13 +1134,17 @@ pub fn create_mg_turret_assembly_mesh(meshes: &mut ResMut<Assets<Mesh>>) -> Hand
         }
     }
 
-    // 1. Shoulder Swivel (Cylinder at base)
+    // 1. Shoulder Swivel (Improved Connector)
+    // Turret ring (wide base)
     add_cylinder(&mut vertices, &mut normals, &mut indices,
-        Vec3::new(0.0, 0.4, 0.0), 1.0, 0.8, 12);
+        Vec3::new(0.0, 0.2, 0.0), 1.2, 0.4, 16);
+    
+    // Hinge block (Box shape for pivot)
+    add_box(&mut vertices, &mut normals, &mut indices,
+        Vec3::new(0.0, 0.6, 0.0), 
+        Vec3::new(1.0, 0.8, 1.0));
 
     // 2. Arm Segment (Angled connection)
-    // We'll approximate the angled arm with a box for now, rotated slightly by just placing it carefully
-    // Or just a vertical support
     add_box(&mut vertices, &mut normals, &mut indices,
         Vec3::new(0.0, 1.4, 0.5), 
         Vec3::new(0.6, 1.5, 0.6));
@@ -1141,10 +1154,21 @@ pub fn create_mg_turret_assembly_mesh(meshes: &mut ResMut<Assets<Mesh>>) -> Hand
         Vec3::new(0.0, 2.0, 0.0), 
         Vec3::new(0.8, 0.8, 2.0));
 
-    // 4. Barrel (Z-aligned, pointing -Z)
+    // 4. Barrel (Stepped design, Z-aligned, pointing -Z)
+    // Stage 1: Barrel Shroud (Thick base)
     add_z_cylinder(&mut vertices, &mut normals, &mut indices,
-        Vec3::new(0.0, 2.0, -2.0), // Starts at housing front (-1.0) and extends
-        0.25, 3.0, 12);
+        Vec3::new(0.0, 2.0, -1.2), 
+        0.35, 0.8, 12);
+        
+    // Stage 2: Main Barrel (Long, thinner)
+    add_z_cylinder(&mut vertices, &mut normals, &mut indices,
+        Vec3::new(0.0, 2.0, -2.5), 
+        0.20, 2.5, 12);
+
+    // Stage 3: Muzzle Brake/Tip
+    add_z_cylinder(&mut vertices, &mut normals, &mut indices,
+        Vec3::new(0.0, 2.0, -3.8), 
+        0.25, 0.4, 12);
 
     // 5. Cooling Fins (Thin boxes along housing sides)
     let fin_count = 6;
