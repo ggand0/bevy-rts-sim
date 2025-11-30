@@ -1480,7 +1480,13 @@ pub fn spawn_mg_turret(
         crate::types::TurretRotatingAssembly {
             current_barrel_index: 0,
         },
-        crate::types::MgTurret,
+        crate::types::MgTurret {
+            firing_mode: crate::types::FiringMode::Continuous, // Start with Continuous mode for mowing down
+            shots_in_burst: 0,
+            max_burst_shots: 45,   // 45 shots at 0.08s = ~3.6 seconds before pause
+            cooldown_timer: 0.0,   // No cooldown initially
+            cooldown_duration: 1.5, // 1.5 second pause between bursts/sweeps
+        },
     )).id();
 
     // Link child to parent

@@ -67,9 +67,11 @@ pub fn setup_scene(
         asset_server.load("audio/sfx/laser4.wav"),
     ];
     let explosion_sound = asset_server.load("audio/sfx/distant_explosion1.wav");
+    let mg_sound = asset_server.load("audio/sfx/mg_1_single.wav");
     commands.insert_resource(AudioAssets {
         laser_sounds,
         explosion_sound,
+        mg_sound,
     });
 
     // UI text for performance info

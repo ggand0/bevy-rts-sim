@@ -125,6 +125,7 @@ pub struct CombatUnit {
 pub struct AudioAssets {
     pub laser_sounds: Vec<Handle<AudioSource>>,
     pub explosion_sound: Handle<AudioSource>,
+    pub mg_sound: Handle<AudioSource>,
 }
 
 impl AudioAssets {
@@ -320,8 +321,20 @@ pub struct BuildingCollider {
     pub radius: f32, // Collision radius for laser blocking
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum FiringMode {
+    Burst,      // Fires fixed number of shots then cooldown
+    Continuous, // Continuously fires and switches targets ("mowing down")
+}
+
 #[derive(Component)]
-pub struct MgTurret; // Marker for MG turret variant
+pub struct MgTurret {
+    pub firing_mode: FiringMode,
+    pub shots_in_burst: u32,      // Shots fired in current burst
+    pub max_burst_shots: u32,     // Max shots before pause (Burst: 40, Continuous: 40-50)
+    pub cooldown_timer: f32,      // Cooldown timer
+    pub cooldown_duration: f32,   // Cooldown duration (pause between bursts/sweeps)
+}
 
 // PendingExplosion and ExplosionEffect moved to src/explosion_system.rs
 

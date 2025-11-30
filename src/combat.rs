@@ -341,9 +341,11 @@ pub fn auto_fire_system(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut combat_query: Query<(&GlobalTransform, &BattleDroid, &mut CombatUnit), Without<crate::types::TurretRotatingAssembly>>,
-    mut turret_query: Query<(&GlobalTransform, &Transform, &BattleDroid, &mut CombatUnit, &mut crate::types::TurretRotatingAssembly, Option<&crate::types::MgTurret>)>,
+    mut turret_query: Query<(&GlobalTransform, &Transform, &BattleDroid, &mut CombatUnit, &mut crate::types::TurretRotatingAssembly, Option<&mut crate::types::MgTurret>)>,
     target_query: Query<&GlobalTransform, With<BattleDroid>>,
     tower_target_query: Query<&GlobalTransform, With<UplinkTower>>,
+    all_units_query: Query<(Entity, &GlobalTransform, &BattleDroid)>,
+    all_towers_query: Query<(Entity, &GlobalTransform, &UplinkTower)>,
     camera_query: Query<&Transform, (With<RtsCamera>, Without<LaserProjectile>)>,
     audio_assets: Res<AudioAssets>,
 ) {
@@ -356,7 +358,9 @@ pub fn auto_fire_system(
     
     // Count shots fired this frame for audio throttling
     let mut shots_fired = 0;
+    let mut mg_shots_fired = 0; // Separate counter for MG (prioritized)
     const MAX_AUDIO_PER_FRAME: usize = 5; // Limit concurrent audio to prevent spam
+    const MAX_MG_AUDIO_PER_FRAME: usize = 3; // Prioritized limit for MG turret
     
     for (droid_transform, droid, mut combat_unit) in combat_query.iter_mut() {
         // Update auto fire timer
@@ -445,22 +449,125 @@ pub fn auto_fire_system(
         Vec3::new(0.0, 2.0, -7.4),
     ];
 
-    for (global_transform, local_transform, droid, mut combat_unit, mut turret, mg_turret) in turret_query.iter_mut() {
+    for (global_transform, local_transform, droid, mut combat_unit, mut turret, mut mg_turret_opt) in turret_query.iter_mut() {
+        // Handle MG firing mode control
+        let mut can_fire = true;
+        if let Some(ref mut mg_turret) = mg_turret_opt {
+            match mg_turret.firing_mode {
+                crate::types::FiringMode::Burst => {
+                    // Burst mode: fire fixed shots then cooldown
+                    if mg_turret.cooldown_timer > 0.0 {
+                        mg_turret.cooldown_timer -= delta_time;
+                        can_fire = false;
+
+                        // Reset burst counter when cooldown ends
+                        if mg_turret.cooldown_timer <= 0.0 {
+                            mg_turret.shots_in_burst = 0;
+                        }
+                    } else if mg_turret.shots_in_burst >= mg_turret.max_burst_shots {
+                        // Start cooldown
+                        mg_turret.cooldown_timer = mg_turret.cooldown_duration;
+                        can_fire = false;
+                    }
+                }
+                crate::types::FiringMode::Continuous => {
+                    // Continuous mode: pause after max_burst_shots for cooling
+                    if mg_turret.cooldown_timer > 0.0 {
+                        mg_turret.cooldown_timer -= delta_time;
+                        can_fire = false;
+
+                        // Reset burst counter when cooldown ends
+                        if mg_turret.cooldown_timer <= 0.0 {
+                            mg_turret.shots_in_burst = 0;
+                        }
+                    } else if mg_turret.shots_in_burst >= mg_turret.max_burst_shots {
+                        // Start cooldown after firing max shots
+                        mg_turret.cooldown_timer = mg_turret.cooldown_duration;
+                        can_fire = false;
+                    }
+                }
+            }
+        }
+
         // Update auto fire timer
         combat_unit.auto_fire_timer -= delta_time;
 
-        if combat_unit.auto_fire_timer <= 0.0 && combat_unit.current_target.is_some() {
+        if can_fire && combat_unit.auto_fire_timer <= 0.0 {
+            // Handle target validation and rapid switching for MG turrets
+            let is_continuous_mode = mg_turret_opt.as_ref()
+                .map(|mg| mg.firing_mode == crate::types::FiringMode::Continuous)
+                .unwrap_or(false);
+
+            // Check if current target is dead
+            if combat_unit.current_target.is_some() {
+                if let Some(target_entity) = combat_unit.current_target {
+                    let target_exists = target_query.get(target_entity).is_ok() ||
+                                       tower_target_query.get(target_entity).is_ok();
+                    if !target_exists {
+                        combat_unit.current_target = None;
+                    }
+                }
+            }
+
+            // For continuous mode MG, immediately acquire new target if current is None
+            if is_continuous_mode && combat_unit.current_target.is_none() {
+                let shooter_pos = global_transform.translation();
+
+                // Find closest enemy in range
+                let mut closest_enemy: Option<(Entity, f32)> = None;
+
+                // Check all enemy units
+                for (target_entity, target_transform, target_droid) in all_units_query.iter() {
+                    if target_droid.team != droid.team {
+                        let distance = shooter_pos.distance(target_transform.translation());
+                        if distance <= TARGETING_RANGE {
+                            if let Some((_, min_dist)) = closest_enemy {
+                                if distance < min_dist {
+                                    closest_enemy = Some((target_entity, distance));
+                                }
+                            } else {
+                                closest_enemy = Some((target_entity, distance));
+                            }
+                        }
+                    }
+                }
+
+                // If no units found, check enemy towers
+                if closest_enemy.is_none() {
+                    for (target_entity, target_transform, target_tower) in all_towers_query.iter() {
+                        if target_tower.team != droid.team {
+                            let distance = shooter_pos.distance(target_transform.translation());
+                            if distance <= TARGETING_RANGE {
+                                if let Some((_, min_dist)) = closest_enemy {
+                                    if distance < min_dist {
+                                        closest_enemy = Some((target_entity, distance));
+                                    }
+                                } else {
+                                    closest_enemy = Some((target_entity, distance));
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Assign new target immediately
+                combat_unit.current_target = closest_enemy.map(|(entity, _)| entity);
+            }
+
+            // Get or keep target
             if let Some(target_entity) = combat_unit.current_target {
                 // Try to get target as either a unit or a tower
                 let target_transform = target_query.get(target_entity)
                     .or_else(|_| tower_target_query.get(target_entity));
 
                 if let Ok(target_transform) = target_transform {
-                    // Determine barrel configuration and fire rate
-                    let (barrel_positions, fire_interval) = if mg_turret.is_some() {
-                        (&mg_barrel_positions[..], 0.3) // Fast fire for MG
+                    let is_mg = mg_turret_opt.is_some();
+
+                    // Determine barrel configuration, fire rate, and laser speed
+                    let (barrel_positions, fire_interval, laser_speed) = if is_mg {
+                        (&mg_barrel_positions[..], 0.08, LASER_SPEED * 3.0) // Fast fire, 3x speed for MG
                     } else {
-                        (&standard_barrel_positions[..], AUTO_FIRE_INTERVAL)
+                        (&standard_barrel_positions[..], AUTO_FIRE_INTERVAL, LASER_SPEED)
                     };
 
                     // Reset timer
@@ -487,7 +594,7 @@ pub fn auto_fire_system(
 
                     let target_pos = target_transform.translation() + Vec3::new(0.0, 0.8, 0.0);
                     let direction = (target_pos - firing_pos).normalize();
-                    let velocity = direction * LASER_SPEED;
+                    let velocity = direction * laser_speed;
 
                     // Calculate proper initial orientation
                     let laser_rotation = calculate_laser_orientation(velocity, firing_pos, camera_position);
@@ -509,15 +616,32 @@ pub fn auto_fire_system(
                     // Advance to next barrel
                     turret.current_barrel_index = (turret.current_barrel_index + 1) % barrel_positions.len();
 
-                    // Play laser sound (throttled)
-                    shots_fired += 1;
-                    if shots_fired <= MAX_AUDIO_PER_FRAME {
-                        let mut rng = rand::thread_rng();
-                        let sound = audio_assets.get_random_laser_sound(&mut rng);
-                        commands.spawn((
-                            AudioPlayer::new(sound),
-                            PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::new(0.3)),
-                        ));
+                    // Increment MG burst counter (both modes track shots for pause timing)
+                    if let Some(ref mut mg_turret) = mg_turret_opt {
+                        mg_turret.shots_in_burst += 1;
+                    }
+
+                    // Play sound per bullet (MG sounds are prioritized with separate counter)
+                    if is_mg {
+                        mg_shots_fired += 1;
+                        if mg_shots_fired <= MAX_MG_AUDIO_PER_FRAME {
+                            // MG uses single bullet sound (always prioritized)
+                            commands.spawn((
+                                AudioPlayer::new(audio_assets.mg_sound.clone()),
+                                PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::new(0.25)),
+                            ));
+                        }
+                    } else {
+                        shots_fired += 1;
+                        if shots_fired <= MAX_AUDIO_PER_FRAME {
+                            // Standard turret uses random laser sound
+                            let mut rng = rand::thread_rng();
+                            let sound = audio_assets.get_random_laser_sound(&mut rng);
+                            commands.spawn((
+                                AudioPlayer::new(sound),
+                                PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::new(0.3)),
+                            ));
+                        }
                     }
                 }
             }
