@@ -7,6 +7,7 @@ mod setup;
 mod commander;
 mod objective;
 mod procedural_meshes;
+mod turrets;
 mod explosion_shader;
 mod explosion_system;
 mod particles;
@@ -24,6 +25,7 @@ use types::*;
 use combat::*;
 use formation::*;
 use objective::*;
+use turrets::*;
 
 
 fn main() {
