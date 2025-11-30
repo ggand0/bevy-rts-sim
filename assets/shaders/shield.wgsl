@@ -4,12 +4,18 @@
     forward_io::VertexOutput,
 }
 
+const MAX_RIPPLES: u32 = 8u;
+const RIPPLE_DURATION: f32 = 1.5;
+
 struct ShieldMaterial {
     color: vec4<f32>,
     fresnel_power: f32,
     hex_scale: f32,
     time: f32,
-    _padding: f32,
+    _padding1: f32,
+    shield_center: vec3<f32>,
+    shield_radius: f32,
+    ripple_data: array<vec4<f32>, MAX_RIPPLES>, // xyz = position, w = age
 }
 
 @group(2) @binding(0)
@@ -33,14 +39,46 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     // Energy pulse animation
     let pulse = sin(material.time * 2.0 + world_pos.y * 0.5) * 0.5 + 0.5;
 
+    // Calculate ripple effects
+    var ripple_intensity = 0.0;
+    for (var i = 0u; i < MAX_RIPPLES; i = i + 1u) {
+        let ripple_info = material.ripple_data[i];
+        let impact_pos = ripple_info.xyz;
+        let ripple_age = ripple_info.w;
+
+        // Skip inactive ripples
+        if ripple_age < 0.0 || ripple_age > RIPPLE_DURATION {
+            continue;
+        }
+
+        // Distance from world position to impact point
+        let dist_to_impact = distance(world_pos, impact_pos);
+
+        // Ripple expands outward from impact
+        let ripple_radius = ripple_age * 30.0; // Expansion speed
+        let ripple_width = 4.0;
+
+        // Create expanding ring
+        let ring_dist = abs(dist_to_impact - ripple_radius);
+        let ring_falloff = 1.0 - smoothstep(0.0, ripple_width, ring_dist);
+
+        // Fade out over time
+        let fade = 1.0 - (ripple_age / RIPPLE_DURATION);
+        let fade_curve = fade * fade; // Quadratic fadeout
+
+        ripple_intensity += ring_falloff * fade_curve * 0.5;
+    }
+
     // Combine effects
     let hex_intensity = hex_pattern * 0.3;
     let base_alpha = material.color.a * 0.2;
     let edge_alpha = fresnel * 0.6;
-    let total_alpha = base_alpha + edge_alpha + hex_intensity * pulse * 0.2;
+    let ripple_alpha = ripple_intensity * 0.4;
+    let total_alpha = base_alpha + edge_alpha + hex_intensity * pulse * 0.2 + ripple_alpha;
 
-    // Final color with emissive glow
-    let final_color = material.color.rgb * (1.0 + fresnel * 2.0 + hex_pattern * pulse * 0.5);
+    // Final color with emissive glow and ripple brightness
+    let ripple_glow = ripple_intensity * 2.0;
+    let final_color = material.color.rgb * (1.0 + fresnel * 2.0 + hex_pattern * pulse * 0.5 + ripple_glow);
 
     return vec4<f32>(final_color, total_alpha);
 }

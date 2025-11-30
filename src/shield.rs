@@ -11,6 +11,9 @@ const SHIELD_REGEN_RATE: f32 = 50.0; // HP per second
 const SHIELD_REGEN_DELAY: f32 = 3.0; // Seconds after last hit before regen starts
 const SHIELD_RESPAWN_DELAY: f32 = 10.0; // Seconds after destruction before respawn
 const SHIELD_IMPACT_FLASH_DURATION: f32 = 0.2; // Seconds
+const MAX_RIPPLES: usize = 8; // Maximum simultaneous ripple effects
+const RIPPLE_DURATION: f32 = 1.5; // Seconds for ripple to expand and fade
+const RIPPLE_SPAWN_CHANCE: f32 = 0.25; // 25% chance to spawn ripple on hit
 
 pub struct ShieldPlugin;
 
@@ -18,6 +21,22 @@ impl Plugin for ShieldPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(MaterialPlugin::<ShieldMaterial>::default());
         // Shield systems are registered in main.rs with proper ordering
+    }
+}
+
+/// Represents a single ripple effect on the shield
+#[derive(Clone, Copy)]
+pub struct ShieldRipple {
+    pub position: Vec3,      // World position of impact
+    pub spawn_time: f32,     // When the ripple was created
+}
+
+impl Default for ShieldRipple {
+    fn default() -> Self {
+        Self {
+            position: Vec3::ZERO,
+            spawn_time: -999.0, // Inactive by default
+        }
     }
 }
 
@@ -32,6 +51,7 @@ pub struct Shield {
     pub last_hit_time: f32,
     pub impact_flash_timer: f32,
     pub base_alpha: f32,
+    pub ripples: [ShieldRipple; MAX_RIPPLES],
 }
 
 impl Shield {
@@ -46,6 +66,7 @@ impl Shield {
             last_hit_time: -999.0,
             impact_flash_timer: 0.0,
             base_alpha: 0.2,
+            ripples: [ShieldRipple::default(); MAX_RIPPLES],
         }
     }
 
@@ -53,6 +74,31 @@ impl Shield {
         self.current_hp = (self.current_hp - damage).max(0.0);
         self.last_hit_time = current_time;
         self.impact_flash_timer = SHIELD_IMPACT_FLASH_DURATION;
+    }
+
+    pub fn add_ripple(&mut self, position: Vec3, current_time: f32) {
+        // Find oldest ripple slot or first inactive slot
+        let mut oldest_idx = 0;
+        let mut oldest_time = self.ripples[0].spawn_time;
+
+        for (i, ripple) in self.ripples.iter().enumerate() {
+            // Check if inactive (very old)
+            if current_time - ripple.spawn_time > RIPPLE_DURATION {
+                oldest_idx = i;
+                break;
+            }
+            // Track oldest for replacement
+            if ripple.spawn_time < oldest_time {
+                oldest_time = ripple.spawn_time;
+                oldest_idx = i;
+            }
+        }
+
+        // Add new ripple
+        self.ripples[oldest_idx] = ShieldRipple {
+            position,
+            spawn_time: current_time,
+        };
     }
 
     pub fn is_destroyed(&self) -> bool {
@@ -85,7 +131,13 @@ pub struct ShieldMaterial {
     #[uniform(0)]
     pub time: f32,
     #[uniform(0)]
-    pub _padding: f32,
+    pub _padding1: f32,
+    #[uniform(0)]
+    pub shield_center: Vec3,                   // Shield center for ripple calculation
+    #[uniform(0)]
+    pub shield_radius: f32,                    // Shield radius
+    #[uniform(0)]
+    pub ripple_data: [Vec4; MAX_RIPPLES],      // x,y,z = position, w = time
 }
 
 impl Material for ShieldMaterial {
@@ -109,7 +161,10 @@ impl Default for ShieldMaterial {
             fresnel_power: 3.0,
             hex_scale: 8.0,
             time: 0.0,
-            _padding: 0.0,
+            _padding1: 0.0,
+            shield_center: Vec3::ZERO,
+            shield_radius: 50.0,
+            ripple_data: [Vec4::ZERO; MAX_RIPPLES],
         }
     }
 }
@@ -187,7 +242,10 @@ pub fn spawn_shield(
         fresnel_power: 3.0,
         hex_scale: 8.0,
         time: 0.0,
-        _padding: 0.0,
+        _padding1: 0.0,
+        shield_center: position,
+        shield_radius: radius,
+        ripple_data: [Vec4::ZERO; MAX_RIPPLES],
     };
 
     let material_handle = materials.add(shield_material);
@@ -239,6 +297,12 @@ pub fn shield_collision_system(
             if distance < shield.radius {
                 // Shield blocks the laser
                 shield.take_damage(25.0, current_time);
+
+                // 25% chance to spawn ripple effect
+                if rand::random::<f32>() < RIPPLE_SPAWN_CHANCE {
+                    shield.add_ripple(laser_pos, current_time);
+                }
+
                 commands.entity(laser_entity).despawn();
 
                 info!(
@@ -310,9 +374,12 @@ pub fn shield_impact_flash_system(
 
 /// Updates shield material alpha based on health and impacts
 pub fn shield_health_visual_system(
+    time: Res<Time>,
     mut materials: ResMut<Assets<ShieldMaterial>>,
     query: Query<&Shield>,
 ) {
+    let current_time = time.elapsed_secs();
+
     for shield in query.iter() {
         if let Some(material) = materials.get_mut(&shield.material_handle) {
             // Calculate alpha based on health (fade out as HP decreases)
@@ -330,6 +397,17 @@ pub fn shield_health_visual_system(
                 blue: base_color.blue * (1.0 + flash_intensity),
                 alpha: (health_alpha + impact_alpha).min(0.8),
             };
+
+            // Update ripple data for shader (pack position and time into Vec4)
+            for (i, ripple) in shield.ripples.iter().enumerate() {
+                let ripple_age = current_time - ripple.spawn_time;
+                material.ripple_data[i] = Vec4::new(
+                    ripple.position.x,
+                    ripple.position.y,
+                    ripple.position.z,
+                    ripple_age,
+                );
+            }
         }
     }
 }
