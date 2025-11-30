@@ -125,6 +125,7 @@ pub struct CombatUnit {
 pub struct AudioAssets {
     pub laser_sounds: Vec<Handle<AudioSource>>,
     pub explosion_sound: Handle<AudioSource>,
+    pub mg_sound: Handle<AudioSource>,
 }
 
 impl AudioAssets {
@@ -303,6 +304,36 @@ pub struct UplinkTower {
 pub struct ObjectiveTarget {
     pub team: Team,
     pub is_primary: bool, // Primary objectives end the game when destroyed
+}
+
+// Turret components
+#[derive(Component)]
+pub struct TurretBase; // Marker for static turret base
+
+#[derive(Component)]
+pub struct TurretRotatingAssembly {
+    pub current_barrel_index: usize, // 0-3 for four barrels in 2x2 arrangement
+}
+
+// Building collision component
+#[derive(Component)]
+pub struct BuildingCollider {
+    pub radius: f32, // Collision radius for laser blocking
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum FiringMode {
+    Burst,      // Fires fixed number of shots then cooldown
+    Continuous, // Continuously fires and switches targets ("mowing down")
+}
+
+#[derive(Component)]
+pub struct MgTurret {
+    pub firing_mode: FiringMode,
+    pub shots_in_burst: u32,      // Shots fired in current burst
+    pub max_burst_shots: u32,     // Max shots before pause (Burst: 40, Continuous: 40-50)
+    pub cooldown_timer: f32,      // Cooldown timer
+    pub cooldown_duration: f32,   // Cooldown duration (pause between bursts/sweeps)
 }
 
 // PendingExplosion and ExplosionEffect moved to src/explosion_system.rs

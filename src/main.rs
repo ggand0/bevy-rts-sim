@@ -6,6 +6,8 @@ mod movement;
 mod setup;
 mod commander;
 mod objective;
+mod procedural_meshes;
+mod turrets;
 mod explosion_shader;
 mod explosion_system;
 mod particles;
@@ -23,6 +25,7 @@ use types::*;
 use combat::*;
 use formation::*;
 use objective::*;
+use turrets::*;
 
 
 fn main() {
@@ -43,6 +46,15 @@ fn main() {
         .add_systems(Startup, (setup::setup_scene, spawn_uplink_towers, spawn_objective_ui))
         // Army spawning runs after terrain is ready (terrain spawns in TerrainPlugin's Startup)
         .add_systems(Startup, setup::spawn_army_with_squads.after(terrain::spawn_initial_terrain))
+        // Turret spawning runs after terrain is ready
+        .add_systems(Startup, (
+            spawn_functional_turret.after(terrain::spawn_initial_terrain),
+            spawn_mg_turret.after(terrain::spawn_initial_terrain),
+        ))
+        .add_systems(Update, (
+            // Map switching - respawn turrets when terrain changes
+            respawn_turrets_on_map_switch,
+        ))
         .add_systems(Update, (
             // Formation and squad management systems run first
             squad_formation_system,
@@ -85,6 +97,8 @@ fn main() {
             volley_fire_system,
             update_projectiles,
             collision_detection_system,
+            turret_rotation_system,
+            visualize_collision_spheres_system, // Debug visualization
         ))
         .add_systems(Update, (
             // Objective system
