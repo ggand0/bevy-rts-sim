@@ -772,9 +772,10 @@ pub fn create_turret_rotating_assembly_mesh(meshes: &mut ResMut<Assets<Mesh>>) -
             [center.x - hw, center.y + hh, center.z + hd],
         ];
         
+        // Corrected winding for all faces (CCW)
         let faces = [
             ([0.0, -1.0, 0.0], [0, 1, 2, 3]), // Bottom
-            ([0.0, 1.0, 0.0], [4, 5, 6, 7]),  // Top
+            ([0.0, 1.0, 0.0], [4, 7, 6, 5]),  // Top - FLIPPED
             ([-1.0, 0.0, 0.0], [0, 3, 7, 4]), // Left
             ([1.0, 0.0, 0.0], [1, 5, 6, 2]),  // Right
             ([0.0, 0.0, -1.0], [0, 4, 5, 1]), // Back
@@ -815,15 +816,6 @@ pub fn create_turret_rotating_assembly_mesh(meshes: &mut ResMut<Assets<Mesh>>) -
             normals.push(n);
         }
         
-        // Caps
-        vertices.push([center.x, center.y - half_height, center.z]);
-        normals.push([0.0, -1.0, 0.0]);
-        let bot = base + segments * 2;
-        
-        vertices.push([center.x, center.y + half_height, center.z]);
-        normals.push([0.0, 1.0, 0.0]);
-        let top = base + segments * 2 + 1;
-        
         for i in 0..segments {
             let next = (i + 1) % segments;
             let b = base + i * 2;
@@ -831,11 +823,52 @@ pub fn create_turret_rotating_assembly_mesh(meshes: &mut ResMut<Assets<Mesh>>) -
             let bn = base + next * 2;
             let tn = base + next * 2 + 1;
             
-            indices.push(b); indices.push(tn); indices.push(t);
-            indices.push(b); indices.push(bn); indices.push(tn);
-            
-            indices.push(bot); indices.push(bn); indices.push(b);
-            indices.push(top); indices.push(t); indices.push(tn);
+            // CCW Winding for Sides
+            indices.push(b); indices.push(t); indices.push(tn);
+            indices.push(b); indices.push(tn); indices.push(bn);
+        }
+
+        // 2. Bottom Cap
+        let bot_center_idx = vertices.len() as u32;
+        vertices.push([center.x, center.y - half_height, center.z]);
+        normals.push([0.0, -1.0, 0.0]);
+        
+        let bot_ring_start = vertices.len() as u32;
+        for i in 0..segments {
+            let angle = (i as f32 / segments as f32) * 2.0 * PI;
+            let x = angle.cos() * radius;
+            let z = angle.sin() * radius;
+            vertices.push([center.x + x, center.y - half_height, center.z + z]);
+            normals.push([0.0, -1.0, 0.0]);
+        }
+
+        for i in 0..segments {
+            let next = (i + 1) % segments;
+            indices.push(bot_center_idx);
+            indices.push(bot_ring_start + next);
+            indices.push(bot_ring_start + i);
+        }
+
+        // 3. Top Cap
+        let top_center_idx = vertices.len() as u32;
+        vertices.push([center.x, center.y + half_height, center.z]);
+        normals.push([0.0, 1.0, 0.0]);
+        
+        let top_ring_start = vertices.len() as u32;
+        for i in 0..segments {
+            let angle = (i as f32 / segments as f32) * 2.0 * PI;
+            let x = angle.cos() * radius;
+            let z = angle.sin() * radius;
+            vertices.push([center.x + x, center.y + half_height, center.z + z]);
+            normals.push([0.0, 1.0, 0.0]);
+        }
+
+        for i in 0..segments {
+            let next = (i + 1) % segments;
+            indices.push(top_center_idx);
+            // Reversed winding for Top Cap visibility (next, i)
+            indices.push(top_ring_start + next);
+            indices.push(top_ring_start + i);
         }
     }
 
@@ -862,15 +895,6 @@ pub fn create_turret_rotating_assembly_mesh(meshes: &mut ResMut<Assets<Mesh>>) -
             normals.push(n);
         }
         
-        // Caps
-        vertices.push([center.x, center.y, center.z - half_len]);
-        normals.push([0.0, 0.0, -1.0]);
-        let back = base + segments * 2;
-        
-        vertices.push([center.x, center.y, center.z + half_len]);
-        normals.push([0.0, 0.0, 1.0]);
-        let front = base + segments * 2 + 1;
-        
         for i in 0..segments {
             let next = (i + 1) % segments;
             let b = base + i * 2;
@@ -878,11 +902,51 @@ pub fn create_turret_rotating_assembly_mesh(meshes: &mut ResMut<Assets<Mesh>>) -
             let bn = base + next * 2;
             let tn = base + next * 2 + 1;
             
+            // Reverted winding order (b, tn, t) for Outward faces
             indices.push(b); indices.push(tn); indices.push(t);
             indices.push(b); indices.push(bn); indices.push(tn);
-            
-            indices.push(back); indices.push(bn); indices.push(b);
-            indices.push(front); indices.push(t); indices.push(tn);
+        }
+
+        // 2. Back Cap
+        let back_center_idx = vertices.len() as u32;
+        vertices.push([center.x, center.y, center.z - half_len]);
+        normals.push([0.0, 0.0, -1.0]);
+        
+        let back_ring_start = vertices.len() as u32;
+        for i in 0..segments {
+            let angle = (i as f32 / segments as f32) * 2.0 * PI;
+            let x = angle.cos() * radius;
+            let y = angle.sin() * radius;
+            vertices.push([center.x + x, center.y + y, center.z - half_len]);
+            normals.push([0.0, 0.0, -1.0]);
+        }
+
+        for i in 0..segments {
+            let next = (i + 1) % segments;
+            indices.push(back_center_idx);
+            indices.push(back_ring_start + next);
+            indices.push(back_ring_start + i);
+        }
+
+        // 3. Front Cap
+        let front_center_idx = vertices.len() as u32;
+        vertices.push([center.x, center.y, center.z + half_len]);
+        normals.push([0.0, 0.0, 1.0]);
+        
+        let front_ring_start = vertices.len() as u32;
+        for i in 0..segments {
+            let angle = (i as f32 / segments as f32) * 2.0 * PI;
+            let x = angle.cos() * radius;
+            let y = angle.sin() * radius;
+            vertices.push([center.x + x, center.y + y, center.z + half_len]);
+            normals.push([0.0, 0.0, 1.0]);
+        }
+
+        for i in 0..segments {
+            let next = (i + 1) % segments;
+            indices.push(front_center_idx);
+            indices.push(front_ring_start + i);
+            indices.push(front_ring_start + next);
         }
     }
 
