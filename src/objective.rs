@@ -61,6 +61,7 @@ pub fn spawn_uplink_towers(
         team_a_pos,
         50.0, // Shield radius (covers tower and surrounding area)
         Color::srgb(0.2, 0.6, 1.0), // Blue shield matching team color
+        Team::A,
     );
     
     // Spawn Team B tower (right side, behind army)
@@ -90,6 +91,7 @@ pub fn spawn_uplink_towers(
         team_b_pos,
         50.0, // Shield radius (covers tower and surrounding area)
         Color::srgb(1.0, 0.4, 0.2), // Orange/red shield matching team color
+        Team::B,
     );
 
     info!("Spawned Uplink Towers with shields for both teams");
@@ -242,23 +244,38 @@ pub fn win_condition_system(
 pub fn update_objective_ui_system(
     mut ui_query: Query<&mut Text, With<ObjectiveUI>>,
     tower_query: Query<(&UplinkTower, &Health), With<UplinkTower>>,
+    shield_query: Query<&crate::shield::Shield>,
+    destroyed_shield_query: Query<&crate::shield::DestroyedShield>,
     game_state: Res<GameState>,
 ) {
     for mut text in ui_query.iter_mut() {
         let mut ui_text = String::new();
-        
-        // Tower health display
+
+        // Tower and Shield health display
         ui_text.push_str("=== UPLINK TOWERS ===\n");
         for (tower, health) in tower_query.iter() {
+            // Find shield for this team
+            let shield_status = if let Some(shield) = shield_query.iter().find(|s| s.team == tower.team) {
+                format!("Shield: {:.0}/{:.0} ({:.0}%)",
+                    shield.current_hp,
+                    shield.max_hp,
+                    shield.health_percent() * 100.0)
+            } else if let Some(destroyed) = destroyed_shield_query.iter().find(|d| d.team == tower.team) {
+                format!("Shield: RESPAWN IN {:.1}s", destroyed.respawn_timer)
+            } else {
+                "Shield: OFFLINE".to_string()
+            };
+
             ui_text.push_str(&format!(
-                "Team {:?}: {:.0}/{:.0} HP ({:.1}%)\n",
+                "Team {:?}:\n  Tower: {:.0}/{:.0} HP ({:.1}%)\n  {}\n",
                 tower.team,
                 health.current,
                 health.max,
-                health.health_percentage() * 100.0
+                health.health_percentage() * 100.0,
+                shield_status
             ));
         }
-        
+
         // Game status
         if game_state.game_ended {
             if let Some(winner) = game_state.winner {
@@ -267,7 +284,7 @@ pub fn update_objective_ui_system(
         } else {
             ui_text.push_str("\n⚔️ Battle in Progress ⚔️");
         }
-        
+
         **text = ui_text;
     }
 }

@@ -99,13 +99,25 @@ fn main() {
             auto_fire_system,
             volley_fire_system,
             update_projectiles,
+        ))
+        .add_systems(Update, (
+            // Shield collision detection runs BEFORE unit collision
+            shield::shield_collision_system,
+            shield::shield_regeneration_system,
+            shield::shield_impact_flash_system,
+            shield::shield_health_visual_system,
+            shield::shield_respawn_system,
+            shield::animate_shields,
+        ).before(collision_detection_system))
+        .add_systems(Update, (
+            // Unit collision and turret systems
             collision_detection_system,
             turret_rotation_system,
             visualize_collision_spheres_system, // Debug visualization
         ))
         .add_systems(Update, (
-            // Objective system
-            tower_targeting_system,
+            // Objective system (tower targeting runs after shields)
+            tower_targeting_system.after(shield::shield_collision_system),
             tower_destruction_system,
             pending_explosion_system,
             explosion_effect_system,
