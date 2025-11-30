@@ -625,10 +625,31 @@ pub fn auto_fire_system(
                     if is_mg {
                         mg_shots_fired += 1;
                         if mg_shots_fired <= MAX_MG_AUDIO_PER_FRAME {
-                            // MG uses single bullet sound (always prioritized)
+                            // MG uses single bullet sound with distance-based volume
+                            let turret_pos = global_transform.translation();
+                            let distance = turret_pos.distance(camera_position);
+
+                            // Distance-based volume attenuation
+                            // Max volume (0.25) at close range (< 50 units)
+                            // Min volume (0.05) at far range (> 200 units)
+                            const MIN_DISTANCE: f32 = 50.0;
+                            const MAX_DISTANCE: f32 = 200.0;
+                            const MAX_VOLUME: f32 = 0.25;
+                            const MIN_VOLUME: f32 = 0.05;
+
+                            let volume = if distance <= MIN_DISTANCE {
+                                MAX_VOLUME
+                            } else if distance >= MAX_DISTANCE {
+                                MIN_VOLUME
+                            } else {
+                                // Linear interpolation between min and max
+                                let t = (distance - MIN_DISTANCE) / (MAX_DISTANCE - MIN_DISTANCE);
+                                MAX_VOLUME - t * (MAX_VOLUME - MIN_VOLUME)
+                            };
+
                             commands.spawn((
                                 AudioPlayer::new(audio_assets.mg_sound.clone()),
-                                PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::new(0.25)),
+                                PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::new(volume)),
                             ));
                         }
                     } else {
