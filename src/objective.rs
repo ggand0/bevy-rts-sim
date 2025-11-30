@@ -1259,21 +1259,26 @@ pub fn create_mg_turret_assembly_mesh(meshes: &mut ResMut<Assets<Mesh>>) -> Hand
         Vec3::new(0.0, 2.0, 0.0), 
         Vec3::new(0.8, 0.8, 2.0));
 
-    // 4. Barrel (Stepped design, Z-aligned, pointing -Z)
-    // Stage 1: Barrel Shroud (Thick base)
+    // 4. Barrel (Oerlikon 20mm Style - Elongated)
+    // Stage 1: Base Connector/Shroud
     add_z_cylinder(&mut vertices, &mut normals, &mut indices,
         Vec3::new(0.0, 2.0, -1.2), 
-        0.35, 0.8, 12);
-        
-    // Stage 2: Main Barrel (Long, thinner)
-    add_z_cylinder(&mut vertices, &mut normals, &mut indices,
-        Vec3::new(0.0, 2.0, -2.5), 
-        0.20, 2.5, 12);
-
-    // Stage 3: Muzzle Brake/Tip
-    add_z_cylinder(&mut vertices, &mut normals, &mut indices,
-        Vec3::new(0.0, 2.0, -3.8), 
         0.25, 0.4, 12);
+        
+    // Stage 2: Recoil Spring/Mechanism (Thicker section)
+    add_z_cylinder(&mut vertices, &mut normals, &mut indices,
+        Vec3::new(0.0, 2.0, -2.2), 
+        0.18, 1.6, 12);
+
+    // Stage 3: Main Long Barrel (Thin)
+    add_z_cylinder(&mut vertices, &mut normals, &mut indices,
+        Vec3::new(0.0, 2.0, -5.0), 
+        0.10, 4.0, 12);
+
+    // Stage 4: Muzzle Brake/Flash Hider
+    add_z_cylinder(&mut vertices, &mut normals, &mut indices,
+        Vec3::new(0.0, 2.0, -7.2), 
+        0.14, 0.4, 12);
 
     // 5. Cooling Fins (Thin boxes along housing sides)
     // Moved slightly outward to avoid z-fighting with housing

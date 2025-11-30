@@ -442,7 +442,7 @@ pub fn auto_fire_system(
     
     // MG turret barrel position (single center barrel)
     let mg_barrel_positions = [
-        Vec3::new(0.0, 2.0, -5.0),
+        Vec3::new(0.0, 2.0, -7.4),
     ];
 
     for (global_transform, local_transform, droid, mut combat_unit, mut turret, mg_turret) in turret_query.iter_mut() {
