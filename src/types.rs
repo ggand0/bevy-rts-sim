@@ -305,6 +305,13 @@ pub struct ObjectiveTarget {
     pub is_primary: bool, // Primary objectives end the game when destroyed
 }
 
+// Turret components
+#[derive(Component)]
+pub struct TurretBase; // Marker for static turret base
+
+#[derive(Component)]
+pub struct TurretRotatingAssembly; // Marker for rotating turret assembly
+
 // PendingExplosion and ExplosionEffect moved to src/explosion_system.rs
 
 // Game state management

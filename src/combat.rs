@@ -493,4 +493,34 @@ pub fn collision_detection_system(
             entity_commands.despawn_recursive();
         }
     }
+}
+
+/// Turret rotation system - smoothly rotates turret assembly to face current target
+pub fn turret_rotation_system(
+    time: Res<Time>,
+    mut turret_query: Query<(&mut Transform, &CombatUnit), With<crate::types::TurretRotatingAssembly>>,
+    target_query: Query<&Transform, (With<BattleDroid>, Without<crate::types::TurretRotatingAssembly>)>,
+) {
+    for (mut turret_transform, combat_unit) in turret_query.iter_mut() {
+        if let Some(target_entity) = combat_unit.current_target {
+            if let Ok(target_transform) = target_query.get(target_entity) {
+                // Calculate direction to target (horizontal plane only)
+                let turret_pos = turret_transform.translation;
+                let target_pos = target_transform.translation;
+                let direction = (target_pos - turret_pos).normalize();
+
+                // Create target rotation (Y-axis only, keep barrels horizontal)
+                let target_rotation = Transform::IDENTITY
+                    .looking_at(Vec3::new(direction.x, 0.0, direction.z), Vec3::Y)
+                    .rotation;
+
+                // Smooth rotation interpolation
+                let rotation_speed = 3.0; // Radians per second
+                turret_transform.rotation = turret_transform.rotation.slerp(
+                    target_rotation,
+                    rotation_speed * time.delta_secs()
+                );
+            }
+        }
+    }
 } 

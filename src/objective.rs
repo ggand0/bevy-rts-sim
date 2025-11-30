@@ -3,6 +3,7 @@ use bevy::prelude::*;
 use rand::Rng;
 use crate::types::*;
 use crate::constants::*;
+use crate::terrain::TerrainHeightmap;
 use bevy::render::mesh::{Indices, Mesh, PrimitiveTopology};
 use bevy::render::render_asset::RenderAssetUsages;
 
@@ -598,6 +599,285 @@ pub fn spawn_objective_ui(mut commands: Commands) {
         },
         DebugModeUI,
     ));
+}
+
+// ===== TURRET SYSTEMS =====
+
+use std::f32::consts::PI;
+
+/// Create procedural mesh for the static turret base (hexagonal platform)
+pub fn create_turret_base_mesh(meshes: &mut ResMut<Assets<Mesh>>) -> Handle<Mesh> {
+    let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::RENDER_WORLD);
+
+    let mut vertices = Vec::new();
+    let mut normals = Vec::new();
+    let mut indices = Vec::new();
+
+    // Helper function to add a box
+    let mut add_box = |center: Vec3, size: Vec3| {
+        let base = vertices.len() as u32;
+        let hw = size.x / 2.0;
+        let hh = size.y / 2.0;
+        let hd = size.z / 2.0;
+
+        let box_vertices = [
+            [center.x - hw, center.y - hh, center.z - hd],
+            [center.x + hw, center.y - hh, center.z - hd],
+            [center.x + hw, center.y - hh, center.z + hd],
+            [center.x - hw, center.y - hh, center.z + hd],
+            [center.x - hw, center.y + hh, center.z - hd],
+            [center.x + hw, center.y + hh, center.z - hd],
+            [center.x + hw, center.y + hh, center.z + hd],
+            [center.x - hw, center.y + hh, center.z + hd],
+        ];
+
+        vertices.extend_from_slice(&box_vertices);
+
+        for _ in 0..8 {
+            normals.push([0.0, 1.0, 0.0]);
+        }
+
+        let box_indices = [
+            base + 0, base + 1, base + 2, base + 0, base + 2, base + 3,
+            base + 4, base + 6, base + 5, base + 4, base + 7, base + 6,
+            base + 0, base + 7, base + 4, base + 0, base + 3, base + 7,
+            base + 1, base + 5, base + 6, base + 1, base + 6, base + 2,
+            base + 0, base + 4, base + 5, base + 0, base + 5, base + 1,
+            base + 3, base + 2, base + 6, base + 3, base + 6, base + 7,
+        ];
+        indices.extend_from_slice(&box_indices);
+    };
+
+    // Create hexagonal base platform
+    add_box(Vec3::new(0.0, 0.75, 0.0), Vec3::new(8.0, 1.5, 8.0));
+
+    // Add UVs
+    let uvs: Vec<[f32; 2]> = (0..vertices.len()).map(|_| [0.5, 0.5]).collect();
+
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, vertices);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
+    mesh.insert_indices(bevy::render::mesh::Indices::U32(indices));
+
+    meshes.add(mesh)
+}
+
+/// Create procedural mesh for the rotating turret assembly (housing + barrels)
+pub fn create_turret_rotating_assembly_mesh(meshes: &mut ResMut<Assets<Mesh>>) -> Handle<Mesh> {
+    let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::RENDER_WORLD);
+
+    let mut vertices = Vec::new();
+    let mut normals = Vec::new();
+    let mut indices = Vec::new();
+
+    // Helper functions - using direct function calls instead of closures to avoid borrow issues
+    fn add_box_to_mesh(
+        vertices: &mut Vec<[f32; 3]>,
+        normals: &mut Vec<[f32; 3]>,
+        indices: &mut Vec<u32>,
+        center: Vec3,
+        size: Vec3,
+    ) {
+        let base = vertices.len() as u32;
+        let hw = size.x / 2.0;
+        let hh = size.y / 2.0;
+        let hd = size.z / 2.0;
+
+        let box_vertices = [
+            [center.x - hw, center.y - hh, center.z - hd],
+            [center.x + hw, center.y - hh, center.z - hd],
+            [center.x + hw, center.y - hh, center.z + hd],
+            [center.x - hw, center.y - hh, center.z + hd],
+            [center.x - hw, center.y + hh, center.z - hd],
+            [center.x + hw, center.y + hh, center.z - hd],
+            [center.x + hw, center.y + hh, center.z + hd],
+            [center.x - hw, center.y + hh, center.z + hd],
+        ];
+
+        vertices.extend_from_slice(&box_vertices);
+
+        for _ in 0..8 {
+            normals.push([0.0, 1.0, 0.0]);
+        }
+
+        let box_indices = [
+            base + 0, base + 1, base + 2, base + 0, base + 2, base + 3,
+            base + 4, base + 6, base + 5, base + 4, base + 7, base + 6,
+            base + 0, base + 7, base + 4, base + 0, base + 3, base + 7,
+            base + 1, base + 5, base + 6, base + 1, base + 6, base + 2,
+            base + 0, base + 4, base + 5, base + 0, base + 5, base + 1,
+            base + 3, base + 2, base + 6, base + 3, base + 6, base + 7,
+        ];
+        indices.extend_from_slice(&box_indices);
+    }
+
+    fn add_cylinder_to_mesh(
+        vertices: &mut Vec<[f32; 3]>,
+        normals: &mut Vec<[f32; 3]>,
+        indices: &mut Vec<u32>,
+        center: Vec3,
+        radius: f32,
+        height: f32,
+        segments: u32,
+    ) {
+        let base = vertices.len() as u32;
+        let half_height = height / 2.0;
+
+        // Bottom circle vertices
+        for i in 0..segments {
+            let angle = (i as f32 / segments as f32) * 2.0 * PI;
+            vertices.push([
+                center.x + angle.cos() * radius,
+                center.y - half_height,
+                center.z + angle.sin() * radius,
+            ]);
+            normals.push([angle.cos(), 0.0, angle.sin()]);
+        }
+
+        // Top circle vertices
+        for i in 0..segments {
+            let angle = (i as f32 / segments as f32) * 2.0 * PI;
+            vertices.push([
+                center.x + angle.cos() * radius,
+                center.y + half_height,
+                center.z + angle.sin() * radius,
+            ]);
+            normals.push([angle.cos(), 0.0, angle.sin()]);
+        }
+
+        // Center vertices for caps
+        vertices.push([center.x, center.y - half_height, center.z]);
+        normals.push([0.0, -1.0, 0.0]);
+        let bottom_center = base + segments * 2;
+
+        vertices.push([center.x, center.y + half_height, center.z]);
+        normals.push([0.0, 1.0, 0.0]);
+        let top_center = base + segments * 2 + 1;
+
+        // Side faces
+        for i in 0..segments {
+            let next = (i + 1) % segments;
+            indices.push(base + i);
+            indices.push(base + segments + i);
+            indices.push(base + next);
+
+            indices.push(base + next);
+            indices.push(base + segments + i);
+            indices.push(base + segments + next);
+        }
+
+        // Bottom cap
+        for i in 0..segments {
+            let next = (i + 1) % segments;
+            indices.push(bottom_center);
+            indices.push(base + next);
+            indices.push(base + i);
+        }
+
+        // Top cap
+        for i in 0..segments {
+            let next = (i + 1) % segments;
+            indices.push(top_center);
+            indices.push(base + segments + i);
+            indices.push(base + segments + next);
+        }
+    }
+
+    // Main cylindrical housing
+    add_cylinder_to_mesh(&mut vertices, &mut normals, &mut indices, Vec3::new(0.0, 1.25, 0.0), 3.0, 2.5, 16);
+
+    // Barrel mounting plate
+    add_box_to_mesh(&mut vertices, &mut normals, &mut indices, Vec3::new(0.0, 2.5, 1.5), Vec3::new(2.5, 0.4, 1.5));
+
+    // Four barrels in 2x2 grid
+    let barrel_spacing = 1.0;
+    let barrel_offset_y = 2.5;
+    let barrel_offset_z = 2.5;
+
+    let barrel_positions = [
+        Vec3::new(-barrel_spacing / 2.0, barrel_offset_y, barrel_offset_z),
+        Vec3::new(barrel_spacing / 2.0, barrel_offset_y, barrel_offset_z),
+        Vec3::new(-barrel_spacing / 2.0, barrel_offset_y + barrel_spacing, barrel_offset_z),
+        Vec3::new(barrel_spacing / 2.0, barrel_offset_y + barrel_spacing, barrel_offset_z),
+    ];
+
+    for barrel_pos in barrel_positions {
+        add_cylinder_to_mesh(&mut vertices, &mut normals, &mut indices, barrel_pos, 0.2, 4.0, 12);
+
+        // Small support cylinder connecting barrel to housing
+        let support_pos = Vec3::new(barrel_pos.x, barrel_pos.y, 1.5);
+        add_cylinder_to_mesh(&mut vertices, &mut normals, &mut indices, support_pos, 0.15, 1.0, 8);
+    }
+
+    // Add UVs
+    let uvs: Vec<[f32; 2]> = (0..vertices.len()).map(|_| [0.5, 0.5]).collect();
+
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, vertices);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
+    mesh.insert_indices(bevy::render::mesh::Indices::U32(indices));
+
+    meshes.add(mesh)
+}
+
+/// Spawn a functional turret with rotating assembly
+pub fn spawn_functional_turret(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    heightmap: Res<TerrainHeightmap>,
+) {
+    // Sample terrain height at turret position
+    let x = 30.0;
+    let z = 30.0;
+    let terrain_height = heightmap.sample_height(x, z);
+    let turret_world_pos = Vec3::new(x, terrain_height, z);
+
+    // Create meshes
+    let base_mesh = create_turret_base_mesh(&mut meshes);
+    let assembly_mesh = create_turret_rotating_assembly_mesh(&mut meshes);
+
+    // Create gunmetal material
+    let material = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.25, 0.25, 0.28),
+        metallic: 0.9,
+        perceptual_roughness: 0.3,
+        ..default()
+    });
+
+    // Spawn base entity (parent)
+    let base_entity = commands.spawn((
+        Mesh3d(base_mesh),
+        MeshMaterial3d(material.clone()),
+        Transform::from_translation(turret_world_pos),
+        crate::types::TurretBase,
+    )).id();
+
+    // Spawn rotating assembly entity (child)
+    let assembly_entity = commands.spawn((
+        Mesh3d(assembly_mesh),
+        MeshMaterial3d(material),
+        Transform::from_xyz(0.0, 1.5, 0.0), // Local offset from parent
+        BattleDroid {
+            team: Team::A,
+            march_speed: 0.0,
+            spawn_position: turret_world_pos,
+            target_position: turret_world_pos,
+            march_offset: 0.0,
+            returning_to_spawn: false,
+        },
+        CombatUnit {
+            target_scan_timer: 0.0,  // Scan immediately
+            auto_fire_timer: 2.0,
+            current_target: None,
+        },
+        crate::types::TurretRotatingAssembly,
+    )).id();
+
+    // Link child to parent
+    commands.entity(base_entity).add_children(&[assembly_entity]);
+
+    info!("Spawned functional turret at position ({}, {}, {})", x, terrain_height, z);
 }
 
 // ===== DEBUG SYSTEMS =====
