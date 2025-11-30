@@ -312,6 +312,12 @@ pub struct TurretBase; // Marker for static turret base
 #[derive(Component)]
 pub struct TurretRotatingAssembly; // Marker for rotating turret assembly
 
+// Building collision component
+#[derive(Component)]
+pub struct BuildingCollider {
+    pub radius: f32, // Collision radius for laser blocking
+}
+
 // PendingExplosion and ExplosionEffect moved to src/explosion_system.rs
 
 // Game state management

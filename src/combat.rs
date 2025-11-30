@@ -439,50 +439,68 @@ pub fn collision_detection_system(
     mut squad_manager: ResMut<SquadManager>,
     laser_query: Query<(Entity, &Transform, &LaserProjectile)>,
     droid_query: Query<(Entity, &Transform, &BattleDroid, &SquadMember), Without<LaserProjectile>>,
+    building_query: Query<(Entity, &GlobalTransform, &crate::types::BuildingCollider)>,
 ) {
     // Clear and rebuild the spatial grid each frame
     spatial_grid.clear();
-    
+
     // Populate grid with droids
     for (droid_entity, droid_transform, _, _) in droid_query.iter() {
         spatial_grid.add_droid(droid_entity, droid_transform.translation);
     }
-    
+
     let mut entities_to_despawn = std::collections::HashSet::new();
-    
+
     // Check collisions for each laser using spatial grid
     for (laser_entity, laser_transform, laser) in laser_query.iter() {
         // Skip if laser already marked for despawn
         if entities_to_despawn.contains(&laser_entity) {
             continue;
         }
-        
+
+        // Check building collisions first (buildings block lasers)
+        let mut hit_building = false;
+        for (_building_entity, building_transform, building_collider) in building_query.iter() {
+            let distance = laser_transform.translation.distance(building_transform.translation());
+            if distance <= building_collider.radius {
+                // Hit building! Mark laser for despawn (but not the building)
+                entities_to_despawn.insert(laser_entity);
+                hit_building = true;
+                break;
+            }
+        }
+
+        // If laser hit a building, skip unit collision checks
+        if hit_building {
+            continue;
+        }
+
         // Get only nearby droids using spatial grid
         let nearby_droids = spatial_grid.get_nearby_droids(laser_transform.translation);
-        
+
         for &droid_entity in &nearby_droids {
             // Skip if droid already marked for despawn
             if entities_to_despawn.contains(&droid_entity) {
                 continue;
             }
-            
+
             // Get droid data - we need to check if it still exists and get its data
             if let Ok((_, droid_transform, droid, _squad_member)) = droid_query.get(droid_entity) {
                 // Skip friendly fire
                 if laser.team == droid.team {
                     continue;
                 }
-                
+
                 // Simple sphere collision detection
                 let distance = laser_transform.translation.distance(droid_transform.translation);
                 if distance <= COLLISION_RADIUS {
                     // Hit! Mark both laser and droid for despawn
                     entities_to_despawn.insert(laser_entity);
                     entities_to_despawn.insert(droid_entity);
-                    
+
                     // Handle squad casualty immediately (commander promotion, etc.)
                     squad_manager.remove_unit_from_squad(droid_entity);
-                    
+
                     break; // Laser can only hit one target
                 }
             }

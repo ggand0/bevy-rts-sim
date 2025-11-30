@@ -360,6 +360,7 @@ pub fn spawn_uplink_towers(
             is_primary: true,
         },
         Health::new(TOWER_MAX_HEALTH),
+        crate::types::BuildingCollider { radius: 5.0 }, // Collision radius for laser blocking
     ));
     
     // Spawn Team B tower (right side, behind army)
@@ -378,6 +379,7 @@ pub fn spawn_uplink_towers(
             is_primary: true,
         },
         Health::new(TOWER_MAX_HEALTH),
+        crate::types::BuildingCollider { radius: 5.0 }, // Collision radius for laser blocking
     ));
     
     info!("Spawned Uplink Towers for both teams");
@@ -949,6 +951,7 @@ pub fn spawn_functional_turret(
         MeshMaterial3d(base_material),
         Transform::from_translation(turret_world_pos),
         crate::types::TurretBase,
+        crate::types::BuildingCollider { radius: 4.0 }, // Collision radius for laser blocking
     )).id();
 
     // Spawn rotating assembly entity (child)
