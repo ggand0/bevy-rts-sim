@@ -341,7 +341,7 @@ pub fn auto_fire_system(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut combat_query: Query<(&GlobalTransform, &BattleDroid, &mut CombatUnit), Without<crate::types::TurretRotatingAssembly>>,
-    mut turret_query: Query<(&GlobalTransform, &Transform, &BattleDroid, &mut CombatUnit, &mut crate::types::TurretRotatingAssembly)>,
+    mut turret_query: Query<(&GlobalTransform, &Transform, &BattleDroid, &mut CombatUnit, &mut crate::types::TurretRotatingAssembly, Option<&crate::types::MgTurret>)>,
     target_query: Query<&GlobalTransform, With<BattleDroid>>,
     tower_target_query: Query<&GlobalTransform, With<UplinkTower>>,
     camera_query: Query<&Transform, (With<RtsCamera>, Without<LaserProjectile>)>,
@@ -434,13 +434,18 @@ pub fn auto_fire_system(
     }
 
     // Handle turret firing with barrel positions
-    // Define barrel positions in local space (relative to turret assembly)
-    let barrel_positions = [
+    // Standard turret barrel positions
+    let standard_barrel_positions = [
         Vec3::new(-1.8, 1.5, -6.0), // Left barrel muzzle
         Vec3::new(1.8, 1.5, -6.0),  // Right barrel muzzle
     ];
+    
+    // MG turret barrel position (single center barrel)
+    let mg_barrel_positions = [
+        Vec3::new(0.0, 2.0, -5.0),
+    ];
 
-    for (global_transform, local_transform, droid, mut combat_unit, mut turret) in turret_query.iter_mut() {
+    for (global_transform, local_transform, droid, mut combat_unit, mut turret, mg_turret) in turret_query.iter_mut() {
         // Update auto fire timer
         combat_unit.auto_fire_timer -= delta_time;
 
@@ -451,8 +456,15 @@ pub fn auto_fire_system(
                     .or_else(|_| tower_target_query.get(target_entity));
 
                 if let Ok(target_transform) = target_transform {
+                    // Determine barrel configuration and fire rate
+                    let (barrel_positions, fire_interval) = if mg_turret.is_some() {
+                        (&mg_barrel_positions[..], 0.3) // Fast fire for MG
+                    } else {
+                        (&standard_barrel_positions[..], AUTO_FIRE_INTERVAL)
+                    };
+
                     // Reset timer
-                    combat_unit.auto_fire_timer = AUTO_FIRE_INTERVAL;
+                    combat_unit.auto_fire_timer = fire_interval;
 
                     // Create laser material (green for Team A turret)
                     let laser_material = materials.add(StandardMaterial {
@@ -598,10 +610,10 @@ pub fn collision_detection_system(
 /// Turret rotation system - smoothly rotates turret assembly to face current target
 pub fn turret_rotation_system(
     time: Res<Time>,
-    mut turret_query: Query<(&mut Transform, &GlobalTransform, &CombatUnit), With<crate::types::TurretRotatingAssembly>>,
+    mut turret_query: Query<(&mut Transform, &GlobalTransform, &CombatUnit, Option<&crate::types::MgTurret>), With<crate::types::TurretRotatingAssembly>>,
     target_query: Query<&GlobalTransform, (With<BattleDroid>, Without<crate::types::TurretRotatingAssembly>)>,
 ) {
-    for (mut turret_transform, turret_global_transform, combat_unit) in turret_query.iter_mut() {
+    for (mut turret_transform, turret_global_transform, combat_unit, mg_turret) in turret_query.iter_mut() {
         if let Some(target_entity) = combat_unit.current_target {
             if let Ok(target_global_transform) = target_query.get(target_entity) {
                 // Calculate direction to target (horizontal plane only)
@@ -616,7 +628,7 @@ pub fn turret_rotation_system(
                     .rotation;
 
                 // Smooth rotation interpolation
-                let rotation_speed = 3.0; // Radians per second
+                let rotation_speed = if mg_turret.is_some() { 5.0 } else { 3.0 }; // Faster for MG
                 turret_transform.rotation = turret_transform.rotation.slerp(
                     target_rotation,
                     rotation_speed * time.delta_secs()

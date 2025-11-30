@@ -44,7 +44,10 @@ fn main() {
         // Army spawning runs after terrain is ready (terrain spawns in TerrainPlugin's Startup)
         .add_systems(Startup, setup::spawn_army_with_squads.after(terrain::spawn_initial_terrain))
         // Turret spawning runs after terrain is ready
-        .add_systems(Startup, spawn_functional_turret.after(terrain::spawn_initial_terrain))
+        .add_systems(Startup, (
+            spawn_functional_turret.after(terrain::spawn_initial_terrain),
+            spawn_mg_turret.after(terrain::spawn_initial_terrain),
+        ))
         .add_systems(Update, (
             // Formation and squad management systems run first
             squad_formation_system,

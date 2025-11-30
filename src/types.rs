@@ -320,6 +320,9 @@ pub struct BuildingCollider {
     pub radius: f32, // Collision radius for laser blocking
 }
 
+#[derive(Component)]
+pub struct MgTurret; // Marker for MG turret variant
+
 // PendingExplosion and ExplosionEffect moved to src/explosion_system.rs
 
 // Game state management
