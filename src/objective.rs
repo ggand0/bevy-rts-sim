@@ -972,7 +972,9 @@ pub fn spawn_functional_turret(
             auto_fire_timer: 2.0,
             current_target: None,
         },
-        crate::types::TurretRotatingAssembly,
+        crate::types::TurretRotatingAssembly {
+            current_barrel_index: 0,
+        },
     )).id();
 
     // Link child to parent

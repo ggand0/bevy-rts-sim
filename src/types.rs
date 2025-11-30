@@ -310,7 +310,9 @@ pub struct ObjectiveTarget {
 pub struct TurretBase; // Marker for static turret base
 
 #[derive(Component)]
-pub struct TurretRotatingAssembly; // Marker for rotating turret assembly
+pub struct TurretRotatingAssembly {
+    pub current_barrel_index: usize, // 0-3 for four barrels in 2x2 arrangement
+}
 
 // Building collision component
 #[derive(Component)]

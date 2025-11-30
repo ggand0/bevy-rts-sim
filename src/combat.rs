@@ -340,7 +340,8 @@ pub fn auto_fire_system(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    mut combat_query: Query<(&GlobalTransform, &BattleDroid, &mut CombatUnit)>,
+    mut combat_query: Query<(&GlobalTransform, &BattleDroid, &mut CombatUnit), Without<crate::types::TurretRotatingAssembly>>,
+    mut turret_query: Query<(&GlobalTransform, &Transform, &BattleDroid, &mut CombatUnit, &mut crate::types::TurretRotatingAssembly)>,
     target_query: Query<&GlobalTransform, With<BattleDroid>>,
     tower_target_query: Query<&GlobalTransform, With<UplinkTower>>,
     camera_query: Query<&Transform, (With<RtsCamera>, Without<LaserProjectile>)>,
@@ -418,6 +419,85 @@ pub fn auto_fire_system(
                     ));
                     
                     // Play random laser sound (throttled to prevent audio spam)
+                    shots_fired += 1;
+                    if shots_fired <= MAX_AUDIO_PER_FRAME {
+                        let mut rng = rand::thread_rng();
+                        let sound = audio_assets.get_random_laser_sound(&mut rng);
+                        commands.spawn((
+                            AudioPlayer::new(sound),
+                            PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::new(0.3)),
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
+    // Handle turret firing with barrel positions
+    // Define barrel positions in local space (relative to turret assembly)
+    let barrel_positions = [
+        Vec3::new(-1.8, 1.5, -6.0), // Left barrel muzzle
+        Vec3::new(1.8, 1.5, -6.0),  // Right barrel muzzle
+    ];
+
+    for (global_transform, local_transform, droid, mut combat_unit, mut turret) in turret_query.iter_mut() {
+        // Update auto fire timer
+        combat_unit.auto_fire_timer -= delta_time;
+
+        if combat_unit.auto_fire_timer <= 0.0 && combat_unit.current_target.is_some() {
+            if let Some(target_entity) = combat_unit.current_target {
+                // Try to get target as either a unit or a tower
+                let target_transform = target_query.get(target_entity)
+                    .or_else(|_| tower_target_query.get(target_entity));
+
+                if let Ok(target_transform) = target_transform {
+                    // Reset timer
+                    combat_unit.auto_fire_timer = AUTO_FIRE_INTERVAL;
+
+                    // Create laser material (green for Team A turret)
+                    let laser_material = materials.add(StandardMaterial {
+                        base_color: Color::srgb(0.0, 2.0, 0.0), // Green for Team A
+                        emissive: Color::srgb(0.0, 1.0, 0.0).into(),
+                        unlit: true,
+                        alpha_mode: AlphaMode::Add,
+                        cull_mode: None,
+                        ..default()
+                    });
+
+                    let laser_mesh = meshes.add(Rectangle::new(LASER_WIDTH, LASER_LENGTH));
+
+                    // Get current barrel position in local space
+                    let local_barrel_pos = barrel_positions[turret.current_barrel_index % barrel_positions.len()];
+
+                    // Transform barrel position to world space using turret's rotation
+                    let world_barrel_offset = local_transform.rotation * local_barrel_pos;
+                    let firing_pos = global_transform.translation() + world_barrel_offset;
+
+                    let target_pos = target_transform.translation() + Vec3::new(0.0, 0.8, 0.0);
+                    let direction = (target_pos - firing_pos).normalize();
+                    let velocity = direction * LASER_SPEED;
+
+                    // Calculate proper initial orientation
+                    let laser_rotation = calculate_laser_orientation(velocity, firing_pos, camera_position);
+                    let laser_transform = Transform::from_translation(firing_pos)
+                        .with_rotation(laser_rotation);
+
+                    // Spawn laser
+                    commands.spawn((
+                        Mesh3d(laser_mesh),
+                        MeshMaterial3d(laser_material),
+                        laser_transform,
+                        LaserProjectile {
+                            velocity,
+                            lifetime: LASER_LIFETIME,
+                            team: droid.team,
+                        },
+                    ));
+
+                    // Advance to next barrel
+                    turret.current_barrel_index = (turret.current_barrel_index + 1) % barrel_positions.len();
+
+                    // Play laser sound (throttled)
                     shots_fired += 1;
                     if shots_fired <= MAX_AUDIO_PER_FRAME {
                         let mut rng = rand::thread_rng();
