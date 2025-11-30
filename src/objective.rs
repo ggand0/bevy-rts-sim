@@ -921,7 +921,7 @@ pub fn create_mg_turret_base_mesh(meshes: &mut ResMut<Assets<Mesh>>) -> Handle<M
     let mut normals = Vec::new();
     let mut indices = Vec::new();
 
-    // Helper: Add Cylinder (Y-aligned)
+    // Helper: Add Cylinder (Y-aligned) with flat shading for caps
     fn add_cylinder(
         vertices: &mut Vec<[f32; 3]>,
         normals: &mut Vec<[f32; 3]>,
@@ -931,40 +931,76 @@ pub fn create_mg_turret_base_mesh(meshes: &mut ResMut<Assets<Mesh>>) -> Handle<M
         height: f32,
         segments: u32,
     ) {
-        let base = vertices.len() as u32;
         let half_height = height / 2.0;
 
+        // 1. Side Faces
+        let side_base = vertices.len() as u32;
         for i in 0..segments {
             let angle = (i as f32 / segments as f32) * 2.0 * PI;
             let n = [angle.cos(), 0.0, angle.sin()];
             
+            // Bottom ring vertex
             vertices.push([center.x + n[0] * radius, center.y - half_height, center.z + n[2] * radius]);
             normals.push(n);
+            
+            // Top ring vertex
             vertices.push([center.x + n[0] * radius, center.y + half_height, center.z + n[2] * radius]);
             normals.push(n);
         }
-        
-        // Caps
-        vertices.push([center.x, center.y - half_height, center.z]);
-        normals.push([0.0, -1.0, 0.0]);
-        let bot = base + segments * 2;
-        
-        vertices.push([center.x, center.y + half_height, center.z]);
-        normals.push([0.0, 1.0, 0.0]);
-        let top = base + segments * 2 + 1;
-        
+
         for i in 0..segments {
             let next = (i + 1) % segments;
-            let b = base + i * 2;
-            let t = base + i * 2 + 1;
-            let bn = base + next * 2;
-            let tn = base + next * 2 + 1;
+            let b = side_base + i * 2;
+            let t = side_base + i * 2 + 1;
+            let bn = side_base + next * 2;
+            let tn = side_base + next * 2 + 1;
             
-            indices.push(b); indices.push(tn); indices.push(t);
-            indices.push(b); indices.push(bn); indices.push(tn);
-            
-            indices.push(bot); indices.push(bn); indices.push(b);
-            indices.push(top); indices.push(t); indices.push(tn);
+            // Fixed winding order (CCW) for Y-Axis Cylinder
+            indices.push(b); indices.push(t); indices.push(tn);
+            indices.push(b); indices.push(tn); indices.push(bn);
+        }
+
+        // 2. Bottom Cap
+        let bot_center_idx = vertices.len() as u32;
+        vertices.push([center.x, center.y - half_height, center.z]);
+        normals.push([0.0, -1.0, 0.0]);
+        
+        let bot_ring_start = vertices.len() as u32;
+        for i in 0..segments {
+            let angle = (i as f32 / segments as f32) * 2.0 * PI;
+            let x = angle.cos() * radius;
+            let z = angle.sin() * radius;
+            vertices.push([center.x + x, center.y - half_height, center.z + z]);
+            normals.push([0.0, -1.0, 0.0]);
+        }
+
+        for i in 0..segments {
+            let next = (i + 1) % segments;
+            indices.push(bot_center_idx);
+            indices.push(bot_ring_start + next);
+            indices.push(bot_ring_start + i);
+        }
+
+        // 3. Top Cap
+        let top_center_idx = vertices.len() as u32;
+        vertices.push([center.x, center.y + half_height, center.z]);
+        normals.push([0.0, 1.0, 0.0]);
+        
+        let top_ring_start = vertices.len() as u32;
+        for i in 0..segments {
+            let angle = (i as f32 / segments as f32) * 2.0 * PI;
+            let x = angle.cos() * radius;
+            let z = angle.sin() * radius;
+            vertices.push([center.x + x, center.y + half_height, center.z + z]);
+            normals.push([0.0, 1.0, 0.0]);
+        }
+
+        for i in 0..segments {
+            let next = (i + 1) % segments;
+            indices.push(top_center_idx);
+            // FLIPPED winding for Top Cap to be visible (+Y)
+            indices.push(top_ring_start + next);
+            indices.push(top_ring_start + i);
         }
     }
 
@@ -1022,7 +1058,7 @@ pub fn create_mg_turret_assembly_mesh(meshes: &mut ResMut<Assets<Mesh>>) -> Hand
         
         let faces = [
             ([0.0, -1.0, 0.0], [0, 1, 2, 3]), // Bottom
-            ([0.0, 1.0, 0.0], [4, 5, 6, 7]),  // Top
+            ([0.0, 1.0, 0.0], [4, 7, 6, 5]),  // Top - FLIPPED INDICES for CCW
             ([-1.0, 0.0, 0.0], [0, 3, 7, 4]), // Left
             ([1.0, 0.0, 0.0], [1, 5, 6, 2]),  // Right
             ([0.0, 0.0, -1.0], [0, 4, 5, 1]), // Back
@@ -1050,40 +1086,74 @@ pub fn create_mg_turret_assembly_mesh(meshes: &mut ResMut<Assets<Mesh>>) -> Hand
         height: f32,
         segments: u32,
     ) {
-        let base = vertices.len() as u32;
         let half_height = height / 2.0;
 
+        // 1. Side Faces
+        let side_base = vertices.len() as u32;
         for i in 0..segments {
             let angle = (i as f32 / segments as f32) * 2.0 * PI;
             let n = [angle.cos(), 0.0, angle.sin()];
             
             vertices.push([center.x + n[0] * radius, center.y - half_height, center.z + n[2] * radius]);
             normals.push(n);
+            
             vertices.push([center.x + n[0] * radius, center.y + half_height, center.z + n[2] * radius]);
             normals.push(n);
         }
-        
-        // Caps
-        vertices.push([center.x, center.y - half_height, center.z]);
-        normals.push([0.0, -1.0, 0.0]);
-        let bot = base + segments * 2;
-        
-        vertices.push([center.x, center.y + half_height, center.z]);
-        normals.push([0.0, 1.0, 0.0]);
-        let top = base + segments * 2 + 1;
-        
+
         for i in 0..segments {
             let next = (i + 1) % segments;
-            let b = base + i * 2;
-            let t = base + i * 2 + 1;
-            let bn = base + next * 2;
-            let tn = base + next * 2 + 1;
+            let b = side_base + i * 2;
+            let t = side_base + i * 2 + 1;
+            let bn = side_base + next * 2;
+            let tn = side_base + next * 2 + 1;
             
-            indices.push(b); indices.push(tn); indices.push(t);
-            indices.push(b); indices.push(bn); indices.push(tn);
-            
-            indices.push(bot); indices.push(bn); indices.push(b);
-            indices.push(top); indices.push(t); indices.push(tn);
+            // Fixed winding order (CCW)
+            indices.push(b); indices.push(t); indices.push(tn);
+            indices.push(b); indices.push(tn); indices.push(bn);
+        }
+
+        // 2. Bottom Cap
+        let bot_center_idx = vertices.len() as u32;
+        vertices.push([center.x, center.y - half_height, center.z]);
+        normals.push([0.0, -1.0, 0.0]);
+        
+        let bot_ring_start = vertices.len() as u32;
+        for i in 0..segments {
+            let angle = (i as f32 / segments as f32) * 2.0 * PI;
+            let x = angle.cos() * radius;
+            let z = angle.sin() * radius;
+            vertices.push([center.x + x, center.y - half_height, center.z + z]);
+            normals.push([0.0, -1.0, 0.0]);
+        }
+
+        for i in 0..segments {
+            let next = (i + 1) % segments;
+            indices.push(bot_center_idx);
+            indices.push(bot_ring_start + next);
+            indices.push(bot_ring_start + i);
+        }
+
+        // 3. Top Cap
+        let top_center_idx = vertices.len() as u32;
+        vertices.push([center.x, center.y + half_height, center.z]);
+        normals.push([0.0, 1.0, 0.0]);
+        
+        let top_ring_start = vertices.len() as u32;
+        for i in 0..segments {
+            let angle = (i as f32 / segments as f32) * 2.0 * PI;
+            let x = angle.cos() * radius;
+            let z = angle.sin() * radius;
+            vertices.push([center.x + x, center.y + half_height, center.z + z]);
+            normals.push([0.0, 1.0, 0.0]);
+        }
+
+        for i in 0..segments {
+            let next = (i + 1) % segments;
+            indices.push(top_center_idx);
+            // FLIPPED winding for Top Cap
+            indices.push(top_ring_start + next);
+            indices.push(top_ring_start + i);
         }
     }
 
@@ -1097,40 +1167,75 @@ pub fn create_mg_turret_assembly_mesh(meshes: &mut ResMut<Assets<Mesh>>) -> Hand
         length: f32,
         segments: u32,
     ) {
-        let base = vertices.len() as u32;
         let half_len = length / 2.0;
 
+        // 1. Side Faces
+        let side_base = vertices.len() as u32;
         for i in 0..segments {
             let angle = (i as f32 / segments as f32) * 2.0 * PI;
             let n = [angle.cos(), angle.sin(), 0.0];
             
+            // Back ring
             vertices.push([center.x + n[0] * radius, center.y + n[1] * radius, center.z - half_len]);
             normals.push(n);
+            
+            // Front ring
             vertices.push([center.x + n[0] * radius, center.y + n[1] * radius, center.z + half_len]);
             normals.push(n);
         }
-        
-        // Caps
-        vertices.push([center.x, center.y, center.z - half_len]);
-        normals.push([0.0, 0.0, -1.0]);
-        let back = base + segments * 2;
-        
-        vertices.push([center.x, center.y, center.z + half_len]);
-        normals.push([0.0, 0.0, 1.0]);
-        let front = base + segments * 2 + 1;
-        
+
         for i in 0..segments {
             let next = (i + 1) % segments;
-            let b = base + i * 2;
-            let t = base + i * 2 + 1;
-            let bn = base + next * 2;
-            let tn = base + next * 2 + 1;
+            let b = side_base + i * 2;
+            let t = side_base + i * 2 + 1;
+            let bn = side_base + next * 2;
+            let tn = side_base + next * 2 + 1;
             
+            // REVERTED winding order to (b, tn, t) for Z-Axis Cylinder Outward faces
             indices.push(b); indices.push(tn); indices.push(t);
             indices.push(b); indices.push(bn); indices.push(tn);
-            
-            indices.push(back); indices.push(bn); indices.push(b);
-            indices.push(front); indices.push(t); indices.push(tn);
+        }
+
+        // 2. Back Cap
+        let back_center_idx = vertices.len() as u32;
+        vertices.push([center.x, center.y, center.z - half_len]);
+        normals.push([0.0, 0.0, -1.0]);
+        
+        let back_ring_start = vertices.len() as u32;
+        for i in 0..segments {
+            let angle = (i as f32 / segments as f32) * 2.0 * PI;
+            let x = angle.cos() * radius;
+            let y = angle.sin() * radius;
+            vertices.push([center.x + x, center.y + y, center.z - half_len]);
+            normals.push([0.0, 0.0, -1.0]);
+        }
+
+        for i in 0..segments {
+            let next = (i + 1) % segments;
+            indices.push(back_center_idx);
+            indices.push(back_ring_start + next);
+            indices.push(back_ring_start + i);
+        }
+
+        // 3. Front Cap
+        let front_center_idx = vertices.len() as u32;
+        vertices.push([center.x, center.y, center.z + half_len]);
+        normals.push([0.0, 0.0, 1.0]);
+        
+        let front_ring_start = vertices.len() as u32;
+        for i in 0..segments {
+            let angle = (i as f32 / segments as f32) * 2.0 * PI;
+            let x = angle.cos() * radius;
+            let y = angle.sin() * radius;
+            vertices.push([center.x + x, center.y + y, center.z + half_len]);
+            normals.push([0.0, 0.0, 1.0]);
+        }
+
+        for i in 0..segments {
+            let next = (i + 1) % segments;
+            indices.push(front_center_idx);
+            indices.push(front_ring_start + i);
+            indices.push(front_ring_start + next);
         }
     }
 
@@ -1171,16 +1276,17 @@ pub fn create_mg_turret_assembly_mesh(meshes: &mut ResMut<Assets<Mesh>>) -> Hand
         0.25, 0.4, 12);
 
     // 5. Cooling Fins (Thin boxes along housing sides)
+    // Moved slightly outward to avoid z-fighting with housing
     let fin_count = 6;
     for i in 0..fin_count {
         let z_pos = 0.5 - (i as f32 * 0.25);
         // Left fins
         add_box(&mut vertices, &mut normals, &mut indices,
-            Vec3::new(-0.5, 2.0, z_pos), 
+            Vec3::new(-0.52, 2.0, z_pos), 
             Vec3::new(0.2, 0.6, 0.1));
         // Right fins
         add_box(&mut vertices, &mut normals, &mut indices,
-            Vec3::new(0.5, 2.0, z_pos), 
+            Vec3::new(0.52, 2.0, z_pos), 
             Vec3::new(0.2, 0.6, 0.1));
     }
 
@@ -1201,6 +1307,8 @@ pub fn create_mg_turret_assembly_mesh(meshes: &mut ResMut<Assets<Mesh>>) -> Hand
 
     meshes.add(mesh)
 }
+
+/// Spawn a functional MG turret
 
 /// Spawn a functional MG turret
 pub fn spawn_mg_turret(
