@@ -4,6 +4,7 @@ use rand::Rng;
 use crate::types::*;
 use crate::constants::*;
 use crate::procedural_meshes::*;
+use crate::shield::{spawn_shield, ShieldMaterial};
 
 // ===== TOWER CREATION =====
 
@@ -11,6 +12,7 @@ pub fn spawn_uplink_towers(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut shield_materials: ResMut<Assets<ShieldMaterial>>,
 ) {
     let tower_mesh = create_uplink_tower_mesh(&mut meshes);
     
@@ -50,6 +52,16 @@ pub fn spawn_uplink_towers(
         Health::new(TOWER_MAX_HEALTH),
         crate::types::BuildingCollider { radius: 5.0 }, // Collision radius for laser blocking
     ));
+
+    // Spawn shield for Team A tower
+    spawn_shield(
+        &mut commands,
+        &mut meshes,
+        &mut shield_materials,
+        team_a_pos,
+        50.0, // Shield radius (covers tower and surrounding area)
+        Color::srgb(0.2, 0.6, 1.0), // Blue shield matching team color
+    );
     
     // Spawn Team B tower (right side, behind army)
     let team_b_pos = Vec3::new(BATTLEFIELD_SIZE / 2.0 + 30.0, 0.0, 0.0);
@@ -69,8 +81,18 @@ pub fn spawn_uplink_towers(
         Health::new(TOWER_MAX_HEALTH),
         crate::types::BuildingCollider { radius: 5.0 }, // Collision radius for laser blocking
     ));
-    
-    info!("Spawned Uplink Towers for both teams");
+
+    // Spawn shield for Team B tower
+    spawn_shield(
+        &mut commands,
+        &mut meshes,
+        &mut shield_materials,
+        team_b_pos,
+        50.0, // Shield radius (covers tower and surrounding area)
+        Color::srgb(1.0, 0.4, 0.2), // Orange/red shield matching team color
+    );
+
+    info!("Spawned Uplink Towers with shields for both teams");
 }
 
 // ===== TOWER TARGETING & DAMAGE =====
