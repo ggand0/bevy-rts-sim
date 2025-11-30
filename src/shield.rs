@@ -86,19 +86,21 @@ pub fn create_hemisphere_mesh(radius: f32, segments: u32) -> Mesh {
         }
     }
 
-    // Generate indices
+    // Generate indices (reversed winding for outward-facing normals)
     for lat in 0..segments {
         for lon in 0..segments {
             let first = lat * (segments + 1) + lon;
             let second = first + segments + 1;
 
+            // First triangle (counter-clockwise from outside)
             indices.push(first);
-            indices.push(second);
             indices.push(first + 1);
+            indices.push(second);
 
+            // Second triangle (counter-clockwise from outside)
             indices.push(second);
-            indices.push(second + 1);
             indices.push(first + 1);
+            indices.push(second + 1);
         }
     }
 
@@ -140,6 +142,8 @@ pub fn spawn_shield(
         Shield {
             material_handle: material_handle.clone(),
         },
+        bevy::pbr::NotShadowCaster,
+        bevy::pbr::NotShadowReceiver,
     )).id()
 }
 
