@@ -18,6 +18,9 @@ pub struct ShieldConfig {
     pub particle_scale: f32,        // Scale for impact particles (reserved for future use)
     pub shield_impact_volume: f32,  // Audio volume for shield impacts
     pub surface_offset: f32,        // Offset for particle spawn from surface
+    pub fresnel_power: f32,         // Fresnel edge glow exponent
+    pub hex_scale: f32,             // Hexagonal pattern scale
+    pub mesh_segments: u32,         // Hemisphere mesh detail (vertices)
 }
 
 impl Default for ShieldConfig {
@@ -32,13 +35,23 @@ impl Default for ShieldConfig {
             particle_scale: 2.0,
             shield_impact_volume: 0.4,
             surface_offset: 0.5,
+            fresnel_power: 3.0,
+            hex_scale: 8.0,
+            mesh_segments: 32,
         }
     }
 }
 
+// Visual effect constants
 const MAX_RIPPLES: usize = 8; // Maximum simultaneous ripple effects
 const RIPPLE_DURATION: f32 = 1.5; // Seconds for ripple to expand and fade
 const RIPPLE_SPAWN_CHANCE: f32 = 0.25; // 25% chance to spawn ripple on hit
+
+// Shield visual alpha constants
+const SHIELD_BASE_ALPHA_MIN: f32 = 0.3; // Minimum alpha multiplier at 0 HP
+const SHIELD_BASE_ALPHA_MAX: f32 = 0.7; // Additional alpha multiplier at full HP
+const SHIELD_IMPACT_FLASH_ALPHA: f32 = 0.5; // Alpha boost during impact flash
+const SHIELD_MAX_ALPHA: f32 = 0.8; // Maximum total alpha
 
 pub struct ShieldPlugin;
 
@@ -66,6 +79,8 @@ impl Default for ShieldRipple {
     }
 }
 
+/// Active shield component with full state tracking
+/// When shield HP reaches 0, this component is removed and replaced with DestroyedShield
 #[derive(Component)]
 pub struct Shield {
     pub material_handle: Handle<ShieldMaterial>,
@@ -141,7 +156,9 @@ impl Shield {
     }
 }
 
-/// Marker for destroyed shields waiting to respawn
+/// Marker component for destroyed shields waiting to respawn
+/// Replaces the Shield component when HP reaches 0
+/// After respawn_timer expires, this is removed and a new Shield is spawned at 0 HP
 #[derive(Component)]
 pub struct DestroyedShield {
     pub team: Team,
@@ -262,11 +279,12 @@ fn create_shield_material(
     position: Vec3,
     radius: f32,
     health_percent: f32,
+    config: &ShieldConfig,
 ) -> ShieldMaterial {
     ShieldMaterial {
         color: team_color.to_linear(),
-        fresnel_power: 3.0,
-        hex_scale: 8.0,
+        fresnel_power: config.fresnel_power,
+        hex_scale: config.hex_scale,
         time: 0.0,
         health_percent,
         shield_center: position,
@@ -301,9 +319,9 @@ pub fn spawn_shield_with_hp(
     config: &ShieldConfig,
     starting_hp: f32,
 ) -> Entity {
-    let shield_mesh = create_hemisphere_mesh(radius, 32);
+    let shield_mesh = create_hemisphere_mesh(radius, config.mesh_segments);
     let health_percent = starting_hp / config.max_hp;
-    let shield_material = create_shield_material(team_color, position, radius, health_percent);
+    let shield_material = create_shield_material(team_color, position, radius, health_percent, config);
     let material_handle = materials.add(shield_material);
 
     commands.spawn((
@@ -457,11 +475,11 @@ pub fn shield_health_visual_system(
     for shield in query.iter() {
         if let Some(material) = materials.get_mut(&shield.material_handle) {
             // Calculate alpha based on health (fade out as HP decreases)
-            let health_alpha = shield.base_alpha * (0.3 + 0.7 * shield.health_percent());
+            let health_alpha = shield.base_alpha * (SHIELD_BASE_ALPHA_MIN + SHIELD_BASE_ALPHA_MAX * shield.health_percent());
 
             // Add flash effect on impact
             let flash_intensity = shield.impact_flash_timer / config.impact_flash_duration;
-            let impact_alpha = flash_intensity * 0.5;
+            let impact_alpha = flash_intensity * SHIELD_IMPACT_FLASH_ALPHA;
 
             // Update health percent for shader (shader will interpolate color to white)
             material.health_percent = shield.health_percent();
@@ -478,7 +496,7 @@ pub fn shield_health_visual_system(
             }
 
             // Set final alpha
-            material.color.alpha = (health_alpha + impact_alpha).min(0.8);
+            material.color.alpha = (health_alpha + impact_alpha).min(SHIELD_MAX_ALPHA);
         }
     }
 }

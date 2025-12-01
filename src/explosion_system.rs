@@ -88,7 +88,7 @@ pub fn pending_explosion_system(
 
         commands.spawn((
             AudioPlayer::new(audio_assets.explosion_sound.clone()),
-            PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::new(0.5)),
+            PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::new(crate::constants::VOLUME_EXPLOSION)),
         ));
 
         crate::wfx_spawn::spawn_combined_explosion(

@@ -78,3 +78,9 @@ pub const PERLIN_OCTAVES: usize = 4;                // Detail levels for fractal
 pub const PERLIN_PERSISTENCE: f64 = 0.5;            // How much each octave contributes
 #[allow(dead_code)]
 pub const PERLIN_LACUNARITY: f64 = 2.0;             // Frequency multiplier per octave
+
+// Audio volume settings
+pub const VOLUME_EXPLOSION: f32 = 0.5;              // Tower/unit explosion volume
+pub const VOLUME_LASER: f32 = 0.3;                  // Laser fire volume (droids and turrets)
+#[allow(dead_code)]
+pub const VOLUME_SHIELD_IMPACT: f32 = 0.4;          // Shield impact volume (moved to ShieldConfig, kept for reference)

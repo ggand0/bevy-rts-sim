@@ -433,7 +433,7 @@ pub fn auto_fire_system(
                         let sound = audio_assets.get_random_laser_sound(&mut rng);
                         commands.spawn((
                             AudioPlayer::new(sound),
-                            PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::new(0.3)),
+                            PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::new(crate::constants::VOLUME_LASER)),
                         ));
                     }
                 }
@@ -674,7 +674,7 @@ pub fn auto_fire_system(
                             let sound = audio_assets.get_random_laser_sound(&mut rng);
                             commands.spawn((
                                 AudioPlayer::new(sound),
-                                PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::new(0.3)),
+                                PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::new(crate::constants::VOLUME_LASER)),
                             ));
                         }
                     }
