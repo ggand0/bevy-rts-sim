@@ -1,10 +1,12 @@
 // Enhanced sprite-based explosion effects with real sprite sheets and custom shader
 use bevy::prelude::*;
-use bevy::pbr::{MaterialPipeline, MaterialPipelineKey, NotShadowCaster, NotShadowReceiver};
-use bevy::render::mesh::MeshVertexBufferLayoutRef;
+use bevy::pbr::{MaterialPipeline, MaterialPipelineKey};
+use bevy::light::{NotShadowCaster, NotShadowReceiver};
+use bevy::mesh::MeshVertexBufferLayoutRef;
 use bevy::render::render_resource::{
-    AsBindGroup, RenderPipelineDescriptor, ShaderRef, SpecializedMeshPipelineError,
+    AsBindGroup, RenderPipelineDescriptor, SpecializedMeshPipelineError,
 };
+use bevy::shader::ShaderRef;
 use std::time::Duration;
 use bevy::render::alpha::AlphaMode;
 use crate::types::RtsCamera;
@@ -32,7 +34,7 @@ impl Material for ExplosionMaterial {
     }
     
     fn specialize(
-        _pipeline: &MaterialPipeline<Self>,
+        _pipeline: &MaterialPipeline,
         descriptor: &mut RenderPipelineDescriptor,
         _layout: &MeshVertexBufferLayoutRef,
         _key: MaterialPipelineKey<Self>,
@@ -156,7 +158,7 @@ pub fn spawn_custom_shader_explosion(
     meshes: &mut ResMut<Assets<Mesh>>,
     explosion_materials: &mut ResMut<Assets<ExplosionMaterial>>,
     explosion_assets: &ExplosionAssets,
-    // particle_effects: Option<&crate::particles::ExplosionParticleEffects>,  // Temporarily disabled
+    particle_effects: Option<&crate::particles::ExplosionParticleEffects>,
     position: Vec3,
     radius: f32,
     _intensity: f32,
@@ -296,7 +298,7 @@ fn animate_sprite_explosions(
     time: Res<Time>,
 ) {
     // Get camera position for billboard effect
-    let camera_position = if let Ok(camera_transform) = camera_query.get_single() {
+    let camera_position = if let Ok(camera_transform) = camera_query.single() {
         camera_transform.translation
     } else {
         Vec3::ZERO // Fallback if no camera found
@@ -400,7 +402,7 @@ fn animate_custom_shader_explosions(
     time: Res<Time>,
 ) {
     // Get camera position for billboard effect
-    let camera_position = if let Ok(camera_transform) = camera_query.get_single() {
+    let camera_position = if let Ok(camera_transform) = camera_query.single() {
         camera_transform.translation
     } else {
         Vec3::ZERO

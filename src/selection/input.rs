@@ -19,8 +19,8 @@ pub fn selection_input_system(
     mut selection_state: ResMut<SelectionState>,
     heightmap: Option<Res<TerrainHeightmap>>,
 ) {
-    let Ok(window) = window_query.get_single() else { return };
-    let Ok((camera, camera_transform)) = camera_query.get_single() else { return };
+    let Ok(window) = window_query.single() else { return };
+    let Ok((camera, camera_transform)) = camera_query.single() else { return };
 
     // Get cursor position
     let Some(cursor_pos) = window.cursor_position() else { return };
@@ -133,8 +133,8 @@ pub fn box_selection_update_system(
     squad_manager: Res<SquadManager>,
     mut selection_state: ResMut<SelectionState>,
 ) {
-    let Ok(window) = window_query.get_single() else { return };
-    let Ok((camera, camera_transform)) = camera_query.get_single() else { return };
+    let Ok(window) = window_query.single() else { return };
+    let Ok((camera, camera_transform)) = camera_query.single() else { return };
     let Some(cursor_pos) = window.cursor_position() else { return };
     let Some(start_pos) = selection_state.box_select_start else { return };
 

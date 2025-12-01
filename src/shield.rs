@@ -1,7 +1,8 @@
 use bevy::prelude::*;
 use bevy::pbr::MaterialPlugin;
-use bevy::render::render_resource::{AsBindGroup, ShaderRef};
-use bevy::render::mesh::{Indices, PrimitiveTopology};
+use bevy::render::render_resource::AsBindGroup;
+use bevy::shader::ShaderRef;
+use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::render::alpha::AlphaMode;
 use crate::types::Team;
 
@@ -265,7 +266,7 @@ pub fn create_hemisphere_mesh(radius: f32, segments: u32) -> Mesh {
 
     Mesh::new(
         PrimitiveTopology::TriangleList,
-        bevy::render::render_asset::RenderAssetUsages::default(),
+        bevy::asset::RenderAssetUsages::default(),
     )
     .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
     .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
@@ -329,8 +330,8 @@ pub fn spawn_shield_with_hp(
         MeshMaterial3d(material_handle.clone()),
         Transform::from_translation(position),
         Shield::with_hp(team, radius, position, material_handle.clone(), config.max_hp, starting_hp),
-        bevy::pbr::NotShadowCaster,
-        bevy::pbr::NotShadowReceiver,
+        bevy::light::NotShadowCaster,
+        bevy::light::NotShadowReceiver,
     )).id()
 }
 

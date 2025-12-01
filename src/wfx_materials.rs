@@ -1,9 +1,10 @@
 // War FX custom materials with UV scrolling
 use bevy::prelude::*;
 use bevy::render::render_resource::{
-    AsBindGroup, ShaderRef, BlendState, BlendComponent, BlendFactor, BlendOperation,
+    AsBindGroup, BlendState, BlendComponent, BlendFactor, BlendOperation,
 };
-use bevy::render::mesh::MeshVertexBufferLayoutRef;
+use bevy::shader::ShaderRef;
+use bevy::mesh::MeshVertexBufferLayoutRef;
 use bevy::pbr::{Material, MaterialPipeline, MaterialPipelineKey};
 use bevy::render::render_resource::SpecializedMeshPipelineError;
 
@@ -53,7 +54,7 @@ impl Material for SmokeScrollMaterial {
     }
 
     fn specialize(
-        _pipeline: &MaterialPipeline<Self>,
+        _pipeline: &MaterialPipeline,
         descriptor: &mut bevy::render::render_resource::RenderPipelineDescriptor,
         _layout: &MeshVertexBufferLayoutRef,
         _key: MaterialPipelineKey<Self>,
@@ -162,7 +163,7 @@ impl Material for SmokeOnlyMaterial {
     }
 
     fn specialize(
-        _pipeline: &MaterialPipeline<Self>,
+        _pipeline: &MaterialPipeline,
         descriptor: &mut bevy::render::render_resource::RenderPipelineDescriptor,
         _layout: &MeshVertexBufferLayoutRef,
         _key: MaterialPipelineKey<Self>,

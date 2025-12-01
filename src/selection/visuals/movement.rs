@@ -1,6 +1,6 @@
 // Movement visuals - move indicators, path lines, orientation arrows, path arrows
 use bevy::prelude::*;
-use bevy::pbr::{NotShadowCaster, NotShadowReceiver};
+use bevy::light::{NotShadowCaster, NotShadowReceiver};
 use std::collections::HashSet;
 use crate::types::*;
 use crate::constants::*;
@@ -97,7 +97,7 @@ pub fn orientation_arrow_system(
     let arrow_y = terrain_y + VISUAL_TERRAIN_OFFSET;
 
     // Check if arrow already exists
-    if let Ok((_, mut transform)) = arrow_query.get_single_mut() {
+    if let Ok((_, mut transform)) = arrow_query.single_mut() {
         // Update existing arrow
         transform.translation = Vec3::new(start.x, arrow_y, start.z);
         transform.rotation = arrow_rotation;
@@ -234,7 +234,7 @@ pub fn update_squad_path_arrows(
 /// Create an arrow mesh pointing in +Z direction (will be rotated and scaled)
 /// Parameters control the arrow dimensions for different use cases
 pub fn create_arrow_mesh(shaft_width: f32, head_width: f32, head_length: f32) -> Mesh {
-    use bevy::render::mesh::PrimitiveTopology;
+    use bevy::mesh::PrimitiveTopology;
 
     // Arrow shape: shaft + head, lying flat on XZ plane
     // Base length is 1.0, will be scaled by drag distance
@@ -263,11 +263,11 @@ pub fn create_arrow_mesh(shaft_width: f32, head_width: f32, head_length: f32) ->
     let normals = vec![[0.0, 1.0, 0.0]; 7]; // All pointing up
     let uvs = vec![[0.0, 0.0]; 7]; // Simple UVs
 
-    let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, bevy::render::render_asset::RenderAssetUsages::default());
+    let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, bevy::asset::RenderAssetUsages::default());
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, vertices);
     mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
     mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
-    mesh.insert_indices(bevy::render::mesh::Indices::U32(indices));
+    mesh.insert_indices(bevy::mesh::Indices::U32(indices));
 
     mesh
 }
@@ -381,7 +381,7 @@ pub fn spawn_path_line(
 
 /// Create a thin line mesh for path visualization (pointing in +Z, length 1.0)
 fn create_path_line_mesh() -> Mesh {
-    use bevy::render::mesh::PrimitiveTopology;
+    use bevy::mesh::PrimitiveTopology;
 
     let width = 0.3; // Thin line width
 
@@ -401,11 +401,11 @@ fn create_path_line_mesh() -> Mesh {
     let normals = vec![[0.0, 1.0, 0.0]; 4];
     let uvs = vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
 
-    let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, bevy::render::render_asset::RenderAssetUsages::default());
+    let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, bevy::asset::RenderAssetUsages::default());
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, vertices);
     mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
     mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
-    mesh.insert_indices(bevy::render::mesh::Indices::U32(indices));
+    mesh.insert_indices(bevy::mesh::Indices::U32(indices));
 
     mesh
 }

@@ -7,7 +7,7 @@ pub struct ParticleEffectsPlugin;
 
 impl Plugin for ParticleEffectsPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(HanabiPlugin::default())
+        app.add_plugins(HanabiPlugin)
             .add_systems(Startup, setup_particle_effects)
             .add_systems(Update, cleanup_finished_particle_effects);
     }
@@ -72,7 +72,7 @@ fn setup_particle_effects(
     let debris_module = writer.finish();
 
     let debris_effect = effects.add(
-        EffectAsset::new(32768, Spawner::once(100.0.into(), true), debris_module)
+        EffectAsset::new(32768, SpawnerSettings::once(100.0.into()), debris_module)
             .with_name("explosion_debris")
             .init(init_pos)
             .init(init_vel)
@@ -120,7 +120,7 @@ fn setup_particle_effects(
     let sparks_module = writer2.finish();
 
     let sparks_effect = effects.add(
-        EffectAsset::new(32768, Spawner::once(200.0.into(), true), sparks_module)
+        EffectAsset::new(32768, SpawnerSettings::once(200.0.into()), sparks_module)
             .with_name("explosion_sparks")
             .init(init_pos2)
             .init(init_vel2)
@@ -168,7 +168,7 @@ fn setup_particle_effects(
     let smoke_module = writer3.finish();
 
     let smoke_effect = effects.add(
-        EffectAsset::new(32768, Spawner::once(50.0.into(), true), smoke_module)
+        EffectAsset::new(32768, SpawnerSettings::once(50.0.into()), smoke_module)
             .with_name("explosion_smoke")
             .init(init_pos3)
             .init(init_vel3)
@@ -216,7 +216,7 @@ fn setup_particle_effects(
     let shield_impact_module = writer4.finish();
 
     let shield_impact_effect = effects.add(
-        EffectAsset::new(8192, Spawner::once(40.0.into(), true), shield_impact_module)
+        EffectAsset::new(8192, SpawnerSettings::once(40.0.into()), shield_impact_module)
             .with_name("shield_impact")
             .init(init_pos4)
             .init(init_vel4)

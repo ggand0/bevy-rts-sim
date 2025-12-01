@@ -389,8 +389,8 @@ fn create_battle_droid_mesh(meshes: &mut ResMut<Assets<Mesh>>) -> Handle<Mesh> {
     // Create a simple humanoid battle droid shape
     // This creates a basic robot-like figure that resembles Trade Federation battle droids
     
-    use bevy::render::mesh::{Indices, PrimitiveTopology};
-    use bevy::render::render_asset::RenderAssetUsages;
+    use bevy::mesh::{Indices, PrimitiveTopology};
+    use bevy::asset::RenderAssetUsages;
     
     let mut mesh = Mesh::new(
         PrimitiveTopology::TriangleList,

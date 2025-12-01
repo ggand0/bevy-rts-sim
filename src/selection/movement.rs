@@ -26,8 +26,8 @@ pub fn move_command_system(
     arrow_query: Query<Entity, With<OrientationArrowVisual>>,
     heightmap: Option<Res<TerrainHeightmap>>,
 ) {
-    let Ok(window) = window_query.get_single() else { return };
-    let Ok((camera, camera_transform)) = camera_query.get_single() else { return };
+    let Ok(window) = window_query.single() else { return };
+    let Ok((camera, camera_transform)) = camera_query.single() else { return };
     let Some(cursor_pos) = window.cursor_position() else { return };
 
     let hm = heightmap.as_ref().map(|h| h.as_ref());

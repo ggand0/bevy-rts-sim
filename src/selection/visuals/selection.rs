@@ -1,6 +1,6 @@
 // Selection ring visuals - cyan rings under selected squads
 use bevy::prelude::*;
-use bevy::pbr::{NotShadowCaster, NotShadowReceiver};
+use bevy::light::{NotShadowCaster, NotShadowReceiver};
 use std::collections::HashSet;
 use crate::types::*;
 use crate::constants::*;
@@ -153,7 +153,7 @@ pub fn box_selection_visual_system(
     window_query: Query<&Window, With<bevy::window::PrimaryWindow>>,
     existing_visual: Query<Entity, With<BoxSelectionVisual>>,
 ) {
-    let Ok(window) = window_query.get_single() else { return };
+    let Ok(window) = window_query.single() else { return };
     let Some(cursor_pos) = window.cursor_position() else {
         // No cursor - despawn any existing visual
         for entity in existing_visual.iter() {
@@ -207,7 +207,7 @@ pub fn box_selection_visual_system(
             ..default()
         },
         BackgroundColor(Color::srgba(0.2, 0.8, 0.3, 0.15)),
-        BorderColor(Color::srgba(0.3, 1.0, 0.4, 0.8)),
+        BorderColor::all(Color::srgba(0.3, 1.0, 0.4, 0.8)),
         BoxSelectionVisual,
     ));
 }

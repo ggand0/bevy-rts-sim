@@ -1,7 +1,7 @@
 // War FX explosion spawner with UV-scrolling billboards
 use bevy::prelude::*;
-use bevy::render::mesh::{Indices, PrimitiveTopology};
-use bevy::render::render_asset::RenderAssetUsages;
+use bevy::mesh::{Indices, PrimitiveTopology};
+use bevy::asset::RenderAssetUsages;
 use crate::wfx_materials::{SmokeScrollMaterial, AdditiveMaterial, SmokeOnlyMaterial};
 use rand::Rng;
 
@@ -130,8 +130,8 @@ pub fn spawn_warfx_center_glow(
             Transform::from_translation(position + offset)
                 .with_rotation(Quat::from_rotation_z(45.0_f32.to_radians())), // Unity: 45° rotation
             Visibility::Visible,
-            bevy::pbr::NotShadowCaster,
-            bevy::pbr::NotShadowReceiver,
+            bevy::light::NotShadowCaster,
+            bevy::light::NotShadowReceiver,
             WarFXExplosion {
                 lifetime: 0.0,
                 max_lifetime: lifetime,
@@ -255,8 +255,8 @@ pub fn spawn_glow_sparkles(
                 Transform::from_translation(position + spawn_offset)
                     .with_scale(Vec3::splat(0.399 * size_mult)), // Start at initial size
                 if delay == 0.0 { Visibility::Visible } else { Visibility::Hidden },
-                bevy::pbr::NotShadowCaster,
-                bevy::pbr::NotShadowReceiver,
+                bevy::light::NotShadowCaster,
+                bevy::light::NotShadowReceiver,
                 WarFXExplosion {
                     lifetime: 0.0,
                     max_lifetime: lifetime,
@@ -382,8 +382,8 @@ pub fn spawn_dot_sparkles(
                 Transform::from_translation(position + spawn_offset)
                     .with_scale(Vec3::splat(0.399 * size_mult)),
                 if delay == 0.0 { Visibility::Visible } else { Visibility::Hidden },
-                bevy::pbr::NotShadowCaster,
-                bevy::pbr::NotShadowReceiver,
+                bevy::light::NotShadowCaster,
+                bevy::light::NotShadowReceiver,
                 WarFXExplosion {
                     lifetime: 0.0,
                     max_lifetime: lifetime,
@@ -510,8 +510,8 @@ pub fn spawn_dot_sparkles_vertical(
                 Transform::from_translation(position + spawn_offset)
                     .with_scale(Vec3::splat(0.399 * size_mult)),
                 if delay == 0.0 { Visibility::Visible } else { Visibility::Hidden },
-                bevy::pbr::NotShadowCaster,
-                bevy::pbr::NotShadowReceiver,
+                bevy::light::NotShadowCaster,
+                bevy::light::NotShadowReceiver,
                 WarFXExplosion {
                     lifetime: 0.0,
                     max_lifetime: lifetime,
@@ -796,8 +796,8 @@ pub fn spawn_smoke_emitter(
                 .with_rotation(Quat::from_rotation_z(initial_rotation))
                 .with_scale(Vec3::ZERO), // Start at zero scale (hidden)
             Visibility::Hidden,
-            bevy::pbr::NotShadowCaster,
-            bevy::pbr::NotShadowReceiver,
+            bevy::light::NotShadowCaster,
+            bevy::light::NotShadowReceiver,
             WarFXExplosion {
                 lifetime: 0.0,
                 max_lifetime: lifetime,
@@ -968,8 +968,8 @@ pub fn spawn_explosion_flames(
                     .with_rotation(Quat::from_rotation_z(initial_rotation))
                     .with_scale(if is_active { Vec3::splat(0.396 * size_mult) } else { Vec3::ZERO }),
                 if is_active { Visibility::Visible } else { Visibility::Hidden },
-                bevy::pbr::NotShadowCaster,
-                bevy::pbr::NotShadowReceiver,
+                bevy::light::NotShadowCaster,
+                bevy::light::NotShadowReceiver,
                 WarFXExplosion {
                     lifetime: 0.0,
                     max_lifetime: lifetime,
@@ -1254,7 +1254,7 @@ pub fn update_warfx_explosions(
     time: Res<Time>,
 ) {
     // Get camera position for billboarding
-    let camera_position = if let Ok(camera_transform) = camera_query.get_single() {
+    let camera_position = if let Ok(camera_transform) = camera_query.single() {
         camera_transform.translation()
     } else {
         return; // No camera, can't billboard
