@@ -110,6 +110,32 @@ impl TerrainHeightmap {
         self.base_height + h0 * (1.0 - fz) + h1 * fz
     }
 
+    /// Sample terrain normal at world position (x, z) using central differences
+    /// Returns normalized normal vector pointing up from terrain surface
+    pub fn sample_normal(&self, x: f32, z: f32) -> Vec3 {
+        let offset = self.cell_size;
+
+        // Sample heights at neighboring points
+        let h_left = self.sample_height(x - offset, z);
+        let h_right = self.sample_height(x + offset, z);
+        let h_down = self.sample_height(x, z - offset);
+        let h_up = self.sample_height(x, z + offset);
+
+        // Calculate tangent vectors
+        let tangent_x = Vec3::new(2.0 * offset, h_right - h_left, 0.0);
+        let tangent_z = Vec3::new(0.0, h_up - h_down, 2.0 * offset);
+
+        // Cross product gives normal (normalized)
+        tangent_x.cross(tangent_z).normalize()
+    }
+
+    /// Sample both height and normal at once (more efficient than separate calls)
+    pub fn sample_height_and_normal(&self, x: f32, z: f32) -> (f32, Vec3) {
+        let height = self.sample_height(x, z);
+        let normal = self.sample_normal(x, z);
+        (height, normal)
+    }
+
     /// Create a flat heightmap at a specific base height
     pub fn flat(terrain_size: f32, base_height: f32) -> Self {
         let grid_size = 2; // Minimal grid for flat terrain
