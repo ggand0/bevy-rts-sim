@@ -68,10 +68,12 @@ pub fn setup_scene(
     ];
     let explosion_sound = asset_server.load("audio/sfx/distant_explosion1.wav");
     let mg_sound = asset_server.load("audio/sfx/mg_3_single.wav");
+    let shield_impact_sound = asset_server.load("audio/sfx/shield_impact0.wav");
     commands.insert_resource(AudioAssets {
         laser_sounds,
         explosion_sound,
         mg_sound,
+        shield_impact_sound,
     });
 
     // UI text for performance info

@@ -27,6 +27,7 @@ pub struct ExplosionParticleEffects {
     pub debris_effect: Handle<EffectAsset>,
     pub sparks_effect: Handle<EffectAsset>,
     pub smoke_effect: Handle<EffectAsset>,
+    pub shield_impact_effect: Handle<EffectAsset>,
 }
 
 fn setup_particle_effects(
@@ -180,10 +181,58 @@ fn setup_particle_effects(
             .render(SizeOverLifetimeModifier { gradient: size_gradient3, screen_space_size: false })
     );
 
+    // === SHIELD IMPACT PARTICLES ===
+    // Small, fast burst of energy particles for shield impacts
+    let mut color_gradient4 = Gradient::new();
+    color_gradient4.add_key(0.0, Vec4::new(0.8, 1.0, 1.0, 1.0)); // Bright white-cyan
+    color_gradient4.add_key(0.2, Vec4::new(0.5, 0.8, 1.0, 0.9)); // Bright cyan
+    color_gradient4.add_key(0.5, Vec4::new(0.3, 0.6, 1.0, 0.6)); // Cyan
+    color_gradient4.add_key(1.0, Vec4::new(0.2, 0.4, 0.8, 0.0)); // Fade to blue
+
+    let mut size_gradient4 = Gradient::new();
+    size_gradient4.add_key(0.0, Vec3::splat(0.6));
+    size_gradient4.add_key(0.3, Vec3::splat(0.8));
+    size_gradient4.add_key(1.0, Vec3::splat(0.2));
+
+    let writer4 = ExprWriter::new();
+
+    let init_pos4 = SetPositionSphereModifier {
+        center: writer4.lit(Vec3::ZERO).expr(),
+        radius: writer4.lit(0.5).expr(),
+        dimension: ShapeDimension::Surface,
+    };
+
+    let init_vel4 = SetVelocitySphereModifier {
+        center: writer4.lit(Vec3::ZERO).expr(),
+        speed: writer4.lit(12.0).uniform(writer4.lit(20.0)).expr(),
+    };
+
+    let init_age4 = SetAttributeModifier::new(Attribute::AGE, writer4.lit(0.0).expr());
+    let init_lifetime4 = SetAttributeModifier::new(Attribute::LIFETIME, writer4.lit(0.8).expr());
+    let init_size4 = SetAttributeModifier::new(Attribute::SIZE, writer4.lit(0.6).expr());
+
+    let update_drag4 = LinearDragModifier::new(writer4.lit(3.0).expr());
+
+    let shield_impact_module = writer4.finish();
+
+    let shield_impact_effect = effects.add(
+        EffectAsset::new(8192, Spawner::once(40.0.into(), true), shield_impact_module)
+            .with_name("shield_impact")
+            .init(init_pos4)
+            .init(init_vel4)
+            .init(init_age4)
+            .init(init_lifetime4)
+            .init(init_size4)
+            .update(update_drag4)
+            .render(ColorOverLifetimeModifier { gradient: color_gradient4 })
+            .render(SizeOverLifetimeModifier { gradient: size_gradient4, screen_space_size: false })
+    );
+
     commands.insert_resource(ExplosionParticleEffects {
         debris_effect,
         sparks_effect,
         smoke_effect,
+        shield_impact_effect,
     });
 
     info!("✅ Particle effects ready!");
@@ -287,6 +336,30 @@ pub fn spawn_tower_explosion_particles(
     current_time: f64, // Current elapsed time from Time resource
 ) {
     spawn_explosion_particles(commands, particle_effects, position, 4.0, current_time); // Large scale for towers
+}
+
+/// Spawns particles for shield impacts
+/// Small burst effect when lasers hit the shield
+pub fn spawn_shield_impact_particles(
+    commands: &mut Commands,
+    particle_effects: &ExplosionParticleEffects,
+    position: Vec3,
+    current_time: f64,
+) {
+    // Use the dedicated shield impact effect (cyan burst)
+    commands.spawn((
+        ParticleEffectBundle {
+            effect: ParticleEffect::new(particle_effects.shield_impact_effect.clone()),
+            transform: Transform::from_translation(position)
+                .with_scale(Vec3::splat(2.0)), // Larger scale to make it more visible
+            ..default()
+        },
+        ParticleEffectLifetime {
+            spawn_time: current_time,
+            duration: 2.0,
+        },
+        Name::new("ShieldImpact"),
+    ));
 }
 
 /// System to cleanup particle effects after their lifetime expires

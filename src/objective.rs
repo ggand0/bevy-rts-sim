@@ -4,6 +4,7 @@ use rand::Rng;
 use crate::types::*;
 use crate::constants::*;
 use crate::procedural_meshes::*;
+use crate::shield::{spawn_shield, ShieldMaterial, ShieldConfig};
 
 // ===== TOWER CREATION =====
 
@@ -11,6 +12,8 @@ pub fn spawn_uplink_towers(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut shield_materials: ResMut<Assets<ShieldMaterial>>,
+    shield_config: Res<ShieldConfig>,
 ) {
     let tower_mesh = create_uplink_tower_mesh(&mut meshes);
     
@@ -50,7 +53,19 @@ pub fn spawn_uplink_towers(
         Health::new(TOWER_MAX_HEALTH),
         crate::types::BuildingCollider { radius: 5.0 }, // Collision radius for laser blocking
     ));
-    
+
+    // Spawn shield for Team A tower
+    spawn_shield(
+        &mut commands,
+        &mut meshes,
+        &mut shield_materials,
+        team_a_pos,
+        50.0, // Shield radius (covers tower and surrounding area)
+        Team::A.shield_color(),
+        Team::A,
+        &shield_config,
+    );
+
     // Spawn Team B tower (right side, behind army)
     let team_b_pos = Vec3::new(BATTLEFIELD_SIZE / 2.0 + 30.0, 0.0, 0.0);
     commands.spawn((
@@ -69,8 +84,20 @@ pub fn spawn_uplink_towers(
         Health::new(TOWER_MAX_HEALTH),
         crate::types::BuildingCollider { radius: 5.0 }, // Collision radius for laser blocking
     ));
-    
-    info!("Spawned Uplink Towers for both teams");
+
+    // Spawn shield for Team B tower
+    spawn_shield(
+        &mut commands,
+        &mut meshes,
+        &mut shield_materials,
+        team_b_pos,
+        50.0, // Shield radius (covers tower and surrounding area)
+        Team::B.shield_color(),
+        Team::B,
+        &shield_config,
+    );
+
+    info!("Spawned Uplink Towers with shields for both teams");
 }
 
 // ===== TOWER TARGETING & DAMAGE =====
@@ -220,23 +247,38 @@ pub fn win_condition_system(
 pub fn update_objective_ui_system(
     mut ui_query: Query<&mut Text, With<ObjectiveUI>>,
     tower_query: Query<(&UplinkTower, &Health), With<UplinkTower>>,
+    shield_query: Query<&crate::shield::Shield>,
+    destroyed_shield_query: Query<&crate::shield::DestroyedShield>,
     game_state: Res<GameState>,
 ) {
     for mut text in ui_query.iter_mut() {
         let mut ui_text = String::new();
-        
-        // Tower health display
+
+        // Tower and Shield health display
         ui_text.push_str("=== UPLINK TOWERS ===\n");
         for (tower, health) in tower_query.iter() {
+            // Find shield for this team
+            let shield_status = if let Some(shield) = shield_query.iter().find(|s| s.team == tower.team) {
+                format!("Shield: {:.0}/{:.0} ({:.0}%)",
+                    shield.current_hp,
+                    shield.max_hp,
+                    shield.health_percent() * 100.0)
+            } else if let Some(destroyed) = destroyed_shield_query.iter().find(|d| d.team == tower.team) {
+                format!("Shield: RESPAWN IN {:.1}s", destroyed.respawn_timer)
+            } else {
+                "Shield: OFFLINE".to_string()
+            };
+
             ui_text.push_str(&format!(
-                "Team {:?}: {:.0}/{:.0} HP ({:.1}%)\n",
+                "Team {:?}:\n  Tower: {:.0}/{:.0} HP ({:.1}%)\n  {}\n",
                 tower.team,
                 health.current,
                 health.max,
-                health.health_percentage() * 100.0
+                health.health_percentage() * 100.0,
+                shield_status
             ));
         }
-        
+
         // Game status
         if game_state.game_ended {
             if let Some(winner) = game_state.winner {
@@ -245,7 +287,7 @@ pub fn update_objective_ui_system(
         } else {
             ui_text.push_str("\n⚔️ Battle in Progress ⚔️");
         }
-        
+
         **text = ui_text;
     }
 }
@@ -420,7 +462,7 @@ pub fn update_debug_mode_ui(
 
     for mut text in ui_query.iter_mut() {
         if debug_mode.explosion_mode {
-            **text = "[0] EXPLOSION DEBUG: 1=glow 2=flames 3=smoke 4=sparkles 5=combined 6=dots | C=collision spheres".to_string();
+            **text = "[0] DEBUG: 1=glow 2=flames 3=smoke 4=sparkles 5=combined 6=dots | C=collision | S=destroy enemy shield".to_string();
         } else {
             **text = String::new();
         }

@@ -15,10 +15,12 @@ mod wfx_materials;
 mod wfx_spawn;
 mod selection;
 mod terrain;
+mod shield;
 use explosion_shader::ExplosionShaderPlugin;
 use particles::ParticleEffectsPlugin;
 use terrain::TerrainPlugin;
 use wfx_materials::{SmokeScrollMaterial, AdditiveMaterial, SmokeOnlyMaterial};
+use shield::ShieldPlugin;
 
 use bevy::prelude::*;
 use types::*;
@@ -35,6 +37,7 @@ fn main() {
         .add_plugins(ExplosionShaderPlugin)
         .add_plugins(ParticleEffectsPlugin)
         .add_plugins(TerrainPlugin)
+        .add_plugins(ShieldPlugin)
         .add_plugins(MaterialPlugin::<SmokeScrollMaterial>::default())
         .add_plugins(MaterialPlugin::<AdditiveMaterial>::default())
         .add_plugins(MaterialPlugin::<SmokeOnlyMaterial>::default())
@@ -96,13 +99,27 @@ fn main() {
             auto_fire_system,
             volley_fire_system,
             update_projectiles,
+        ))
+        .add_systems(Update, (
+            // Shield collision detection runs BEFORE unit collision
+            shield::shield_collision_system,
+            shield::shield_regeneration_system,
+            shield::shield_impact_flash_system,
+            shield::shield_health_visual_system,
+            shield::shield_tower_death_system,
+            shield::shield_respawn_system,
+            shield::animate_shields,
+            shield::debug_destroy_enemy_shield, // Debug: Press '0' to destroy enemy shield
+        ).before(collision_detection_system))
+        .add_systems(Update, (
+            // Unit collision and turret systems
             collision_detection_system,
             turret_rotation_system,
             visualize_collision_spheres_system, // Debug visualization
         ))
         .add_systems(Update, (
-            // Objective system
-            tower_targeting_system,
+            // Objective system (tower targeting runs after shields)
+            tower_targeting_system.after(shield::shield_collision_system),
             tower_destruction_system,
             pending_explosion_system,
             explosion_effect_system,

@@ -43,7 +43,7 @@ pub const GRID_SIZE: i32 = 100; // Number of cells per side (covers 1000x1000 ar
 // Objective system settings
 pub const TOWER_HEIGHT: f32 = 35.0;
 pub const TOWER_BASE_WIDTH: f32 = 9.0;
-pub const TOWER_MAX_HEALTH: f32 = 1000.0;
+pub const TOWER_MAX_HEALTH: f32 = 2000.0;
 pub const TOWER_DESTRUCTION_RADIUS: f32 = 80.0; // Units within this range explode when tower dies
 pub const EXPLOSION_DELAY_MIN: f32 = 0.1; // Minimum delay before unit explodes
 pub const EXPLOSION_DELAY_MAX: f32 = 2.0; // Maximum delay for dramatic cascade effect
@@ -78,3 +78,9 @@ pub const PERLIN_OCTAVES: usize = 4;                // Detail levels for fractal
 pub const PERLIN_PERSISTENCE: f64 = 0.5;            // How much each octave contributes
 #[allow(dead_code)]
 pub const PERLIN_LACUNARITY: f64 = 2.0;             // Frequency multiplier per octave
+
+// Audio volume settings
+pub const VOLUME_EXPLOSION: f32 = 0.5;              // Tower/unit explosion volume
+pub const VOLUME_LASER: f32 = 0.3;                  // Laser fire volume (droids and turrets)
+#[allow(dead_code)]
+pub const VOLUME_SHIELD_IMPACT: f32 = 0.4;          // Shield impact volume (moved to ShieldConfig, kept for reference)
