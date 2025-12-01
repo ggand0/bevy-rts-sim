@@ -109,6 +109,7 @@ fn main() {
             shield::shield_tower_death_system,
             shield::shield_respawn_system,
             shield::animate_shields,
+            shield::debug_destroy_enemy_shield, // Debug: Press '0' to destroy enemy shield
         ).before(collision_detection_system))
         .add_systems(Update, (
             // Unit collision and turret systems

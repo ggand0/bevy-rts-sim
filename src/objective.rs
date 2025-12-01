@@ -459,7 +459,7 @@ pub fn update_debug_mode_ui(
 
     for mut text in ui_query.iter_mut() {
         if debug_mode.explosion_mode {
-            **text = "[0] EXPLOSION DEBUG: 1=glow 2=flames 3=smoke 4=sparkles 5=combined 6=dots | C=collision spheres".to_string();
+            **text = "[0] DEBUG: 1=glow 2=flames 3=smoke 4=sparkles 5=combined 6=dots | C=collision | S=destroy enemy shield".to_string();
         } else {
             **text = String::new();
         }

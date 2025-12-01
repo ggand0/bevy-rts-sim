@@ -56,12 +56,16 @@ pub struct Shield {
 
 impl Shield {
     pub fn new(team: Team, radius: f32, center: Vec3, material_handle: Handle<ShieldMaterial>) -> Self {
+        Self::with_hp(team, radius, center, material_handle, SHIELD_MAX_HP)
+    }
+
+    pub fn with_hp(team: Team, radius: f32, center: Vec3, material_handle: Handle<ShieldMaterial>, starting_hp: f32) -> Self {
         Self {
             material_handle,
             team,
             radius,
             center,
-            current_hp: SHIELD_MAX_HP,
+            current_hp: starting_hp,
             max_hp: SHIELD_MAX_HP,
             last_hit_time: -999.0,
             impact_flash_timer: 0.0,
@@ -235,14 +239,29 @@ pub fn spawn_shield(
     team_color: Color,
     team: Team,
 ) -> Entity {
+    spawn_shield_with_hp(commands, meshes, materials, position, radius, team_color, team, SHIELD_MAX_HP)
+}
+
+/// Spawns a shield around a position with custom starting HP
+pub fn spawn_shield_with_hp(
+    commands: &mut Commands,
+    meshes: &mut ResMut<Assets<Mesh>>,
+    materials: &mut ResMut<Assets<ShieldMaterial>>,
+    position: Vec3,
+    radius: f32,
+    team_color: Color,
+    team: Team,
+    starting_hp: f32,
+) -> Entity {
     let shield_mesh = create_hemisphere_mesh(radius, 32);
 
+    let health_percent = starting_hp / SHIELD_MAX_HP;
     let shield_material = ShieldMaterial {
         color: team_color.to_linear(),
         fresnel_power: 3.0,
         hex_scale: 8.0,
         time: 0.0,
-        health_percent: 1.0,
+        health_percent,
         shield_center: position,
         shield_radius: radius,
         ripple_data: [Vec4::ZERO; MAX_RIPPLES],
@@ -254,7 +273,7 @@ pub fn spawn_shield(
         Mesh3d(meshes.add(shield_mesh)),
         MeshMaterial3d(material_handle.clone()),
         Transform::from_translation(position),
-        Shield::new(team, radius, position, material_handle.clone()),
+        Shield::with_hp(team, radius, position, material_handle.clone(), starting_hp),
         bevy::pbr::NotShadowCaster,
         bevy::pbr::NotShadowReceiver,
     )).id()
@@ -474,10 +493,10 @@ pub fn shield_respawn_system(
         destroyed.respawn_timer -= delta;
 
         if destroyed.respawn_timer <= 0.0 {
-            info!("Respawning shield for team {:?}", destroyed.team);
+            info!("Respawning shield for team {:?} at 0 HP - will regenerate", destroyed.team);
 
-            // Respawn the shield
-            spawn_shield(
+            // Respawn the shield at 0 HP - it will gradually regenerate to full
+            spawn_shield_with_hp(
                 &mut commands,
                 &mut meshes,
                 &mut materials,
@@ -485,10 +504,37 @@ pub fn shield_respawn_system(
                 destroyed.radius,
                 destroyed.team_color,
                 destroyed.team,
+                0.0, // Start at 0 HP, will regenerate like Empire at War
             );
 
             // Remove the destroyed marker
             commands.entity(entity).despawn();
+        }
+    }
+}
+
+/// Debug system: Press 'S' (when debug mode active) to set enemy (Team B) shield HP to zero
+pub fn debug_destroy_enemy_shield(
+    keyboard: Res<ButtonInput<KeyCode>>,
+    mut shield_query: Query<&mut Shield>,
+    time: Res<Time>,
+    debug_mode: Res<crate::objective::ExplosionDebugMode>,
+) {
+    // Only work when debug mode is active
+    if !debug_mode.explosion_mode {
+        return;
+    }
+
+    if keyboard.just_pressed(KeyCode::KeyS) {
+        let current_time = time.elapsed_secs();
+
+        for mut shield in shield_query.iter_mut() {
+            if shield.team == Team::B {
+                info!("DEBUG: Setting Team B shield HP to 0");
+                shield.current_hp = 0.0;
+                shield.last_hit_time = current_time;
+                shield.impact_flash_timer = SHIELD_IMPACT_FLASH_DURATION;
+            }
         }
     }
 }
