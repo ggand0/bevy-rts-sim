@@ -5,12 +5,37 @@ use bevy::render::mesh::{Indices, PrimitiveTopology};
 use bevy::render::alpha::AlphaMode;
 use crate::types::Team;
 
-// Shield configuration constants
-const SHIELD_MAX_HP: f32 = 5000.0;
-const SHIELD_REGEN_RATE: f32 = 50.0; // HP per second
-const SHIELD_REGEN_DELAY: f32 = 3.0; // Seconds after last hit before regen starts
-const SHIELD_RESPAWN_DELAY: f32 = 10.0; // Seconds after destruction before respawn
-const SHIELD_IMPACT_FLASH_DURATION: f32 = 0.2; // Seconds
+// Shield configuration
+#[derive(Resource, Clone)]
+pub struct ShieldConfig {
+    pub max_hp: f32,
+    pub regen_rate: f32,           // HP per second
+    pub regen_delay: f32,           // Seconds after last hit before regen starts
+    pub respawn_delay: f32,         // Seconds after destruction before respawn
+    pub impact_flash_duration: f32, // Seconds
+    pub laser_damage: f32,          // Damage per laser hit
+    #[allow(dead_code)]
+    pub particle_scale: f32,        // Scale for impact particles (reserved for future use)
+    pub shield_impact_volume: f32,  // Audio volume for shield impacts
+    pub surface_offset: f32,        // Offset for particle spawn from surface
+}
+
+impl Default for ShieldConfig {
+    fn default() -> Self {
+        Self {
+            max_hp: 5000.0,
+            regen_rate: 50.0,
+            regen_delay: 3.0,
+            respawn_delay: 10.0,
+            impact_flash_duration: 0.2,
+            laser_damage: 25.0,
+            particle_scale: 2.0,
+            shield_impact_volume: 0.4,
+            surface_offset: 0.5,
+        }
+    }
+}
+
 const MAX_RIPPLES: usize = 8; // Maximum simultaneous ripple effects
 const RIPPLE_DURATION: f32 = 1.5; // Seconds for ripple to expand and fade
 const RIPPLE_SPAWN_CHANCE: f32 = 0.25; // 25% chance to spawn ripple on hit
@@ -19,7 +44,8 @@ pub struct ShieldPlugin;
 
 impl Plugin for ShieldPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(MaterialPlugin::<ShieldMaterial>::default());
+        app.add_plugins(MaterialPlugin::<ShieldMaterial>::default())
+            .insert_resource(ShieldConfig::default());
         // Shield systems are registered in main.rs with proper ordering
     }
 }
@@ -55,18 +81,19 @@ pub struct Shield {
 }
 
 impl Shield {
-    pub fn new(team: Team, radius: f32, center: Vec3, material_handle: Handle<ShieldMaterial>) -> Self {
-        Self::with_hp(team, radius, center, material_handle, SHIELD_MAX_HP)
+    #[allow(dead_code)]
+    pub fn new(team: Team, radius: f32, center: Vec3, material_handle: Handle<ShieldMaterial>, max_hp: f32) -> Self {
+        Self::with_hp(team, radius, center, material_handle, max_hp, max_hp)
     }
 
-    pub fn with_hp(team: Team, radius: f32, center: Vec3, material_handle: Handle<ShieldMaterial>, starting_hp: f32) -> Self {
+    pub fn with_hp(team: Team, radius: f32, center: Vec3, material_handle: Handle<ShieldMaterial>, max_hp: f32, starting_hp: f32) -> Self {
         Self {
             material_handle,
             team,
             radius,
             center,
             current_hp: starting_hp,
-            max_hp: SHIELD_MAX_HP,
+            max_hp,
             last_hit_time: -999.0,
             impact_flash_timer: 0.0,
             base_alpha: 0.2,
@@ -74,10 +101,10 @@ impl Shield {
         }
     }
 
-    pub fn take_damage(&mut self, damage: f32, current_time: f32) {
+    pub fn take_damage(&mut self, damage: f32, current_time: f32, flash_duration: f32) {
         self.current_hp = (self.current_hp - damage).max(0.0);
         self.last_hit_time = current_time;
-        self.impact_flash_timer = SHIELD_IMPACT_FLASH_DURATION;
+        self.impact_flash_timer = flash_duration;
     }
 
     pub fn add_ripple(&mut self, position: Vec3, current_time: f32) {
@@ -229,6 +256,25 @@ pub fn create_hemisphere_mesh(radius: f32, segments: u32) -> Mesh {
     .with_inserted_indices(Indices::U32(indices))
 }
 
+/// Creates a shield material with the given parameters
+fn create_shield_material(
+    team_color: Color,
+    position: Vec3,
+    radius: f32,
+    health_percent: f32,
+) -> ShieldMaterial {
+    ShieldMaterial {
+        color: team_color.to_linear(),
+        fresnel_power: 3.0,
+        hex_scale: 8.0,
+        time: 0.0,
+        health_percent,
+        shield_center: position,
+        shield_radius: radius,
+        ripple_data: [Vec4::ZERO; MAX_RIPPLES],
+    }
+}
+
 /// Spawns a shield around a position
 pub fn spawn_shield(
     commands: &mut Commands,
@@ -238,8 +284,9 @@ pub fn spawn_shield(
     radius: f32,
     team_color: Color,
     team: Team,
+    config: &ShieldConfig,
 ) -> Entity {
-    spawn_shield_with_hp(commands, meshes, materials, position, radius, team_color, team, SHIELD_MAX_HP)
+    spawn_shield_with_hp(commands, meshes, materials, position, radius, team_color, team, config, config.max_hp)
 }
 
 /// Spawns a shield around a position with custom starting HP
@@ -251,29 +298,19 @@ pub fn spawn_shield_with_hp(
     radius: f32,
     team_color: Color,
     team: Team,
+    config: &ShieldConfig,
     starting_hp: f32,
 ) -> Entity {
     let shield_mesh = create_hemisphere_mesh(radius, 32);
-
-    let health_percent = starting_hp / SHIELD_MAX_HP;
-    let shield_material = ShieldMaterial {
-        color: team_color.to_linear(),
-        fresnel_power: 3.0,
-        hex_scale: 8.0,
-        time: 0.0,
-        health_percent,
-        shield_center: position,
-        shield_radius: radius,
-        ripple_data: [Vec4::ZERO; MAX_RIPPLES],
-    };
-
+    let health_percent = starting_hp / config.max_hp;
+    let shield_material = create_shield_material(team_color, position, radius, health_percent);
     let material_handle = materials.add(shield_material);
 
     commands.spawn((
         Mesh3d(meshes.add(shield_mesh)),
         MeshMaterial3d(material_handle.clone()),
         Transform::from_translation(position),
-        Shield::with_hp(team, radius, position, material_handle.clone(), starting_hp),
+        Shield::with_hp(team, radius, position, material_handle.clone(), config.max_hp, starting_hp),
         bevy::pbr::NotShadowCaster,
         bevy::pbr::NotShadowReceiver,
     )).id()
@@ -296,6 +333,7 @@ pub fn animate_shields(
 pub fn shield_collision_system(
     mut commands: Commands,
     time: Res<Time>,
+    config: Res<ShieldConfig>,
     mut shield_query: Query<(Entity, &mut Shield)>,
     laser_query: Query<(Entity, &crate::types::LaserProjectile, &Transform)>,
     particle_effects: Res<crate::particles::ExplosionParticleEffects>,
@@ -318,7 +356,7 @@ pub fn shield_collision_system(
             // Simple sphere collision - laser within shield radius
             if distance < shield.radius {
                 // Shield blocks the laser
-                shield.take_damage(25.0, current_time);
+                shield.take_damage(config.laser_damage, current_time, config.impact_flash_duration);
 
                 // 25% chance to spawn ripple effect and particles
                 if rand::random::<f32>() < RIPPLE_SPAWN_CHANCE {
@@ -326,7 +364,7 @@ pub fn shield_collision_system(
 
                     // Calculate impact point on shield surface
                     let dir_to_laser = (laser_pos - shield.center).normalize();
-                    let surface_pos = shield.center + dir_to_laser * (shield.radius + 0.5);
+                    let surface_pos = shield.center + dir_to_laser * (shield.radius + config.surface_offset);
 
                     // Spawn particle effect at surface impact point
                     crate::particles::spawn_shield_impact_particles(
@@ -339,7 +377,7 @@ pub fn shield_collision_system(
                     // Play shield impact sound
                     commands.spawn((
                         AudioPlayer::new(audio_assets.shield_impact_sound.clone()),
-                        PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::new(0.4)),
+                        PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::new(config.shield_impact_volume)),
                     ));
                 }
 
@@ -358,18 +396,12 @@ pub fn shield_collision_system(
                     info!("Shield {:?} destroyed!", shield.team);
 
                     // Spawn destroyed shield marker for respawn
-                    let team_color = if shield.team == crate::types::Team::A {
-                        Color::srgb(0.2, 0.6, 1.0)
-                    } else {
-                        Color::srgb(1.0, 0.4, 0.2)
-                    };
-
                     commands.spawn(DestroyedShield {
                         team: shield.team,
                         position: shield.center,
                         radius: shield.radius,
-                        team_color,
-                        respawn_timer: SHIELD_RESPAWN_DELAY,
+                        team_color: shield.team.shield_color(),
+                        respawn_timer: config.respawn_delay,
                     });
 
                     commands.entity(shield_entity).despawn();
@@ -382,6 +414,7 @@ pub fn shield_collision_system(
 /// Regenerates shield HP over time after damage
 pub fn shield_regeneration_system(
     time: Res<Time>,
+    config: Res<ShieldConfig>,
     mut query: Query<&mut Shield>,
 ) {
     let current_time = time.elapsed_secs();
@@ -390,8 +423,8 @@ pub fn shield_regeneration_system(
     for mut shield in query.iter_mut() {
         if shield.current_hp < shield.max_hp {
             // Check if enough time has passed since last hit
-            if current_time - shield.last_hit_time >= SHIELD_REGEN_DELAY {
-                let regen_amount = SHIELD_REGEN_RATE * delta;
+            if current_time - shield.last_hit_time >= config.regen_delay {
+                let regen_amount = config.regen_rate * delta;
                 shield.current_hp = (shield.current_hp + regen_amount).min(shield.max_hp);
             }
         }
@@ -415,6 +448,7 @@ pub fn shield_impact_flash_system(
 /// Updates shield material alpha based on health and impacts
 pub fn shield_health_visual_system(
     time: Res<Time>,
+    config: Res<ShieldConfig>,
     mut materials: ResMut<Assets<ShieldMaterial>>,
     query: Query<&Shield>,
 ) {
@@ -426,7 +460,7 @@ pub fn shield_health_visual_system(
             let health_alpha = shield.base_alpha * (0.3 + 0.7 * shield.health_percent());
 
             // Add flash effect on impact
-            let flash_intensity = shield.impact_flash_timer / SHIELD_IMPACT_FLASH_DURATION;
+            let flash_intensity = shield.impact_flash_timer / config.impact_flash_duration;
             let impact_alpha = flash_intensity * 0.5;
 
             // Update health percent for shader (shader will interpolate color to white)
@@ -471,6 +505,7 @@ pub fn shield_tower_death_system(
 pub fn shield_respawn_system(
     mut commands: Commands,
     time: Res<Time>,
+    config: Res<ShieldConfig>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ShieldMaterial>>,
     mut query: Query<(Entity, &mut DestroyedShield)>,
@@ -504,6 +539,7 @@ pub fn shield_respawn_system(
                 destroyed.radius,
                 destroyed.team_color,
                 destroyed.team,
+                &config,
                 0.0, // Start at 0 HP, will regenerate like Empire at War
             );
 
@@ -516,6 +552,7 @@ pub fn shield_respawn_system(
 /// Debug system: Press 'S' (when debug mode active) to set enemy (Team B) shield HP to zero
 pub fn debug_destroy_enemy_shield(
     keyboard: Res<ButtonInput<KeyCode>>,
+    config: Res<ShieldConfig>,
     mut shield_query: Query<&mut Shield>,
     time: Res<Time>,
     debug_mode: Res<crate::objective::ExplosionDebugMode>,
@@ -533,7 +570,7 @@ pub fn debug_destroy_enemy_shield(
                 info!("DEBUG: Setting Team B shield HP to 0");
                 shield.current_hp = 0.0;
                 shield.last_hit_time = current_time;
-                shield.impact_flash_timer = SHIELD_IMPACT_FLASH_DURATION;
+                shield.impact_flash_timer = config.impact_flash_duration;
             }
         }
     }

@@ -4,7 +4,7 @@ use rand::Rng;
 use crate::types::*;
 use crate::constants::*;
 use crate::procedural_meshes::*;
-use crate::shield::{spawn_shield, ShieldMaterial};
+use crate::shield::{spawn_shield, ShieldMaterial, ShieldConfig};
 
 // ===== TOWER CREATION =====
 
@@ -13,6 +13,7 @@ pub fn spawn_uplink_towers(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut shield_materials: ResMut<Assets<ShieldMaterial>>,
+    shield_config: Res<ShieldConfig>,
 ) {
     let tower_mesh = create_uplink_tower_mesh(&mut meshes);
     
@@ -60,10 +61,11 @@ pub fn spawn_uplink_towers(
         &mut shield_materials,
         team_a_pos,
         50.0, // Shield radius (covers tower and surrounding area)
-        Color::srgb(0.2, 0.6, 1.0), // Blue shield matching team color
+        Team::A.shield_color(),
         Team::A,
+        &shield_config,
     );
-    
+
     // Spawn Team B tower (right side, behind army)
     let team_b_pos = Vec3::new(BATTLEFIELD_SIZE / 2.0 + 30.0, 0.0, 0.0);
     commands.spawn((
@@ -90,8 +92,9 @@ pub fn spawn_uplink_towers(
         &mut shield_materials,
         team_b_pos,
         50.0, // Shield radius (covers tower and surrounding area)
-        Color::srgb(1.0, 0.4, 0.2), // Orange/red shield matching team color
+        Team::B.shield_color(),
         Team::B,
+        &shield_config,
     );
 
     info!("Spawned Uplink Towers with shields for both teams");

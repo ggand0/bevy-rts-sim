@@ -8,6 +8,16 @@ pub enum Team {
     B,
 }
 
+impl Team {
+    /// Returns the primary color for this team's shields/UI
+    pub fn shield_color(&self) -> Color {
+        match self {
+            Team::A => Color::srgb(0.2, 0.6, 1.0),  // Cyan/blue
+            Team::B => Color::srgb(1.0, 0.4, 0.2),  // Orange/red
+        }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum FormationType {
     Rectangle,
