@@ -2,7 +2,7 @@
 use bevy::prelude::*;
 use crate::constants::*;
 use crate::explosion_shader::{spawn_custom_shader_explosion, ExplosionAssets};
-use crate::particles::ExplosionParticleEffects;
+// use crate::particles::ExplosionParticleEffects;  // Temporarily disabled
 use crate::types::AudioAssets;
 use crate::types::UplinkTower;
 
@@ -37,7 +37,7 @@ pub fn pending_explosion_system(
     mut additive_materials: ResMut<Assets<crate::wfx_materials::AdditiveMaterial>>,
     mut smoke_only_materials: ResMut<Assets<crate::wfx_materials::SmokeOnlyMaterial>>,
     explosion_assets: Option<Res<ExplosionAssets>>,
-    particle_effects: Option<Res<ExplosionParticleEffects>>,
+    // particle_effects: Option<Res<ExplosionParticleEffects>>,  // Temporarily disabled
     audio_assets: Res<AudioAssets>,
     asset_server: Res<AssetServer>,
     mut explosion_query: Query<(Entity, &mut PendingExplosion, &Transform, Option<&UplinkTower>), With<PendingExplosion>>,

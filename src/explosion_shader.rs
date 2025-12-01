@@ -156,7 +156,7 @@ pub fn spawn_custom_shader_explosion(
     meshes: &mut ResMut<Assets<Mesh>>,
     explosion_materials: &mut ResMut<Assets<ExplosionMaterial>>,
     explosion_assets: &ExplosionAssets,
-    particle_effects: Option<&crate::particles::ExplosionParticleEffects>,
+    // particle_effects: Option<&crate::particles::ExplosionParticleEffects>,  // Temporarily disabled
     position: Vec3,
     radius: f32,
     _intensity: f32,

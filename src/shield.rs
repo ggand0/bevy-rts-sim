@@ -354,7 +354,7 @@ pub fn shield_collision_system(
     config: Res<ShieldConfig>,
     mut shield_query: Query<(Entity, &mut Shield)>,
     laser_query: Query<(Entity, &crate::types::LaserProjectile, &Transform)>,
-    particle_effects: Res<crate::particles::ExplosionParticleEffects>,
+    // particle_effects: Res<crate::particles::ExplosionParticleEffects>,  // Temporarily disabled
     audio_assets: Res<crate::types::AudioAssets>,
 ) {
     let current_time = time.elapsed_secs();
@@ -385,12 +385,12 @@ pub fn shield_collision_system(
                     let surface_pos = shield.center + dir_to_laser * (shield.radius + config.surface_offset);
 
                     // Spawn particle effect at surface impact point
-                    crate::particles::spawn_shield_impact_particles(
-                        &mut commands,
-                        &particle_effects,
-                        surface_pos,
-                        current_time_f64,
-                    );
+                    // crate::particles::spawn_shield_impact_particles(  // Temporarily disabled
+                    //     &mut commands,
+                    //     &particle_effects,
+                    //     surface_pos,
+                    //     current_time_f64,
+                    // );
 
                     // Play shield impact sound
                     commands.spawn((

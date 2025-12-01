@@ -7,7 +7,7 @@ pub struct ParticleEffectsPlugin;
 
 impl Plugin for ParticleEffectsPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(HanabiPlugin)
+        app.add_plugins(HanabiPlugin::default())
             .add_systems(Startup, setup_particle_effects)
             .add_systems(Update, cleanup_finished_particle_effects);
     }
@@ -38,13 +38,13 @@ fn setup_particle_effects(
 
     // === DEBRIS PARTICLES ===
     // Physical debris chunks that fly outward
-    let mut color_gradient1 = Gradient::new();
+    let mut color_gradient1 = bevy_hanabi::Gradient::new();
     color_gradient1.add_key(0.0, Vec4::new(1.0, 0.5, 0.2, 1.0)); // Bright orange
     color_gradient1.add_key(0.3, Vec4::new(0.8, 0.3, 0.1, 1.0)); // Dark orange
     color_gradient1.add_key(0.6, Vec4::new(0.3, 0.3, 0.3, 0.8)); // Gray
     color_gradient1.add_key(1.0, Vec4::new(0.1, 0.1, 0.1, 0.0)); // Fade to black
 
-    let mut size_gradient1 = Gradient::new();
+    let mut size_gradient1 = bevy_hanabi::Gradient::new();
     size_gradient1.add_key(0.0, Vec3::splat(0.5));
     size_gradient1.add_key(1.0, Vec3::splat(0.3));
 
@@ -81,19 +81,19 @@ fn setup_particle_effects(
             .init(init_size)
             .update(update_accel)
             .update(update_drag)
-            .render(ColorOverLifetimeModifier { gradient: color_gradient1 })
+            .render(ColorOverLifetimeModifier::new(color_gradient1))
             .render(SizeOverLifetimeModifier { gradient: size_gradient1, screen_space_size: false })
     );
 
     // === SPARK PARTICLES ===
     // Bright, fast-moving sparks
-    let mut color_gradient2 = Gradient::new();
+    let mut color_gradient2 = bevy_hanabi::Gradient::new();
     color_gradient2.add_key(0.0, Vec4::new(1.0, 1.0, 0.8, 1.0)); // Bright yellow-white
     color_gradient2.add_key(0.1, Vec4::new(1.0, 0.8, 0.3, 1.0)); // Yellow
     color_gradient2.add_key(0.3, Vec4::new(1.0, 0.4, 0.1, 0.8)); // Orange
     color_gradient2.add_key(1.0, Vec4::new(0.5, 0.1, 0.0, 0.0)); // Fade out
 
-    let mut size_gradient2 = Gradient::new();
+    let mut size_gradient2 = bevy_hanabi::Gradient::new();
     size_gradient2.add_key(0.0, Vec3::splat(0.2));
     size_gradient2.add_key(1.0, Vec3::splat(0.05));
 
@@ -129,19 +129,19 @@ fn setup_particle_effects(
             .init(init_size2)
             .update(update_accel2)
             .update(update_drag2)
-            .render(ColorOverLifetimeModifier { gradient: color_gradient2 })
+            .render(ColorOverLifetimeModifier::new(color_gradient2))
             .render(SizeOverLifetimeModifier { gradient: size_gradient2, screen_space_size: false })
     );
 
     // === SMOKE PARTICLES ===
     // Rising smoke plumes
-    let mut color_gradient3 = Gradient::new();
+    let mut color_gradient3 = bevy_hanabi::Gradient::new();
     color_gradient3.add_key(0.0, Vec4::new(0.3, 0.3, 0.3, 0.0)); // Start transparent
     color_gradient3.add_key(0.2, Vec4::new(0.4, 0.4, 0.4, 0.6)); // Fade in
     color_gradient3.add_key(0.5, Vec4::new(0.35, 0.35, 0.35, 0.5)); // Peak
     color_gradient3.add_key(1.0, Vec4::new(0.2, 0.2, 0.2, 0.0)); // Fade out
 
-    let mut size_gradient3 = Gradient::new();
+    let mut size_gradient3 = bevy_hanabi::Gradient::new();
     size_gradient3.add_key(0.0, Vec3::splat(2.0));
     size_gradient3.add_key(1.0, Vec3::splat(4.0)); // Expand over lifetime
 
@@ -177,19 +177,19 @@ fn setup_particle_effects(
             .init(init_size3)
             .update(update_accel3)
             .update(update_drag3)
-            .render(ColorOverLifetimeModifier { gradient: color_gradient3 })
+            .render(ColorOverLifetimeModifier::new(color_gradient3))
             .render(SizeOverLifetimeModifier { gradient: size_gradient3, screen_space_size: false })
     );
 
     // === SHIELD IMPACT PARTICLES ===
     // Small, fast burst of energy particles for shield impacts
-    let mut color_gradient4 = Gradient::new();
+    let mut color_gradient4 = bevy_hanabi::Gradient::new();
     color_gradient4.add_key(0.0, Vec4::new(0.8, 1.0, 1.0, 1.0)); // Bright white-cyan
     color_gradient4.add_key(0.2, Vec4::new(0.5, 0.8, 1.0, 0.9)); // Bright cyan
     color_gradient4.add_key(0.5, Vec4::new(0.3, 0.6, 1.0, 0.6)); // Cyan
     color_gradient4.add_key(1.0, Vec4::new(0.2, 0.4, 0.8, 0.0)); // Fade to blue
 
-    let mut size_gradient4 = Gradient::new();
+    let mut size_gradient4 = bevy_hanabi::Gradient::new();
     size_gradient4.add_key(0.0, Vec3::splat(0.6));
     size_gradient4.add_key(0.3, Vec3::splat(0.8));
     size_gradient4.add_key(1.0, Vec3::splat(0.2));
@@ -224,7 +224,7 @@ fn setup_particle_effects(
             .init(init_lifetime4)
             .init(init_size4)
             .update(update_drag4)
-            .render(ColorOverLifetimeModifier { gradient: color_gradient4 })
+            .render(ColorOverLifetimeModifier::new(color_gradient4))
             .render(SizeOverLifetimeModifier { gradient: size_gradient4, screen_space_size: false })
     );
 
@@ -299,12 +299,9 @@ pub fn spawn_unit_explosion_particles(
 
     // Smaller, simpler effect for units - just debris and quick sparks
     commands.spawn((
-        ParticleEffectBundle {
-            effect: ParticleEffect::new(particle_effects.debris_effect.clone()),
-            transform: Transform::from_translation(position)
-                .with_scale(Vec3::splat(0.3)), // Much smaller
-            ..default()
-        },
+        ParticleEffect::new(particle_effects.debris_effect.clone()),
+        Transform::from_translation(position)
+            .with_scale(Vec3::splat(0.3)), // Much smaller
         ParticleEffectLifetime {
             spawn_time: current_time,
             duration: 3.0, // Smaller explosions cleanup faster
@@ -313,12 +310,9 @@ pub fn spawn_unit_explosion_particles(
     ));
 
     commands.spawn((
-        ParticleEffectBundle {
-            effect: ParticleEffect::new(particle_effects.sparks_effect.clone()),
-            transform: Transform::from_translation(position)
-                .with_scale(Vec3::splat(0.25)),
-            ..default()
-        },
+        ParticleEffect::new(particle_effects.sparks_effect.clone()),
+        Transform::from_translation(position)
+            .with_scale(Vec3::splat(0.25)),
         ParticleEffectLifetime {
             spawn_time: current_time,
             duration: 2.0, // Quick sparks
@@ -348,12 +342,9 @@ pub fn spawn_shield_impact_particles(
 ) {
     // Use the dedicated shield impact effect (cyan burst)
     commands.spawn((
-        ParticleEffectBundle {
-            effect: ParticleEffect::new(particle_effects.shield_impact_effect.clone()),
-            transform: Transform::from_translation(position)
-                .with_scale(Vec3::splat(2.0)), // Larger scale to make it more visible
-            ..default()
-        },
+        ParticleEffect::new(particle_effects.shield_impact_effect.clone()),
+        Transform::from_translation(position)
+            .with_scale(Vec3::splat(2.0)), // Larger scale to make it more visible
         ParticleEffectLifetime {
             spawn_time: current_time,
             duration: 2.0,
