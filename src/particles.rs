@@ -346,8 +346,6 @@ pub fn spawn_shield_impact_particles(
     position: Vec3,
     current_time: f64,
 ) {
-    info!("⚡ SHIELD PARTICLES: Spawning shield impact particles at {:?}", position);
-
     // Use the dedicated shield impact effect (cyan burst)
     commands.spawn((
         ParticleEffectBundle {

@@ -126,6 +126,7 @@ pub struct AudioAssets {
     pub laser_sounds: Vec<Handle<AudioSource>>,
     pub explosion_sound: Handle<AudioSource>,
     pub mg_sound: Handle<AudioSource>,
+    pub shield_impact_sound: Handle<AudioSource>,
 }
 
 impl AudioAssets {
