@@ -1,7 +1,7 @@
 # Bevy Mass Render - RTS Game Project Overview
 
 **Last Updated:** November 29, 2025  
-**Bevy Version:** 0.14.2  
+**Bevy Version:** 0.15.3
 **Rust Version:** 1.90.0  
 **Platform:** Linux (tested on Ubuntu with AMD Radeon RX 7900 XTX)
 
@@ -14,7 +14,9 @@ A 3D real-time strategy (RTS) game inspired by **Star Wars: Empire at War**, fea
 ### Core Gameplay
 - **10,000 Unit Battles:** 5,000 droids per team engaging in large-scale warfare
 - **Objective-Based:** Destroy the enemy's uplink tower to win
+- **Shield Defense System:** Empire at War-style shields protect towers with regeneration mechanics
 - **Tower Cascade System:** When a tower is destroyed, all friendly units within range explode dramatically
+- **Defensive Turrets:** Two procedural turrets (Heavy and MG) provide Team A defensive fire
 - **Formation Combat:** Squad-based movement with tactical formations
 - **Real-time Combat:** Automatic targeting and projectile-based weapon systems
 - **RTS Controls:** Click/box selection, group formations, orientation control
@@ -36,6 +38,9 @@ src/
 ├── combat.rs            # Targeting, firing, collision detection
 ├── commander.rs         # Commander promotion and visual markers
 ├── objective.rs         # Tower mechanics, destruction cascade, debug systems
+├── shield.rs            # Shield system, regeneration, respawn mechanics
+├── procedural_meshes.rs # Procedural mesh generation (units, towers, turrets)
+├── turrets.rs           # Turret spawn systems and map respawn
 ├── explosion_system.rs  # Explosion orchestration (pending explosions, effects)
 ├── explosion_shader.rs  # Legacy flipbook explosion (unit deaths)
 ├── particles.rs         # Particle system plugin (debris, sparks)
@@ -57,7 +62,8 @@ src/
 
 assets/
 ├── shaders/
-│   └── explosion.wgsl   # Custom shader for flipbook animation
+│   ├── explosion.wgsl   # Custom shader for flipbook animation
+│   └── shield.wgsl      # Shield effect shader (hexagonal grid, fresnel)
 ├── textures/
 │   ├── Explosion02HD_5x5.tga      # 5x5 sprite sheet (unit deaths)
 │   └── wfx_explosivesmoke_big/    # War FX textures (tower explosions)
@@ -89,10 +95,20 @@ assets/
 
 3. **Combat Systems**
    - `target_acquisition_system` - Finds enemies in range
-   - `auto_fire_system` - Automatic firing at targets
+   - `auto_fire_system` - Automatic firing at targets (handles MG turret rapid fire modes)
    - `volley_fire_system` - Coordinated volley attacks (F key)
    - `update_projectiles` - Moves projectiles
    - `collision_detection_system` - Detects hits and applies damage
+   - `turret_rotation_system` - Smoothly rotates turret assemblies toward targets
+
+3a. **Shield Systems**
+   - `shield_collision_system` - Laser impact detection & damage
+   - `shield_regeneration_system` - HP recovery over time
+   - `shield_impact_flash_system` - Flash timer countdown
+   - `shield_health_visual_system` - Material alpha & ripple updates
+   - `shield_tower_death_system` - Despawn when tower dies
+   - `shield_respawn_system` - Handle respawn countdown
+   - `animate_shields` - Shader time animation
 
 4. **Objective & Explosion Systems**
    - `tower_targeting_system` - Units target towers when in range
@@ -279,6 +295,7 @@ Procedurally generated futuristic data towers:
   - **4:** Glow sparkles only
   - **5:** Combined explosion (all emitters)
   - **6:** Dot sparkles (falling + floating)
+  - **S:** Instantly destroy enemy (Team B) shield
 
 ---
 
@@ -299,9 +316,10 @@ Procedurally generated futuristic data towers:
   - Flipbook animation (legacy unit explosions)
   - Scrolling UV (smoke particles)
   - Additive blending (glow/fire)
+  - Shield effects (hexagonal grid, fresnel edge glow, impact ripples)
 - **Billboard Quads:** All particles face camera using custom Transform calculations
 - **Shadow Control:** Units cast/receive shadows; particles do not
-- **Material Plugins:** Custom material plugins for specialized effects (smoke, additive, etc.)
+- **Material Plugins:** Custom material plugins for specialized effects (smoke, additive, shields, etc.)
 
 ### AMD GPU Compatibility
 
@@ -333,11 +351,12 @@ This works around segfault issues with AMD drivers on Linux.
 - Performant rendering and simulation
 - Squad-based formation system
 - Objective-based gameplay (tower destruction)
+- Empire at War-style shield defense system
 - Dramatic cascade explosion system
 - RTS-style camera controls
 - Procedural unit and tower generation
 - War FX particle system (multi-emitter explosions)
-- Custom material system (scrolling smoke, additive glow)
+- Custom material system (scrolling smoke, additive glow, shields)
 - Explosion audio integration
 - Billboard particle rendering
 - Squad selection and grouping system
@@ -449,9 +468,10 @@ codegen-units = 1
 2. **constants.rs** - All tunable parameters
 3. **main.rs** - System registration order (important!)
 4. **selection/** - Selection and grouping system (1,716 lines across submodules)
-5. **wfx_spawn.rs** - War FX explosion system (tower explosions)
-6. **explosion_system.rs** - Explosion orchestration (pending, timing)
-7. **explosion_shader.rs** - Legacy flipbook system (unit deaths)
+5. **shield.rs** - Shield defense system (regeneration, respawn, visual effects)
+6. **wfx_spawn.rs** - War FX explosion system (tower explosions)
+7. **explosion_system.rs** - Explosion orchestration (pending, timing)
+8. **explosion_shader.rs** - Legacy flipbook system (unit deaths)
 
 ### Common Tasks
 - **Adding new unit types:** Modify `setup.rs`, add to `types.rs`
@@ -495,6 +515,8 @@ codegen-units = 1
 ### Project-Specific Documentation
 - **EXPLOSION_SYSTEM.md** - Detailed explosion implementation
 - **SELECTION_GROUPING.md** - Selection and grouping system details
+- **TURRETS.md** - Turret systems, firing modes, and targeting behavior
+- **SHIELD_SYSTEM.md** - Shield defense mechanics and configuration
 - **devlogs/** - Historical development notes and fixes
 
 ---
