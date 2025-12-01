@@ -356,12 +356,12 @@ fn terrain_map_switching(
 
             // Despawn all terrain entities
             for entity in terrain_query.iter() {
-                commands.entity(entity).despawn_recursive();
+                commands.entity(entity).despawn();
             }
 
             // Remove skybox from camera if present
             for entity in skybox_entity_query.iter() {
-                commands.entity(entity).despawn_recursive();
+                commands.entity(entity).despawn();
             }
             // Also remove Skybox component from camera
             if let Ok(camera_entity) = camera_query.get_single() {

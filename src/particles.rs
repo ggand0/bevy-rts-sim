@@ -375,7 +375,7 @@ fn cleanup_finished_particle_effects(
         let elapsed = (current_time - lifetime.spawn_time) as f32;
 
         if elapsed >= lifetime.duration {
-            commands.entity(entity).despawn_recursive();
+            commands.entity(entity).despawn();
         }
     }
 }

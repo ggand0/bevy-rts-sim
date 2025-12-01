@@ -433,7 +433,7 @@ pub fn auto_fire_system(
                         let sound = audio_assets.get_random_laser_sound(&mut rng);
                         commands.spawn((
                             AudioPlayer::new(sound),
-                            PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::new(crate::constants::VOLUME_LASER)),
+                            PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::Linear(crate::constants::VOLUME_LASER)),
                         ));
                     }
                 }
@@ -663,7 +663,7 @@ pub fn auto_fire_system(
 
                             commands.spawn((
                                 AudioPlayer::new(audio_assets.mg_sound.clone()),
-                                PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::new(volume)),
+                                PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::Linear(volume)),
                             ));
                         }
                     } else {
@@ -674,7 +674,7 @@ pub fn auto_fire_system(
                             let sound = audio_assets.get_random_laser_sound(&mut rng);
                             commands.spawn((
                                 AudioPlayer::new(sound),
-                                PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::new(crate::constants::VOLUME_LASER)),
+                                PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::Linear(crate::constants::VOLUME_LASER)),
                             ));
                         }
                     }
@@ -760,8 +760,8 @@ pub fn collision_detection_system(
     
     // Despawn all marked entities
     for entity in entities_to_despawn {
-        if let Some(entity_commands) = commands.get_entity(entity) {
-            entity_commands.despawn_recursive();
+        if let Ok(entity_commands) = commands.get_entity(entity) {
+            entity_commands.despawn();
         }
     }
 }
@@ -871,7 +871,7 @@ pub fn visualize_collision_spheres_system(
 ) {
     // Always remove existing debug spheres
     for entity in existing_spheres.iter() {
-        commands.entity(entity).despawn_recursive();
+        commands.entity(entity).despawn();
     }
 
     // Only create new spheres if visualization is enabled

@@ -157,7 +157,7 @@ pub fn box_selection_visual_system(
     let Some(cursor_pos) = window.cursor_position() else {
         // No cursor - despawn any existing visual
         for entity in existing_visual.iter() {
-            commands.entity(entity).despawn_recursive();
+            commands.entity(entity).despawn();
         }
         return;
     };
@@ -166,7 +166,7 @@ pub fn box_selection_visual_system(
     if !selection_state.is_box_selecting {
         // Not box selecting - despawn any existing visual
         for entity in existing_visual.iter() {
-            commands.entity(entity).despawn_recursive();
+            commands.entity(entity).despawn();
         }
         return;
     }
@@ -186,7 +186,7 @@ pub fn box_selection_visual_system(
 
     // Despawn existing visual (we'll recreate it with new dimensions)
     for entity in existing_visual.iter() {
-        commands.entity(entity).despawn_recursive();
+        commands.entity(entity).despawn();
     }
 
     // Skip if too small

@@ -33,7 +33,7 @@ use turrets::*;
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
-        .add_plugins(bevy::diagnostic::FrameTimeDiagnosticsPlugin)
+        .add_plugins(bevy::diagnostic::FrameTimeDiagnosticsPlugin::default())
         .add_plugins(ExplosionShaderPlugin)
         .add_plugins(ParticleEffectsPlugin)
         .add_plugins(TerrainPlugin)

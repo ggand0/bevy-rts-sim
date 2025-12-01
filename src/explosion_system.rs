@@ -88,7 +88,7 @@ pub fn pending_explosion_system(
 
         commands.spawn((
             AudioPlayer::new(audio_assets.explosion_sound.clone()),
-            PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::new(crate::constants::VOLUME_EXPLOSION)),
+            PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::Linear(crate::constants::VOLUME_EXPLOSION)),
         ));
 
         crate::wfx_spawn::spawn_combined_explosion(
@@ -102,7 +102,7 @@ pub fn pending_explosion_system(
             4.0,
         );
 
-        commands.entity(entity).despawn_recursive();
+        commands.entity(entity).despawn();
     }
 
     // Process unit explosions with frame limit
@@ -130,7 +130,7 @@ pub fn pending_explosion_system(
             warn!("Cannot spawn unit explosion - ExplosionAssets not loaded");
         }
 
-        commands.entity(*entity).despawn_recursive();
+        commands.entity(*entity).despawn();
     }
 
     if ready_to_explode.len() > MAX_EXPLOSIONS_PER_FRAME {

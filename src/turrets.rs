@@ -188,7 +188,7 @@ pub fn respawn_turrets_on_map_switch(
 
     // Despawn all existing turrets (both base and assembly entities)
     for base_entity in turret_base_query.iter() {
-        commands.entity(base_entity).despawn_recursive();
+        commands.entity(base_entity).despawn();
     }
 
     info!("Respawning turrets for new terrain");

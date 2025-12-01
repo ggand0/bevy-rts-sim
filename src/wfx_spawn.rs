@@ -1286,7 +1286,7 @@ pub fn update_warfx_explosions(
 
         // Despawn after lifetime completes
         if explosion.lifetime >= explosion.max_lifetime {
-            commands.entity(entity).despawn_recursive();
+            commands.entity(entity).despawn();
         }
     }
 }

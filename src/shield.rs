@@ -395,7 +395,7 @@ pub fn shield_collision_system(
                     // Play shield impact sound
                     commands.spawn((
                         AudioPlayer::new(audio_assets.shield_impact_sound.clone()),
-                        PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::new(config.shield_impact_volume)),
+                        PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::Linear(config.shield_impact_volume)),
                     ));
                 }
 
