@@ -1,6 +1,6 @@
 // Group visuals - orientation markers and bounding box debug
 use bevy::prelude::*;
-use bevy::light::NotShadowCaster;
+use bevy::pbr::NotShadowCaster;
 use crate::types::*;
 
 use super::super::state::*;
@@ -98,7 +98,7 @@ pub fn update_group_orientation_markers(
             mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
             mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
             mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
-            mesh.insert_indices(bevy::mesh::Indices::U32(indices));
+            mesh.insert_indices(bevy::render::mesh::Indices::U32(indices));
 
             // Calculate initial rotation to point in the facing direction
             let target_rotation = Quat::from_rotation_y(obb.facing.x.atan2(obb.facing.z));

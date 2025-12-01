@@ -1,8 +1,8 @@
 use bevy::prelude::*;
 use bevy::pbr::MaterialPlugin;
 use bevy::render::render_resource::AsBindGroup;
-use bevy::shader::ShaderRef;
-use bevy::mesh::{Indices, PrimitiveTopology};
+use bevy::render::render_resource::ShaderRef;
+use bevy::render::mesh::{Indices, PrimitiveTopology};
 use bevy::render::alpha::AlphaMode;
 use crate::types::Team;
 
@@ -330,8 +330,8 @@ pub fn spawn_shield_with_hp(
         MeshMaterial3d(material_handle.clone()),
         Transform::from_translation(position),
         Shield::with_hp(team, radius, position, material_handle.clone(), config.max_hp, starting_hp),
-        bevy::light::NotShadowCaster,
-        bevy::light::NotShadowReceiver,
+        bevy::pbr::NotShadowCaster,
+        bevy::pbr::NotShadowReceiver,
     )).id()
 }
 

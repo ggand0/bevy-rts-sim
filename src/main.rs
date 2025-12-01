@@ -35,7 +35,7 @@ fn main() {
         .add_plugins(DefaultPlugins)
         .add_plugins(bevy::diagnostic::FrameTimeDiagnosticsPlugin::default())
         .add_plugins(ExplosionShaderPlugin)
-        .add_plugins(ParticleEffectsPlugin)
+        .add_plugins(ParticleEffectsPlugin) // Re-enabled to confirm this causes the crash
         .add_plugins(TerrainPlugin)
         .add_plugins(ShieldPlugin)
         .add_plugins(MaterialPlugin::<SmokeScrollMaterial>::default())

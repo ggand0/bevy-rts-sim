@@ -6,7 +6,7 @@
 //! - MG turrets (base and rotating assembly)
 
 use bevy::prelude::*;
-use bevy::mesh::{Indices, PrimitiveTopology};
+use bevy::render::mesh::{Indices, PrimitiveTopology};
 use bevy::asset::RenderAssetUsages;
 use std::f32::consts::PI;
 

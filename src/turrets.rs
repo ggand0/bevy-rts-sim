@@ -178,7 +178,7 @@ pub fn respawn_turrets_on_map_switch(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     heightmap: Res<TerrainHeightmap>,
-    mut map_switch_events: MessageReader<MapSwitchEvent>,
+    mut map_switch_events: EventReader<MapSwitchEvent>,
     turret_base_query: Query<Entity, With<TurretBase>>,
 ) {
     // Only process if there's a map switch event

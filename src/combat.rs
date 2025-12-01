@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use crate::types::*;
 use crate::constants::*;
 use crate::terrain::TerrainHeightmap;
-use bevy::mesh::{Indices, PrimitiveTopology};
+use bevy::render::mesh::{Indices, PrimitiveTopology};
 use bevy::asset::RenderAssetUsages;
 
 /// Check if there's a clear line of sight between shooter and target

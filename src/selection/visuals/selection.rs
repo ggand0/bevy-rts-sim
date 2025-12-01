@@ -1,6 +1,6 @@
 // Selection ring visuals - cyan rings under selected squads
 use bevy::prelude::*;
-use bevy::light::{NotShadowCaster, NotShadowReceiver};
+use bevy::pbr::{NotShadowCaster, NotShadowReceiver};
 use std::collections::HashSet;
 use crate::types::*;
 use crate::constants::*;
@@ -207,7 +207,7 @@ pub fn box_selection_visual_system(
             ..default()
         },
         BackgroundColor(Color::srgba(0.2, 0.8, 0.3, 0.15)),
-        BorderColor::all(Color::srgba(0.3, 1.0, 0.4, 0.8)),
+        BorderColor(Color::srgba(0.3, 1.0, 0.4, 0.8)),
         BoxSelectionVisual,
     ));
 }

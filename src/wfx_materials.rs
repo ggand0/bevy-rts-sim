@@ -3,8 +3,8 @@ use bevy::prelude::*;
 use bevy::render::render_resource::{
     AsBindGroup, BlendState, BlendComponent, BlendFactor, BlendOperation,
 };
-use bevy::shader::ShaderRef;
-use bevy::mesh::MeshVertexBufferLayoutRef;
+use bevy::render::render_resource::ShaderRef;
+use bevy::render::mesh::MeshVertexBufferLayoutRef;
 use bevy::pbr::{Material, MaterialPipeline, MaterialPipelineKey};
 use bevy::render::render_resource::SpecializedMeshPipelineError;
 
@@ -54,7 +54,7 @@ impl Material for SmokeScrollMaterial {
     }
 
     fn specialize(
-        _pipeline: &MaterialPipeline,
+        _pipeline: &MaterialPipeline<Self>,
         descriptor: &mut bevy::render::render_resource::RenderPipelineDescriptor,
         _layout: &MeshVertexBufferLayoutRef,
         _key: MaterialPipelineKey<Self>,
@@ -163,7 +163,7 @@ impl Material for SmokeOnlyMaterial {
     }
 
     fn specialize(
-        _pipeline: &MaterialPipeline,
+        _pipeline: &MaterialPipeline<Self>,
         descriptor: &mut bevy::render::render_resource::RenderPipelineDescriptor,
         _layout: &MeshVertexBufferLayoutRef,
         _key: MaterialPipelineKey<Self>,

@@ -2,7 +2,7 @@
 // Provides height-mapped terrain with multiple map presets
 
 use bevy::prelude::*;
-use bevy::mesh::{Indices, PrimitiveTopology};
+use bevy::render::mesh::{Indices, PrimitiveTopology};
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use bevy::core_pipeline::Skybox;
 use noise::{NoiseFn, Perlin, Fbm, MultiFractal};
@@ -19,14 +19,14 @@ pub struct TerrainPlugin;
 impl Plugin for TerrainPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(TerrainConfig::default())
-            .add_message::<MapSwitchEvent>()
+            .add_event::<MapSwitchEvent>()
             .add_systems(Startup, spawn_initial_terrain)
             .add_systems(Update, (terrain_map_switching, handle_map_switch_units));
     }
 }
 
-/// Message sent when map is switched
-#[derive(Message)]
+/// Event sent when map is switched
+#[derive(Event)]
 pub struct MapSwitchEvent {
     pub new_map: MapPreset,
 }
@@ -341,7 +341,7 @@ fn terrain_map_switching(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut images: ResMut<Assets<Image>>,
     asset_server: Res<AssetServer>,
-    mut map_switch_events: MessageWriter<MapSwitchEvent>,
+    mut map_switch_events: EventWriter<MapSwitchEvent>,
 ) {
     let new_preset = if keys.just_pressed(KeyCode::Digit1) {
         Some(MapPreset::Flat)
@@ -453,7 +453,7 @@ const UNIT_TERRAIN_OFFSET: f32 = 1.28;
 
 /// System to reposition units, towers, and reset game state when map is switched
 fn handle_map_switch_units(
-    mut map_switch_events: MessageReader<MapSwitchEvent>,
+    mut map_switch_events: EventReader<MapSwitchEvent>,
     heightmap: Res<TerrainHeightmap>,
     mut droid_query: Query<(&mut Transform, &mut BattleDroid, &SquadMember)>,
     mut tower_query: Query<(&mut Transform, &mut Health), (With<UplinkTower>, Without<BattleDroid>)>,

@@ -1,12 +1,12 @@
 // Enhanced sprite-based explosion effects with real sprite sheets and custom shader
 use bevy::prelude::*;
 use bevy::pbr::{MaterialPipeline, MaterialPipelineKey};
-use bevy::light::{NotShadowCaster, NotShadowReceiver};
-use bevy::mesh::MeshVertexBufferLayoutRef;
+use bevy::pbr::{NotShadowCaster, NotShadowReceiver};
+use bevy::render::mesh::MeshVertexBufferLayoutRef;
 use bevy::render::render_resource::{
     AsBindGroup, RenderPipelineDescriptor, SpecializedMeshPipelineError,
 };
-use bevy::shader::ShaderRef;
+use bevy::render::render_resource::ShaderRef;
 use std::time::Duration;
 use bevy::render::alpha::AlphaMode;
 use crate::types::RtsCamera;
@@ -34,7 +34,7 @@ impl Material for ExplosionMaterial {
     }
     
     fn specialize(
-        _pipeline: &MaterialPipeline,
+        _pipeline: &MaterialPipeline<Self>,
         descriptor: &mut RenderPipelineDescriptor,
         _layout: &MeshVertexBufferLayoutRef,
         _key: MaterialPipelineKey<Self>,
