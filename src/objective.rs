@@ -169,7 +169,7 @@ pub fn tower_destruction_system(
                 let delay = (raw_delay / EXPLOSION_TIME_QUANTUM).round() * EXPLOSION_TIME_QUANTUM;
                 delay_stats.push(delay);
                 // Use try_insert to gracefully handle entities that may have been despawned
-                if let Some(mut entity_commands) = commands.get_entity(unit_entity) {
+                if let Ok(mut entity_commands) = commands.get_entity(unit_entity) {
                     entity_commands.try_insert(PendingExplosion {
                         delay_timer: delay,
                         explosion_power: 1.0,
@@ -211,7 +211,7 @@ pub fn tower_destruction_system(
             }
 
             // Add PendingExplosion to tower - the actual WFX explosion is spawned in pending_explosion_system
-            if let Some(mut entity_commands) = commands.get_entity(tower_entity) {
+            if let Ok(mut entity_commands) = commands.get_entity(tower_entity) {
                 entity_commands.try_insert(PendingExplosion {
                     delay_timer: 0.1, // Very short delay before removing tower
                     explosion_power: 3.0,
@@ -377,7 +377,7 @@ pub fn debug_explosion_hotkey_system(
                     let delay = (raw_delay / EXPLOSION_TIME_QUANTUM).round() * EXPLOSION_TIME_QUANTUM;
                     delay_stats.push(delay);
                     // Use try_insert to gracefully handle entities that may have been despawned
-                    if let Some(mut entity_commands) = commands.get_entity(unit_entity) {
+                    if let Ok(mut entity_commands) = commands.get_entity(unit_entity) {
                         entity_commands.try_insert(PendingExplosion {
                             delay_timer: delay,
                             explosion_power: 1.5,
@@ -421,7 +421,7 @@ pub fn debug_explosion_hotkey_system(
                 info!("🔥 DEBUG: Tower health set to 0, destruction will be handled by tower_destruction_system");
                 
                 // Mark tower for destruction
-                if let Some(mut entity_commands) = commands.get_entity(tower_entity) {
+                if let Ok(mut entity_commands) = commands.get_entity(tower_entity) {
                     entity_commands.try_insert(PendingExplosion {
                         delay_timer: 0.5, // Half second delay
                         explosion_power: 5.0,

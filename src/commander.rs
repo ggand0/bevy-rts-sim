@@ -78,10 +78,10 @@ pub fn commander_visual_update_system(
             // Check if this unit's commander status matches its visual appearance
             if should_be_commander && !squad_member.is_commander {
                 // This unit was just promoted to commander
-                updates_needed.push((entity, droid.team, true, children.iter().copied().collect::<Vec<_>>()));
+                updates_needed.push((entity, droid.team, true, children.iter().collect::<Vec<_>>()));
             } else if !should_be_commander && squad_member.is_commander {
                 // This unit was demoted from commander (shouldn't happen often)
-                updates_needed.push((entity, droid.team, false, children.iter().copied().collect::<Vec<_>>()));
+                updates_needed.push((entity, droid.team, false, children.iter().collect::<Vec<_>>()));
             }
         }
     }
@@ -119,7 +119,7 @@ pub fn commander_visual_update_system(
             
             // Triple check: verify entity still exists AND can be commanded
             if unit_query.get(entity).is_ok() {
-                if let Some(mut entity_cmd) = commands.get_entity(entity) {
+                if let Ok(mut entity_cmd) = commands.get_entity(entity) {
                     entity_cmd.try_insert(MeshMaterial3d(new_commander_body));
                 }
             }
@@ -139,7 +139,7 @@ pub fn commander_visual_update_system(
                     
                     // Check child still exists before commanding
                     if head_query.get(child_entity).is_ok() {
-                        if let Some(mut child_cmd) = commands.get_entity(child_entity) {
+                        if let Ok(mut child_cmd) = commands.get_entity(child_entity) {
                             child_cmd.try_insert(MeshMaterial3d(new_commander_head));
                         }
                     }
@@ -162,7 +162,7 @@ pub fn commander_visual_update_system(
             
             // Triple check before applying demotion materials
             if unit_query.get(entity).is_ok() {
-                if let Some(mut entity_cmd) = commands.get_entity(entity) {
+                if let Ok(mut entity_cmd) = commands.get_entity(entity) {
                     entity_cmd.try_insert(MeshMaterial3d(new_regular_body));
                 }
             }
@@ -185,7 +185,7 @@ pub fn commander_visual_update_system(
                     
                     // Check child still exists before commanding
                     if head_query.get(child_entity).is_ok() {
-                        if let Some(mut child_cmd) = commands.get_entity(child_entity) {
+                        if let Ok(mut child_cmd) = commands.get_entity(child_entity) {
                             child_cmd.try_insert(MeshMaterial3d(new_regular_head));
                         }
                     }

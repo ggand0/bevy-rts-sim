@@ -1,6 +1,7 @@
 use bevy::prelude::*;
 use bevy::pbr::MaterialPlugin;
-use bevy::render::render_resource::{AsBindGroup, ShaderRef};
+use bevy::render::render_resource::AsBindGroup;
+use bevy::render::render_resource::ShaderRef;
 use bevy::render::mesh::{Indices, PrimitiveTopology};
 use bevy::render::alpha::AlphaMode;
 use crate::types::Team;
@@ -265,7 +266,7 @@ pub fn create_hemisphere_mesh(radius: f32, segments: u32) -> Mesh {
 
     Mesh::new(
         PrimitiveTopology::TriangleList,
-        bevy::render::render_asset::RenderAssetUsages::default(),
+        bevy::asset::RenderAssetUsages::default(),
     )
     .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
     .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
@@ -354,7 +355,7 @@ pub fn shield_collision_system(
     config: Res<ShieldConfig>,
     mut shield_query: Query<(Entity, &mut Shield)>,
     laser_query: Query<(Entity, &crate::types::LaserProjectile, &Transform)>,
-    particle_effects: Res<crate::particles::ExplosionParticleEffects>,
+    // particle_effects: Res<crate::particles::ExplosionParticleEffects>,  // Temporarily disabled
     audio_assets: Res<crate::types::AudioAssets>,
 ) {
     let current_time = time.elapsed_secs();
@@ -385,17 +386,17 @@ pub fn shield_collision_system(
                     let surface_pos = shield.center + dir_to_laser * (shield.radius + config.surface_offset);
 
                     // Spawn particle effect at surface impact point
-                    crate::particles::spawn_shield_impact_particles(
-                        &mut commands,
-                        &particle_effects,
-                        surface_pos,
-                        current_time_f64,
-                    );
+                    // crate::particles::spawn_shield_impact_particles(  // Temporarily disabled
+                    //     &mut commands,
+                    //     &particle_effects,
+                    //     surface_pos,
+                    //     current_time_f64,
+                    // );
 
                     // Play shield impact sound
                     commands.spawn((
                         AudioPlayer::new(audio_assets.shield_impact_sound.clone()),
-                        PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::new(config.shield_impact_volume)),
+                        PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::Linear(config.shield_impact_volume)),
                     ));
                 }
 

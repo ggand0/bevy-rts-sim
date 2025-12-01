@@ -36,6 +36,7 @@ pub fn setup_scene(
     commands.insert_resource(AmbientLight {
         color: Color::srgb(0.4, 0.4, 0.6),
         brightness: 300.0,
+        affects_lightmapped_meshes: false,
     });
 
     // RTS Camera (positioned for better battlefield view)
@@ -389,7 +390,7 @@ fn create_battle_droid_mesh(meshes: &mut ResMut<Assets<Mesh>>) -> Handle<Mesh> {
     // This creates a basic robot-like figure that resembles Trade Federation battle droids
     
     use bevy::render::mesh::{Indices, PrimitiveTopology};
-    use bevy::render::render_asset::RenderAssetUsages;
+    use bevy::asset::RenderAssetUsages;
     
     let mut mesh = Mesh::new(
         PrimitiveTopology::TriangleList,

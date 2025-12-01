@@ -3,7 +3,7 @@ use crate::types::*;
 use crate::constants::*;
 use crate::terrain::TerrainHeightmap;
 use bevy::render::mesh::{Indices, PrimitiveTopology};
-use bevy::render::render_asset::RenderAssetUsages;
+use bevy::asset::RenderAssetUsages;
 
 /// Check if there's a clear line of sight between shooter and target
 /// Returns true if the path is clear (no terrain blocking)
@@ -125,7 +125,7 @@ pub fn volley_fire_system(
             bevy::render::render_resource::TextureDimension::D2,
             texture_data,
             bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb,
-            bevy::render::render_asset::RenderAssetUsages::RENDER_WORLD,
+            bevy::asset::RenderAssetUsages::RENDER_WORLD,
         ));
         
         // Create laser materials for both teams
@@ -153,7 +153,7 @@ pub fn volley_fire_system(
         let laser_mesh = meshes.add(Rectangle::new(LASER_WIDTH, LASER_LENGTH));
         
         // Get camera position for initial orientation
-        let camera_position = camera_query.get_single()
+        let camera_position = camera_query.single()
             .map(|cam_transform| cam_transform.translation)
             .unwrap_or(Vec3::new(0.0, 100.0, 100.0)); // Fallback position
         
@@ -212,7 +212,7 @@ pub fn update_projectiles(
     let delta_time = time.delta_secs();
 
     // Get camera position for billboarding
-    let camera_transform = camera_query.get_single().ok();
+    let camera_transform = camera_query.single().ok();
 
     for (entity, mut transform, mut laser) in projectile_query.iter_mut() {
         // Update lifetime
@@ -355,7 +355,7 @@ pub fn auto_fire_system(
     let delta_time = time.delta_secs();
     
     // Get camera position for initial orientation
-    let camera_position = camera_query.get_single()
+    let camera_position = camera_query.single()
         .map(|cam_transform| cam_transform.translation)
         .unwrap_or(Vec3::new(0.0, 100.0, 100.0)); // Fallback position
     
@@ -433,7 +433,7 @@ pub fn auto_fire_system(
                         let sound = audio_assets.get_random_laser_sound(&mut rng);
                         commands.spawn((
                             AudioPlayer::new(sound),
-                            PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::new(crate::constants::VOLUME_LASER)),
+                            PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::Linear(crate::constants::VOLUME_LASER)),
                         ));
                     }
                 }
@@ -663,7 +663,7 @@ pub fn auto_fire_system(
 
                             commands.spawn((
                                 AudioPlayer::new(audio_assets.mg_sound.clone()),
-                                PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::new(volume)),
+                                PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::Linear(volume)),
                             ));
                         }
                     } else {
@@ -674,7 +674,7 @@ pub fn auto_fire_system(
                             let sound = audio_assets.get_random_laser_sound(&mut rng);
                             commands.spawn((
                                 AudioPlayer::new(sound),
-                                PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::new(crate::constants::VOLUME_LASER)),
+                                PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::Linear(crate::constants::VOLUME_LASER)),
                             ));
                         }
                     }
@@ -760,8 +760,8 @@ pub fn collision_detection_system(
     
     // Despawn all marked entities
     for entity in entities_to_despawn {
-        if let Some(entity_commands) = commands.get_entity(entity) {
-            entity_commands.despawn_recursive();
+        if let Ok(mut entity_commands) = commands.get_entity(entity) {
+            entity_commands.despawn();
         }
     }
 }
@@ -871,7 +871,7 @@ pub fn visualize_collision_spheres_system(
 ) {
     // Always remove existing debug spheres
     for entity in existing_spheres.iter() {
-        commands.entity(entity).despawn_recursive();
+        commands.entity(entity).despawn();
     }
 
     // Only create new spheres if visualization is enabled

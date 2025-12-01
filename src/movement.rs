@@ -89,7 +89,7 @@ pub fn update_camera_info(
     mut query: Query<&mut Text>,
     diagnostics: Res<bevy::diagnostic::DiagnosticsStore>,
 ) {
-    if let Ok(mut text) = query.get_single_mut() {
+    if let Ok(mut text) = query.single_mut() {
         let fps = diagnostics
             .get(&bevy::diagnostic::FrameTimeDiagnosticsPlugin::FPS)
             .and_then(|fps| fps.smoothed())
@@ -110,7 +110,7 @@ pub fn rts_camera_movement(
     mut mouse_motion_events: EventReader<MouseMotion>,
     mut camera_query: Query<(&mut Transform, &mut RtsCamera)>,
 ) {
-    if let Ok((mut transform, mut camera)) = camera_query.get_single_mut() {
+    if let Ok((mut transform, mut camera)) = camera_query.single_mut() {
         let delta_time = time.delta_secs();
         
         // Mouse drag rotation (middle mouse button - left click is for selection)

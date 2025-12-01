@@ -1,8 +1,9 @@
 // War FX custom materials with UV scrolling
 use bevy::prelude::*;
 use bevy::render::render_resource::{
-    AsBindGroup, ShaderRef, BlendState, BlendComponent, BlendFactor, BlendOperation,
+    AsBindGroup, BlendState, BlendComponent, BlendFactor, BlendOperation,
 };
+use bevy::render::render_resource::ShaderRef;
 use bevy::render::mesh::MeshVertexBufferLayoutRef;
 use bevy::pbr::{Material, MaterialPipeline, MaterialPipelineKey};
 use bevy::render::render_resource::SpecializedMeshPipelineError;

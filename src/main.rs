@@ -16,11 +16,13 @@ mod wfx_spawn;
 mod selection;
 mod terrain;
 mod shield;
+mod decals;
 use explosion_shader::ExplosionShaderPlugin;
 use particles::ParticleEffectsPlugin;
 use terrain::TerrainPlugin;
 use wfx_materials::{SmokeScrollMaterial, AdditiveMaterial, SmokeOnlyMaterial};
 use shield::ShieldPlugin;
+use decals::DecalPlugin;
 
 use bevy::prelude::*;
 use types::*;
@@ -33,11 +35,12 @@ use turrets::*;
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
-        .add_plugins(bevy::diagnostic::FrameTimeDiagnosticsPlugin)
+        .add_plugins(bevy::diagnostic::FrameTimeDiagnosticsPlugin::default())
         .add_plugins(ExplosionShaderPlugin)
         .add_plugins(ParticleEffectsPlugin)
         .add_plugins(TerrainPlugin)
         .add_plugins(ShieldPlugin)
+        .add_plugins(DecalPlugin)
         .add_plugins(MaterialPlugin::<SmokeScrollMaterial>::default())
         .add_plugins(MaterialPlugin::<AdditiveMaterial>::default())
         .add_plugins(MaterialPlugin::<SmokeOnlyMaterial>::default())

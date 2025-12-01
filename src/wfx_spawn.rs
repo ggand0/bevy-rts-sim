@@ -1,7 +1,7 @@
 // War FX explosion spawner with UV-scrolling billboards
 use bevy::prelude::*;
 use bevy::render::mesh::{Indices, PrimitiveTopology};
-use bevy::render::render_asset::RenderAssetUsages;
+use bevy::asset::RenderAssetUsages;
 use crate::wfx_materials::{SmokeScrollMaterial, AdditiveMaterial, SmokeOnlyMaterial};
 use rand::Rng;
 
@@ -1254,7 +1254,7 @@ pub fn update_warfx_explosions(
     time: Res<Time>,
 ) {
     // Get camera position for billboarding
-    let camera_position = if let Ok(camera_transform) = camera_query.get_single() {
+    let camera_position = if let Ok(camera_transform) = camera_query.single() {
         camera_transform.translation()
     } else {
         return; // No camera, can't billboard
@@ -1286,7 +1286,7 @@ pub fn update_warfx_explosions(
 
         // Despawn after lifetime completes
         if explosion.lifetime >= explosion.max_lifetime {
-            commands.entity(entity).despawn_recursive();
+            commands.entity(entity).despawn();
         }
     }
 }

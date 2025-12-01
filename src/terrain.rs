@@ -248,7 +248,7 @@ fn build_terrain_mesh(heights: &[Vec<f32>], config: &TerrainConfig) -> Mesh {
         }
     }
 
-    let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, bevy::render::render_asset::RenderAssetUsages::default());
+    let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, bevy::asset::RenderAssetUsages::default());
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
     mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
     mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
@@ -268,23 +268,25 @@ fn create_ground_texture(images: &mut Assets<Image>) -> Handle<Image> {
         TextureDimension::D2,
         &[100, 50, 30, 255],
         TextureFormat::Rgba8UnormSrgb,
-        bevy::render::render_asset::RenderAssetUsages::RENDER_WORLD,
+        bevy::asset::RenderAssetUsages::RENDER_WORLD,
     );
 
     // Create checkerboard pattern
-    for y in 0..32 {
-        for x in 0..32 {
-            let index = (y * 32 + x) * 4;
-            if (x + y) % 2 == 0 {
-                image.data[index] = 120;     // R
-                image.data[index + 1] = 80;  // G
-                image.data[index + 2] = 40;  // B
-                image.data[index + 3] = 255; // A
-            } else {
-                image.data[index] = 80;      // R
-                image.data[index + 1] = 60;  // G
-                image.data[index + 2] = 30;  // B
-                image.data[index + 3] = 255; // A
+    if let Some(data) = &mut image.data {
+        for y in 0..32 {
+            for x in 0..32 {
+                let index = (y * 32 + x) * 4;
+                if (x + y) % 2 == 0 {
+                    data[index] = 120;     // R
+                    data[index + 1] = 80;  // G
+                    data[index + 2] = 40;  // B
+                    data[index + 3] = 255; // A
+                } else {
+                    data[index] = 80;      // R
+                    data[index + 1] = 60;  // G
+                    data[index + 2] = 30;  // B
+                    data[index + 3] = 255; // A
+                }
             }
         }
     }
@@ -356,15 +358,15 @@ fn terrain_map_switching(
 
             // Despawn all terrain entities
             for entity in terrain_query.iter() {
-                commands.entity(entity).despawn_recursive();
+                commands.entity(entity).despawn();
             }
 
             // Remove skybox from camera if present
             for entity in skybox_entity_query.iter() {
-                commands.entity(entity).despawn_recursive();
+                commands.entity(entity).despawn();
             }
             // Also remove Skybox component from camera
-            if let Ok(camera_entity) = camera_query.get_single() {
+            if let Ok(camera_entity) = camera_query.single() {
                 commands.entity(camera_entity).remove::<Skybox>();
             }
 
@@ -426,7 +428,7 @@ fn terrain_map_switching(
 
                     // Add skybox to camera for Map 2
                     let skybox_handle: Handle<Image> = asset_server.load("skybox/qwantani_mid_morning_puresky_2k/skybox.ktx2");
-                    if let Ok(camera_entity) = camera_query.get_single() {
+                    if let Ok(camera_entity) = camera_query.single() {
                         commands.entity(camera_entity).insert(Skybox {
                             image: skybox_handle.clone(),
                             brightness: 1000.0,
@@ -439,7 +441,7 @@ fn terrain_map_switching(
             }
 
             // Send event to reposition units
-            map_switch_events.send(MapSwitchEvent { new_map: preset });
+            map_switch_events.write(MapSwitchEvent { new_map: preset });
         }
     }
 }
