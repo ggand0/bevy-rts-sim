@@ -1,8 +1,8 @@
 # Bevy Mass Render - RTS Game Project Overview
 
-**Last Updated:** November 29, 2025  
-**Bevy Version:** 0.15.3
-**Rust Version:** 1.90.0  
+**Last Updated:** December 1, 2025
+**Bevy Version:** 0.16.0
+**Rust Version:** 1.90.0
 **Platform:** Linux (tested on Ubuntu with AMD Radeon RX 7900 XTX)
 
 ---
@@ -46,6 +46,8 @@ src/
 ├── particles.rs         # Particle system plugin (debris, sparks)
 ├── wfx_materials.rs     # Custom materials (smoke scroll, additive, etc.)
 ├── wfx_spawn.rs         # War FX explosion spawning and animation
+├── terrain.rs           # Terrain generation and map switching
+├── decals.rs            # Decal rendering system (bullet holes, ClusteredDecal)
 └── selection/           # Selection and grouping system
     ├── mod.rs           # Module exports, system registration
     ├── state.rs         # SelectionState resource, marker components
@@ -66,6 +68,7 @@ assets/
 │   └── shield.wgsl      # Shield effect shader (hexagonal grid, fresnel)
 ├── textures/
 │   ├── Explosion02HD_5x5.tga      # 5x5 sprite sheet (unit deaths)
+│   ├── bullet_hole_0.png          # Bullet hole decal texture (alpha transparency)
 │   └── wfx_explosivesmoke_big/    # War FX textures (tower explosions)
 │       ├── Center_glow.tga        # Center glow billboard
 │       ├── FireFlameB_00.tga      # Flame animation frames
@@ -401,6 +404,11 @@ This works around segfault issues with AMD drivers on Linux.
   - Selection and grouping system (Total War-style formation preservation)
   - Visual feedback overhaul (rings, arrows, orientation markers)
   - Oriented Bounding Box (OBB) implementation
+- **December 1, 2025:**
+  - Migrated to Bevy 0.16 (from 0.15)
+  - Resolved bevy_hanabi shader crash with Bevy 0.17
+  - Decal rendering system using ClusteredDecal
+  - Bullet hole texture projections on terrain
 
 ---
 
