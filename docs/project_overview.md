@@ -513,10 +513,10 @@ codegen-units = 1
 - **Error Codes:** https://bevyengine.org/learn/errors/
 
 ### Project-Specific Documentation
-- **EXPLOSION_SYSTEM.md** - Detailed explosion implementation
-- **SELECTION_GROUPING.md** - Selection and grouping system details
-- **TURRETS.md** - Turret systems, firing modes, and targeting behavior
-- **SHIELD_SYSTEM.md** - Shield defense mechanics and configuration
+- **explosion_system.md** - Detailed explosion implementation
+- **selection_grouping.md** - Selection and grouping system details
+- **turrets.md** - Turret systems, firing modes, and targeting behavior
+- **shield_system.md** - Shield defense mechanics and configuration
 - **devlogs/** - Historical development notes and fixes
 
 ---
