@@ -54,16 +54,19 @@ pub fn animate_march(
             transform.translation.x += movement.x;
             transform.translation.z += movement.z;
 
-            // Sample terrain height at new position and set Y accordingly
-            if let Some(ref hm) = heightmap {
-                let terrain_y = hm.sample_height(transform.translation.x, transform.translation.z);
-                transform.translation.y = terrain_y + UNIT_TERRAIN_OFFSET;
-            }
+            // Sample terrain height at new position and set base Y
+            // Subtract bob amplitude so the bob animation can go both up and down from visual center
+            let bob_amplitude = 0.1;
+            let base_y = if let Some(ref hm) = heightmap {
+                hm.sample_height(transform.translation.x, transform.translation.z) + UNIT_TERRAIN_OFFSET - bob_amplitude
+            } else {
+                droid.spawn_position.y - bob_amplitude
+            };
 
-            // Add marching animation - subtle bobbing motion
+            // Add marching animation - bobbing motion (sin goes -1 to +1, so bob goes -amplitude to +amplitude)
             let march_cycle = (time_seconds * droid.march_speed * 4.0 + droid.march_offset).sin();
-            let bob_height = march_cycle * 0.05; // Visible bobbing for debugging (was 0.008)
-            transform.translation.y += bob_height;
+            let bob_height = march_cycle * bob_amplitude;
+            transform.translation.y = base_y + bob_amplitude + bob_height;
 
             // Slight rotation for more natural look and face movement direction
             let sway = (time_seconds * droid.march_speed * 2.0 + droid.march_offset).sin() * 0.01;
