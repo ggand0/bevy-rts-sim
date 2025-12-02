@@ -2,6 +2,7 @@
 use bevy::prelude::*;
 use bevy::pbr::NotShadowCaster;
 use crate::types::*;
+use crate::terrain::TerrainHeightmap;
 
 use super::super::state::*;
 use super::super::groups::check_is_complete_group;
@@ -15,6 +16,7 @@ pub fn update_group_orientation_markers(
     selection_state: Res<SelectionState>,
     squad_manager: Res<SquadManager>,
     mut existing_markers: Query<(Entity, &GroupOrientationMarker, &mut Transform)>,
+    heightmap: Option<Res<TerrainHeightmap>>,
 ) {
     // Check if any group is currently selected
     let selected_group_id = check_is_complete_group(&selection_state, &squad_manager);
@@ -54,14 +56,23 @@ pub fn update_group_orientation_markers(
         };
 
         // Position arrow at the front edge of the OBB, slightly ahead
-        let arrow_base = obb.front_edge_center(0.0) + obb.facing * 5.0;
+        let arrow_base_xz = obb.front_edge_center(0.0) + obb.facing * 5.0;
+
+        // Sample terrain height at arrow position
+        let arrow_y = if let Some(hm) = heightmap.as_deref() {
+            hm.sample_height(arrow_base_xz.x, arrow_base_xz.z) + 0.2
+        } else {
+            arrow_base_xz.y
+        };
+        let arrow_base = Vec3::new(arrow_base_xz.x, arrow_y, arrow_base_xz.z);
 
         // Check if marker already exists for this group
         let mut found = false;
         for (_entity, marker, mut transform) in existing_markers.iter_mut() {
             if marker.group_id == group_id {
                 // Update position smoothly to reduce twitching
-                transform.translation = transform.translation.lerp(arrow_base, 0.1);
+                let target_pos = Vec3::new(arrow_base_xz.x, arrow_y, arrow_base_xz.z);
+                transform.translation = transform.translation.lerp(target_pos, 0.1);
 
                 // Update rotation to face the group's facing direction
                 let target_rotation = Quat::from_rotation_y(obb.facing.x.atan2(obb.facing.z));
@@ -134,6 +145,7 @@ pub fn update_group_bounding_box_debug(
     selection_state: Res<SelectionState>,
     squad_manager: Res<SquadManager>,
     mut existing_debug: Query<(Entity, &GroupBoundingBoxDebug, &mut Transform)>,
+    heightmap: Option<Res<TerrainHeightmap>>,
 ) {
     // Check if any group is currently selected
     let selected_group_id = check_is_complete_group(&selection_state, &squad_manager);
@@ -172,27 +184,30 @@ pub fn update_group_bounding_box_debug(
             return;
         };
 
-        // Get the 4 corners of the OBB
+        // Get the 4 corners of the OBB (base positions without terrain adjustment)
         let y_offset = 0.2;
-        let corners = obb.corners(y_offset);
+        let corners_base = obb.corners(y_offset);
         // corners: [back-left, back-right, front-right, front-left]
 
-        // Calculate edge midpoints and lengths
-        // Front edge: front-left to front-right (corners[3] to corners[2])
-        // Back edge: back-left to back-right (corners[0] to corners[1])
-        // Left edge: back-left to front-left (corners[0] to corners[3])
-        // Right edge: back-right to front-right (corners[1] to corners[2])
+        // Sample terrain heights at all four corners
+        let sample_corner_y = |corner: Vec3| {
+            if let Some(hm) = heightmap.as_deref() {
+                hm.sample_height(corner.x, corner.z) + y_offset
+            } else {
+                corner.y
+            }
+        };
 
-        let front_mid = (corners[3] + corners[2]) / 2.0;
-        let back_mid = (corners[0] + corners[1]) / 2.0;
-        let left_mid = (corners[0] + corners[3]) / 2.0;
-        let right_mid = (corners[1] + corners[2]) / 2.0;
+        let bl_y = sample_corner_y(corners_base[0]); // back-left
+        let br_y = sample_corner_y(corners_base[1]); // back-right
+        let fr_y = sample_corner_y(corners_base[2]); // front-right
+        let fl_y = sample_corner_y(corners_base[3]); // front-left
 
-        let width = obb.half_extents.x * 2.0;  // Full width (perpendicular to facing)
-        let depth = obb.half_extents.y * 2.0;  // Full depth (along facing)
-
-        // Calculate rotation from facing direction
-        let rotation = Quat::from_rotation_y(obb.facing.x.atan2(obb.facing.z));
+        // Terrain-adjusted corners
+        let bl = Vec3::new(corners_base[0].x, bl_y, corners_base[0].z);
+        let br = Vec3::new(corners_base[1].x, br_y, corners_base[1].z);
+        let fr = Vec3::new(corners_base[2].x, fr_y, corners_base[2].z);
+        let fl = Vec3::new(corners_base[3].x, fl_y, corners_base[3].z);
 
         // Check if debug box already exists for this group
         let existing_count = existing_debug.iter()
@@ -208,51 +223,21 @@ pub fn update_group_bounding_box_debug(
         }
 
         let line_thickness = 0.5;
-        let line_height = 0.3;
 
-        // Update existing edges if they exist
+        // Update existing edges by despawning and recreating (simpler than updating mesh geometry)
         if found {
-            let mut edge_index = 0;
-            for (_entity, debug_marker, mut transform) in existing_debug.iter_mut() {
+            // Despawn existing debug boxes for this group
+            for (entity, debug_marker, _) in existing_debug.iter() {
                 if debug_marker.group_id == group_id {
-                    match edge_index {
-                        0 => {
-                            // Front edge
-                            transform.translation = front_mid;
-                            transform.rotation = rotation;
-                            transform.scale = Vec3::new(width, line_height, line_thickness);
-                        }
-                        1 => {
-                            // Back edge
-                            transform.translation = back_mid;
-                            transform.rotation = rotation;
-                            transform.scale = Vec3::new(width, line_height, line_thickness);
-                        }
-                        2 => {
-                            // Left edge
-                            transform.translation = left_mid;
-                            transform.rotation = rotation;
-                            transform.scale = Vec3::new(line_thickness, line_height, depth);
-                        }
-                        3 => {
-                            // Right edge
-                            transform.translation = right_mid;
-                            transform.rotation = rotation;
-                            transform.scale = Vec3::new(line_thickness, line_height, depth);
-                        }
-                        _ => {}
-                    }
-                    edge_index += 1;
+                    commands.entity(entity).despawn();
                 }
             }
         }
 
-        if !found {
-            // Create new debug box - wireframe outline using OBB
+        // Create/recreate debug box - wireframe outline using line meshes
+        {
+            // Always create edges (either first time or after despawning for update)
             let debug_color = Color::srgba(1.0, 0.0, 1.0, 0.8); // Magenta with some transparency
-
-            // Create a unit cube that we'll scale and rotate
-            let unit_cube = meshes.add(Cuboid::new(1.0, 1.0, 1.0));
 
             // Create shared material for all edges
             let debug_material = materials.add(StandardMaterial {
@@ -263,53 +248,143 @@ pub fn update_group_bounding_box_debug(
                 ..default()
             });
 
-            // Front edge (at the front of the OBB, where the orientation indicator is)
+            let line_thickness = 0.5;
+
+            // Create line mesh for each edge connecting the terrain-adjusted corners
+            // Pass heightmap to actually sample terrain along the line
+            // Front edge: front-left to front-right
+            let front_mesh = create_line_mesh(fl, fr, line_thickness, heightmap.as_deref());
             commands.spawn((
-                Mesh3d(unit_cube.clone()),
+                Mesh3d(meshes.add(front_mesh)),
                 MeshMaterial3d(debug_material.clone()),
-                Transform::from_translation(front_mid)
-                    .with_rotation(rotation)
-                    .with_scale(Vec3::new(width, line_height, line_thickness)),
+                Transform::IDENTITY,
                 Visibility::Visible,
                 NotShadowCaster,
                 GroupBoundingBoxDebug { group_id },
             ));
 
-            // Back edge
+            // Back edge: back-left to back-right
+            let back_mesh = create_line_mesh(bl, br, line_thickness, heightmap.as_deref());
             commands.spawn((
-                Mesh3d(unit_cube.clone()),
+                Mesh3d(meshes.add(back_mesh)),
                 MeshMaterial3d(debug_material.clone()),
-                Transform::from_translation(back_mid)
-                    .with_rotation(rotation)
-                    .with_scale(Vec3::new(width, line_height, line_thickness)),
+                Transform::IDENTITY,
                 Visibility::Visible,
                 NotShadowCaster,
                 GroupBoundingBoxDebug { group_id },
             ));
 
-            // Left edge
+            // Left edge: back-left to front-left
+            let left_mesh = create_line_mesh(bl, fl, line_thickness, heightmap.as_deref());
             commands.spawn((
-                Mesh3d(unit_cube.clone()),
+                Mesh3d(meshes.add(left_mesh)),
                 MeshMaterial3d(debug_material.clone()),
-                Transform::from_translation(left_mid)
-                    .with_rotation(rotation)
-                    .with_scale(Vec3::new(line_thickness, line_height, depth)),
+                Transform::IDENTITY,
                 Visibility::Visible,
                 NotShadowCaster,
                 GroupBoundingBoxDebug { group_id },
             ));
 
-            // Right edge
+            // Right edge: back-right to front-right
+            let right_mesh = create_line_mesh(br, fr, line_thickness, heightmap.as_deref());
             commands.spawn((
-                Mesh3d(unit_cube.clone()),
+                Mesh3d(meshes.add(right_mesh)),
                 MeshMaterial3d(debug_material.clone()),
-                Transform::from_translation(right_mid)
-                    .with_rotation(rotation)
-                    .with_scale(Vec3::new(line_thickness, line_height, depth)),
+                Transform::IDENTITY,
                 Visibility::Visible,
                 NotShadowCaster,
                 GroupBoundingBoxDebug { group_id },
             ));
         }
     }
+}
+
+/// Create a terrain-conforming line mesh connecting two points
+/// The line is subdivided into segments and follows the terrain between the points
+fn create_line_mesh(start: Vec3, end: Vec3, thickness: f32, heightmap: Option<&TerrainHeightmap>) -> Mesh {
+    use bevy::render::mesh::{Indices, PrimitiveTopology};
+    use bevy::render::render_asset::RenderAssetUsages;
+
+    const LENGTH_SEGMENTS: usize = 16; // Segments along the line length for terrain conforming
+    const RADIUS_SEGMENTS: usize = 6;  // Segments around the line thickness
+
+    let direction_xz = Vec3::new(end.x - start.x, 0.0, end.z - start.z);
+    let length_xz = direction_xz.length();
+
+    let mut positions = Vec::new();
+    let mut normals = Vec::new();
+    let mut indices = Vec::new();
+
+    // Generate vertices along the line, sampling terrain at each point
+    for seg_i in 0..=LENGTH_SEGMENTS {
+        let t = seg_i as f32 / LENGTH_SEGMENTS as f32;
+
+        // Interpolate position along the line (in XZ plane)
+        let center_x = start.x + (end.x - start.x) * t;
+        let center_z = start.z + (end.z - start.z) * t;
+
+        // ACTUALLY SAMPLE THE TERRAIN HEIGHT HERE instead of interpolating!
+        let center_y = if let Some(hm) = heightmap {
+            hm.sample_height(center_x, center_z) + 0.2
+        } else {
+            start.y + (end.y - start.y) * t // Fallback to linear interpolation
+        };
+
+        let center = Vec3::new(center_x, center_y, center_z);
+
+        // Calculate perpendicular direction for the circle cross-section
+        let forward = if length_xz > 0.001 {
+            Vec3::new(end.x - start.x, 0.0, end.z - start.z).normalize()
+        } else {
+            Vec3::X
+        };
+        let right = Vec3::new(-forward.z, 0.0, forward.x); // Perpendicular in XZ plane
+
+        // Create a circle of vertices around this center point
+        for rad_i in 0..RADIUS_SEGMENTS {
+            let angle = (rad_i as f32 / RADIUS_SEGMENTS as f32) * std::f32::consts::TAU;
+            let cos = angle.cos();
+            let sin = angle.sin();
+
+            let offset = right * cos * thickness + Vec3::Y * sin * thickness;
+            let pos = center + offset;
+
+            positions.push([pos.x, pos.y, pos.z]);
+
+            // Normal points outward from the cylinder axis
+            let normal = offset.normalize();
+            normals.push([normal.x, normal.y, normal.z]);
+        }
+    }
+
+    // Generate triangle indices connecting the segments
+    for seg_i in 0..LENGTH_SEGMENTS {
+        for rad_i in 0..RADIUS_SEGMENTS {
+            let current_ring_start = (seg_i * RADIUS_SEGMENTS) as u32;
+            let next_ring_start = ((seg_i + 1) * RADIUS_SEGMENTS) as u32;
+
+            let current_idx = current_ring_start + rad_i as u32;
+            let next_radial_idx = current_ring_start + ((rad_i + 1) % RADIUS_SEGMENTS) as u32;
+            let next_seg_idx = next_ring_start + rad_i as u32;
+            let next_both_idx = next_ring_start + ((rad_i + 1) % RADIUS_SEGMENTS) as u32;
+
+            // First triangle
+            indices.push(current_idx);
+            indices.push(next_seg_idx);
+            indices.push(next_radial_idx);
+
+            // Second triangle
+            indices.push(next_radial_idx);
+            indices.push(next_seg_idx);
+            indices.push(next_both_idx);
+        }
+    }
+
+    Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    )
+    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
+    .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
+    .with_inserted_indices(Indices::U32(indices))
 }

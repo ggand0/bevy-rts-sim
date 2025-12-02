@@ -18,6 +18,7 @@ impl Plugin for DecalPlugin {
 #[derive(Resource)]
 pub struct DecalTextures {
     pub bullet_hole: Handle<Image>,
+    pub selection_ring: Handle<Image>,
 }
 
 fn setup_decal_textures(
@@ -26,11 +27,13 @@ fn setup_decal_textures(
 ) {
     info!("🎨 Loading decal textures...");
 
-    // Load the bullet hole texture from assets folder
+    // Load textures from assets folder
     let bullet_hole_handle: Handle<Image> = asset_server.load("textures/bullet_hole_0.png");
+    let selection_ring_handle: Handle<Image> = asset_server.load("textures/wfx/WFX_T_GlowCircle A8.png");
 
     commands.insert_resource(DecalTextures {
         bullet_hole: bullet_hole_handle,
+        selection_ring: selection_ring_handle,
     });
 
     info!("✅ Decal textures loaded!");

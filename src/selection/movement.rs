@@ -194,7 +194,7 @@ fn execute_group_move(
                 squad.target_position = squad_dest;
 
                 // Spawn green visual indicator for living squad
-                spawn_move_indicator(commands, meshes, materials, squad_dest, terrain_y);
+                spawn_move_indicator(commands, meshes, materials, squad_dest, heightmap);
 
                 if let Some(&start_pos) = squad_current_positions.get(&squad_id) {
                     let start_terrain_y = heightmap
@@ -206,7 +206,7 @@ fn execute_group_move(
         } else {
             // Dead squad - spawn grey indicator to show where it would have been
             let dead_color = Color::srgba(0.4, 0.4, 0.4, 0.8);
-            spawn_move_indicator_with_color(commands, meshes, materials, squad_dest, Some(dead_color), terrain_y);
+            spawn_move_indicator_with_color(commands, meshes, materials, squad_dest, Some(dead_color), heightmap);
         }
     }
 
@@ -364,13 +364,8 @@ fn execute_move_command(
 
     // Spawn move indicator visuals for each squad
     for (squad_id, squad_destination) in assigned_destinations.iter() {
-        // Get terrain height at destination
-        let terrain_y = heightmap
-            .map(|hm| hm.sample_height(squad_destination.x, squad_destination.z))
-            .unwrap_or(-1.0);
-
         // Spawn destination circle
-        spawn_move_indicator(commands, meshes, materials, *squad_destination, terrain_y);
+        spawn_move_indicator(commands, meshes, materials, *squad_destination, heightmap);
 
         // Spawn path line from squad current position to destination
         if let Some(&start_pos) = squad_start_positions.get(squad_id) {
