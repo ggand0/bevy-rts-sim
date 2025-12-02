@@ -34,7 +34,7 @@ impl Default for ShieldConfig {
             impact_flash_duration: 0.2,
             laser_damage: 25.0,
             particle_scale: 2.0,
-            shield_impact_volume: 0.4,
+            shield_impact_volume: 0.4,  // Reverted - was fine, issue was multiple sounds playing at once
             surface_offset: 0.5,
             fresnel_power: 3.0,
             hex_scale: 8.0,
@@ -424,6 +424,9 @@ pub fn shield_collision_system(
                     });
 
                     commands.entity(shield_entity).despawn();
+
+                    // Break out of laser loop - shield is destroyed, no need to check more lasers
+                    break;
                 }
             }
         }

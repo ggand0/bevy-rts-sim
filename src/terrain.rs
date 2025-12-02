@@ -509,6 +509,10 @@ fn handle_map_switch_units(
             // Update spawn position so retreat works correctly
             droid.spawn_position.y = new_y;
             droid.target_position.y = new_y;
+
+            // Reset march animation to prevent units from appearing buried/floating
+            // The animate_march system will recalculate the bob based on the new terrain height
+            droid.march_speed = 1.0;
         }
 
         // Update squad center positions

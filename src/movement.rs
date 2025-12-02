@@ -62,7 +62,7 @@ pub fn animate_march(
 
             // Add marching animation - subtle bobbing motion
             let march_cycle = (time_seconds * droid.march_speed * 4.0 + droid.march_offset).sin();
-            let bob_height = march_cycle * 0.008; // Very subtle up/down movement
+            let bob_height = march_cycle * 0.05; // Visible bobbing for debugging (was 0.008)
             transform.translation.y += bob_height;
 
             // Slight rotation for more natural look and face movement direction
@@ -72,6 +72,12 @@ pub fn animate_march(
                 transform.rotation = forward_rotation * Quat::from_rotation_y(sway);
             }
         } else {
+            // When stationary, still update terrain height (important for map switching)
+            if let Some(ref hm) = heightmap {
+                let terrain_y = hm.sample_height(transform.translation.x, transform.translation.z);
+                transform.translation.y = terrain_y + UNIT_TERRAIN_OFFSET;
+            }
+
             // When stationary, smoothly rotate to face squad's facing direction
             if let Some(squad) = squad_manager.get_squad(squad_member.squad_id) {
                 let facing = squad.facing_direction;
