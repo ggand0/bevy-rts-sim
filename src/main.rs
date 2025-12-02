@@ -76,7 +76,7 @@ fn main() {
         .add_systems(Update, (
             // Animation and movement systems run after formation corrections
             movement::animate_march,
-            movement::update_camera_info,
+            movement::update_fps_display,
             movement::rts_camera_movement,
         ))
         .add_systems(Update, (

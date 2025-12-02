@@ -94,8 +94,8 @@ pub fn animate_march(
     }
 }
 
-pub fn update_camera_info(
-    mut query: Query<&mut Text>,
+pub fn update_fps_display(
+    mut query: Query<&mut Text, With<FpsText>>,
     diagnostics: Res<bevy::diagnostic::DiagnosticsStore>,
 ) {
     if let Ok(mut text) = query.single_mut() {
@@ -104,10 +104,7 @@ pub fn update_camera_info(
             .and_then(|fps| fps.smoothed())
             .unwrap_or(0.0);
 
-        **text = format!(
-            "{} vs {} Units ({} squads/team) | FPS: {:.1}\nLeft-click: Select | Right-click: Move | Middle-drag: Rotate | Scroll: Zoom\nShift+click: Add to selection | G: Advance All | H: Retreat All | F: Volley Fire",
-            ARMY_SIZE_PER_TEAM, ARMY_SIZE_PER_TEAM, ARMY_SIZE_PER_TEAM / SQUAD_SIZE, fps
-        );
+        **text = format!("FPS: {:.0}", fps);
     }
 }
 

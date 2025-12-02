@@ -117,6 +117,9 @@ pub struct RtsCamera {
 }
 
 #[derive(Component)]
+pub struct FpsText;
+
+#[derive(Component)]
 pub struct LaserProjectile {
     pub velocity: Vec3,
     pub lifetime: f32,
