@@ -87,46 +87,46 @@ pub fn orientation_arrow_system(
         return;
     }
 
-    let normalized_dir = direction.normalize();
-    let arrow_rotation = Quat::from_rotation_y(normalized_dir.x.atan2(normalized_dir.z));
-
-    // Get terrain height at start position
-    let terrain_y = heightmap.as_ref()
+    // Get base terrain height at start position
+    let start_terrain_y = heightmap.as_deref()
         .map(|hm| hm.sample_height(start.x, start.z))
         .unwrap_or(-1.0);
-    let arrow_y = terrain_y + VISUAL_TERRAIN_OFFSET;
 
-    // Check if arrow already exists
-    if let Ok((_, mut transform)) = arrow_query.single_mut() {
-        // Update existing arrow
-        transform.translation = Vec3::new(start.x, arrow_y, start.z);
-        transform.rotation = arrow_rotation;
-        transform.scale = Vec3::new(1.0, 1.0, length);
-    } else {
-        // Create new arrow (elongated triangle pointing in drag direction)
-        // Arrow is a simple quad that we'll scale based on drag length
-        let arrow_mesh = meshes.add(create_arrow_mesh(0.8, 2.0, 0.15));
-        let arrow_material = materials.add(StandardMaterial {
-            base_color: Color::srgba(0.2, 1.0, 0.3, 0.8),
-            emissive: LinearRgba::new(0.1, 0.5, 0.15, 1.0),
-            alpha_mode: AlphaMode::Blend,
-            unlit: true,
-            cull_mode: None,
-            double_sided: true,
-            ..default()
-        });
-
-        commands.spawn((
-            Mesh3d(arrow_mesh),
-            MeshMaterial3d(arrow_material),
-            Transform::from_translation(Vec3::new(start.x, arrow_y, start.z))
-                .with_rotation(arrow_rotation)
-                .with_scale(Vec3::new(1.0, 1.0, length)),
-            OrientationArrowVisual,
-            NotShadowCaster,
-            NotShadowReceiver,
-        ));
+    // Check if arrow already exists - if so, despawn and recreate since mesh needs regeneration
+    for (entity, _) in arrow_query.iter() {
+        commands.entity(entity).despawn();
     }
+
+    // Create new terrain-conforming arrow mesh
+    // Head length is 20% of arrow length for better proportions
+    let head_length = (current - start).length() * 0.2;
+    let arrow_mesh = meshes.add(create_arrow_mesh(
+        0.8,
+        2.5,
+        head_length,
+        start,
+        current,
+        heightmap.as_deref(),
+    ));
+
+    let arrow_material = materials.add(StandardMaterial {
+        base_color: Color::srgba(0.2, 1.0, 0.3, 0.8),
+        emissive: LinearRgba::new(0.1, 0.5, 0.15, 1.0),
+        alpha_mode: AlphaMode::Blend,
+        unlit: true,
+        cull_mode: None,
+        double_sided: true,
+        ..default()
+    });
+
+    commands.spawn((
+        Mesh3d(arrow_mesh),
+        MeshMaterial3d(arrow_material),
+        Transform::from_translation(Vec3::new(start.x, start_terrain_y, start.z)),
+        OrientationArrowVisual,
+        NotShadowCaster,
+        NotShadowReceiver,
+    ));
 }
 
 /// System: Update persistent path arrows for selected squads that are moving
@@ -182,86 +182,200 @@ pub fn update_squad_path_arrows(
             continue;
         }
 
-        let normalized_dir = direction.normalize();
-        let rotation = Quat::from_rotation_y(normalized_dir.x.atan2(normalized_dir.z));
-
-        // Get terrain height at current position
-        let terrain_y = heightmap.as_ref()
+        // Get base terrain height at start position
+        let start_terrain_y = heightmap.as_deref()
             .map(|hm| hm.sample_height(current_pos.x, current_pos.z))
             .unwrap_or(-1.0);
-        let arrow_y = terrain_y + VISUAL_TERRAIN_OFFSET;
 
-        // Check if arrow already exists for this squad
+        // Check if arrow already exists for this squad - despawn and recreate for mesh regeneration
         let mut found = false;
-        for (_entity, arrow, mut transform) in existing_arrows.iter_mut() {
+        for (entity, arrow, _transform) in existing_arrows.iter() {
             if arrow.squad_id == squad_id {
-                // Update existing arrow position/rotation/scale
-                transform.translation = Vec3::new(current_pos.x, arrow_y, current_pos.z);
-                transform.rotation = rotation;
-                transform.scale = Vec3::new(1.0, 1.0, length);
+                commands.entity(entity).despawn();
                 found = true;
                 break;
             }
         }
 
-        if !found {
-            // Create new arrow
-            let arrow_mesh = meshes.add(create_arrow_mesh(0.5, 1.5, 0.1));
-            let arrow_material = materials.add(StandardMaterial {
-                base_color: Color::srgba(0.3, 0.9, 0.4, 0.5),
-                emissive: LinearRgba::new(0.1, 0.4, 0.15, 1.0),
-                alpha_mode: AlphaMode::Blend,
-                unlit: true,
-                cull_mode: None,
-                double_sided: true,
-                ..default()
-            });
+        // Always create/recreate arrow with terrain-conforming mesh
+        // Head length is 15% of arrow length for better proportions
+        let head_length = length * 0.15;
+        let arrow_mesh = meshes.add(create_arrow_mesh(
+            0.6,
+            2.0,
+            head_length,
+            current_pos,
+            target_pos,
+            heightmap.as_deref(),
+        ));
 
-            commands.spawn((
-                Mesh3d(arrow_mesh),
-                MeshMaterial3d(arrow_material),
-                Transform::from_translation(Vec3::new(current_pos.x, arrow_y, current_pos.z))
-                    .with_rotation(rotation)
-                    .with_scale(Vec3::new(1.0, 1.0, length)),
-                SquadPathArrowVisual { squad_id },
-                NotShadowCaster,
-                NotShadowReceiver,
-            ));
-        }
+        let arrow_material = materials.add(StandardMaterial {
+            base_color: Color::srgba(0.3, 0.9, 0.4, 0.5),
+            emissive: LinearRgba::new(0.1, 0.4, 0.15, 1.0),
+            alpha_mode: AlphaMode::Blend,
+            unlit: true,
+            cull_mode: None,
+            double_sided: true,
+            ..default()
+        });
+
+        commands.spawn((
+            Mesh3d(arrow_mesh),
+            MeshMaterial3d(arrow_material),
+            Transform::from_translation(Vec3::new(current_pos.x, start_terrain_y, current_pos.z)),
+            SquadPathArrowVisual { squad_id },
+            NotShadowCaster,
+            NotShadowReceiver,
+        ));
     }
 }
 
 /// Create an arrow mesh pointing in +Z direction (will be rotated and scaled)
 /// Parameters control the arrow dimensions for different use cases
-pub fn create_arrow_mesh(shaft_width: f32, head_width: f32, head_length: f32) -> Mesh {
+/// Now creates a terrain-conforming arrow by sampling heightmap along its length
+pub fn create_arrow_mesh(
+    shaft_width: f32,
+    head_width: f32,
+    head_length: f32,
+    start_pos: Vec3,
+    end_pos: Vec3,
+    heightmap: Option<&TerrainHeightmap>,
+) -> Mesh {
     use bevy::render::mesh::PrimitiveTopology;
 
-    // Arrow shape: shaft + head, lying flat on XZ plane
-    // Base length is 1.0, will be scaled by drag distance
+    // Calculate arrow direction and length in XZ plane
+    let direction = Vec3::new(end_pos.x - start_pos.x, 0.0, end_pos.z - start_pos.z);
+    let length = direction.length();
 
-    // Vertices (Y=0, lying flat)
+    if length < 0.01 {
+        // Fallback to flat arrow if too short
+        return create_flat_arrow_mesh(shaft_width, head_width, head_length);
+    }
+
+    let dir_normalized = direction.normalize();
+
+    // Perpendicular direction for shaft width (rotate 90 degrees in XZ plane)
+    let perp = Vec3::new(-dir_normalized.z, 0.0, dir_normalized.x);
+
+    // Sample heights along the arrow's path
+    const SEGMENTS: usize = 8; // Number of segments along shaft
+    let mut vertices = Vec::new();
+    let mut indices = Vec::new();
+
+    // Get base height at start position for local space reference
+    let base_y = if let Some(hm) = heightmap {
+        hm.sample_height(start_pos.x, start_pos.z) + VISUAL_TERRAIN_OFFSET
+    } else {
+        start_pos.y
+    };
+
+    // Build shaft with multiple segments
+    let shaft_length = length - head_length;
+    for i in 0..=SEGMENTS {
+        let t = i as f32 / SEGMENTS as f32;
+        let segment_dist = t * shaft_length;
+
+        // Calculate world center position of this segment
+        let world_center = start_pos + dir_normalized * segment_dist;
+        let world_y = if let Some(hm) = heightmap {
+            hm.sample_height(world_center.x, world_center.z) + VISUAL_TERRAIN_OFFSET
+        } else {
+            base_y
+        };
+
+        // Create left and right edge positions in world space
+        let left_world = world_center + perp * shaft_width / 2.0;
+        let right_world = world_center - perp * shaft_width / 2.0;
+
+        // Convert to local space (relative to start_pos with base_y as reference)
+        let left_local = left_world - Vec3::new(start_pos.x, base_y - 0.5, start_pos.z);
+        let right_local = right_world - Vec3::new(start_pos.x, base_y - 0.5, start_pos.z);
+
+        // Add vertices
+        vertices.push([left_local.x, world_y - base_y + 0.5, left_local.z]);
+        vertices.push([right_local.x, world_y - base_y + 0.5, right_local.z]);
+    }
+
+    // Build indices for shaft
+    for i in 0..SEGMENTS {
+        let base = (i * 2) as u32;
+        indices.push(base);
+        indices.push(base + 2);
+        indices.push(base + 1);
+        indices.push(base + 1);
+        indices.push(base + 2);
+        indices.push(base + 3);
+    }
+
+    // Add arrow head at the end
+    let head_base_world = start_pos + dir_normalized * shaft_length;
+    let head_base_y = if let Some(hm) = heightmap {
+        hm.sample_height(head_base_world.x, head_base_world.z) + VISUAL_TERRAIN_OFFSET
+    } else {
+        base_y
+    };
+
+    let tip_y = if let Some (hm) = heightmap {
+        hm.sample_height(end_pos.x, end_pos.z) + VISUAL_TERRAIN_OFFSET
+    } else {
+        base_y
+    };
+
+    let head_base_idx = vertices.len() as u32;
+
+    // Head base left and right points
+    let left_head_world = head_base_world + perp * head_width / 2.0;
+    let right_head_world = head_base_world - perp * head_width / 2.0;
+
+    // Convert to local space
+    let left_head_local = left_head_world - Vec3::new(start_pos.x, base_y - 0.5, start_pos.z);
+    let right_head_local = right_head_world - Vec3::new(start_pos.x, base_y - 0.5, start_pos.z);
+    let tip_local = end_pos - Vec3::new(start_pos.x, base_y - 0.5, start_pos.z);
+
+    // Add head vertices
+    vertices.push([left_head_local.x, head_base_y - base_y + 0.5, left_head_local.z]);
+    vertices.push([right_head_local.x, head_base_y - base_y + 0.5, right_head_local.z]);
+    vertices.push([tip_local.x, tip_y - base_y + 0.5, tip_local.z]);
+
+    // Head triangle (counter-clockwise winding)
+    indices.push(head_base_idx);
+    indices.push(head_base_idx + 1);
+    indices.push(head_base_idx + 2);
+
+    let normals = vec![[0.0, 1.0, 0.0]; vertices.len()];
+    let uvs = vec![[0.0, 0.0]; vertices.len()];
+
+    let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, bevy::asset::RenderAssetUsages::default());
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, vertices);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
+    mesh.insert_indices(bevy::render::mesh::Indices::U32(indices));
+
+    mesh
+}
+
+/// Fallback flat arrow mesh for when heightmap isn't available
+fn create_flat_arrow_mesh(shaft_width: f32, head_width: f32, head_length: f32) -> Mesh {
+    use bevy::render::mesh::PrimitiveTopology;
+
     let vertices = vec![
-        // Shaft (from origin to 1-head_length)
-        [-shaft_width / 2.0, 0.0, 0.0],           // 0: left start
-        [shaft_width / 2.0, 0.0, 0.0],            // 1: right start
-        [shaft_width / 2.0, 0.0, 1.0 - head_length], // 2: right shaft end
-        [-shaft_width / 2.0, 0.0, 1.0 - head_length], // 3: left shaft end
-        // Arrow head
-        [-head_width / 2.0, 0.0, 1.0 - head_length], // 4: left head base
-        [head_width / 2.0, 0.0, 1.0 - head_length],  // 5: right head base
-        [0.0, 0.0, 1.0],                              // 6: tip
+        [-shaft_width / 2.0, 0.5, 0.0],
+        [shaft_width / 2.0, 0.5, 0.0],
+        [shaft_width / 2.0, 0.5, 1.0 - head_length],
+        [-shaft_width / 2.0, 0.5, 1.0 - head_length],
+        [-head_width / 2.0, 0.5, 1.0 - head_length],
+        [head_width / 2.0, 0.5, 1.0 - head_length],
+        [0.0, 0.5, 1.0],
     ];
 
     let indices = vec![
-        // Shaft quad (two triangles)
         0, 2, 1,
         0, 3, 2,
-        // Arrow head triangle
         4, 6, 5,
     ];
 
-    let normals = vec![[0.0, 1.0, 0.0]; 7]; // All pointing up
-    let uvs = vec![[0.0, 0.0]; 7]; // Simple UVs
+    let normals = vec![[0.0, 1.0, 0.0]; 7];
+    let uvs = vec![[0.0, 0.0]; 7];
 
     let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, bevy::asset::RenderAssetUsages::default());
     mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, vertices);
@@ -278,9 +392,9 @@ pub fn spawn_move_indicator(
     meshes: &mut ResMut<Assets<Mesh>>,
     materials: &mut ResMut<Assets<StandardMaterial>>,
     position: Vec3,
-    terrain_y: f32,
+    heightmap: Option<&TerrainHeightmap>,
 ) {
-    spawn_move_indicator_with_color(commands, meshes, materials, position, None, terrain_y);
+    spawn_move_indicator_with_color(commands, meshes, materials, position, None, heightmap);
 }
 
 /// Spawn a visual indicator at the move destination with custom color
@@ -291,9 +405,10 @@ pub fn spawn_move_indicator_with_color(
     materials: &mut ResMut<Assets<StandardMaterial>>,
     position: Vec3,
     color: Option<Color>,
-    terrain_y: f32,
+    heightmap: Option<&TerrainHeightmap>,
 ) {
-    let mesh = meshes.add(Circle::new(MOVE_INDICATOR_RADIUS));
+    // Create a terrain-conforming circle mesh
+    let mesh = create_terrain_conforming_circle(position, MOVE_INDICATOR_RADIUS, heightmap);
 
     // Determine base color - grey for dead squads, green for living
     let base_color = if color.is_some() {
@@ -320,11 +435,17 @@ pub fn spawn_move_indicator_with_color(
         ..default()
     });
 
+    // Calculate the base position at center's terrain height
+    let base_y = if let Some(hm) = heightmap {
+        hm.sample_height(position.x, position.z) + VISUAL_TERRAIN_OFFSET
+    } else {
+        position.y
+    };
+
     commands.spawn((
-        Mesh3d(mesh),
+        Mesh3d(meshes.add(mesh)),
         MeshMaterial3d(material),
-        Transform::from_translation(Vec3::new(position.x, terrain_y + VISUAL_TERRAIN_OFFSET, position.z))
-            .with_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)),
+        Transform::from_translation(Vec3::new(position.x, base_y, position.z)),
         MoveOrderVisual {
             timer: Timer::from_seconds(MOVE_INDICATOR_LIFETIME, TimerMode::Once),
             base_color,  // Store original color for fade-out
@@ -350,33 +471,34 @@ pub fn spawn_path_line(
         return; // Too short to draw
     }
 
-    let normalized_dir = direction.normalize();
-    let rotation = Quat::from_rotation_y(normalized_dir.x.atan2(normalized_dir.z));
+    // Path line spawning disabled - using arrows instead
+    // let normalized_dir = direction.normalize();
+    // let rotation = Quat::from_rotation_y(normalized_dir.x.atan2(normalized_dir.z));
 
-    // Create a thin rectangular mesh for the path line
-    let line_mesh = meshes.add(create_path_line_mesh());
-    let line_material = materials.add(StandardMaterial {
-        base_color: Color::srgba(0.2, 1.0, 0.3, 0.4),
-        emissive: LinearRgba::new(0.05, 0.3, 0.1, 1.0),
-        alpha_mode: AlphaMode::Blend,
-        unlit: true,
-        cull_mode: None,
-        double_sided: true,
-        ..default()
-    });
+    // // Create a thin rectangular mesh for the path line
+    // let line_mesh = meshes.add(create_path_line_mesh());
+    // let line_material = materials.add(StandardMaterial {
+    //     base_color: Color::srgba(0.2, 1.0, 0.3, 0.4),
+    //     emissive: LinearRgba::new(0.05, 0.3, 0.1, 1.0),
+    //     alpha_mode: AlphaMode::Blend,
+    //     unlit: true,
+    //     cull_mode: None,
+    //     double_sided: true,
+    //     ..default()
+    // });
 
-    commands.spawn((
-        Mesh3d(line_mesh),
-        MeshMaterial3d(line_material),
-        Transform::from_translation(Vec3::new(start.x, terrain_y + VISUAL_TERRAIN_OFFSET, start.z))
-            .with_rotation(rotation)
-            .with_scale(Vec3::new(1.0, 1.0, length)),
-        MovePathVisual {
-            timer: Timer::from_seconds(MOVE_INDICATOR_LIFETIME, TimerMode::Once),
-        },
-        NotShadowCaster,
-        NotShadowReceiver,
-    ));
+    // commands.spawn((
+    //     Mesh3d(line_mesh),
+    //     MeshMaterial3d(line_material),
+    //     Transform::from_translation(Vec3::new(start.x, terrain_y + VISUAL_TERRAIN_OFFSET, start.z))
+    //         .with_rotation(rotation)
+    //         .with_scale(Vec3::new(1.0, 1.0, length)),
+    //     MovePathVisual {
+    //         timer: Timer::from_seconds(MOVE_INDICATOR_LIFETIME, TimerMode::Once),
+    //     },
+    //     NotShadowCaster,
+    //     NotShadowReceiver,
+    // ));
 }
 
 /// Create a thin line mesh for path visualization (pointing in +Z, length 1.0)
@@ -408,4 +530,66 @@ fn create_path_line_mesh() -> Mesh {
     mesh.insert_indices(bevy::render::mesh::Indices::U32(indices));
 
     mesh
+}
+
+/// Create a circle mesh that conforms to terrain by sampling heightmap at multiple points
+fn create_terrain_conforming_circle(
+    center: Vec3,
+    radius: f32,
+    heightmap: Option<&TerrainHeightmap>,
+) -> Mesh {
+    use bevy::render::mesh::{Indices, PrimitiveTopology};
+    use bevy::render::render_asset::RenderAssetUsages;
+
+    const SEGMENTS: usize = 24; // Number of segments around the circle
+    let mut positions = Vec::new();
+    let mut normals = Vec::new();
+    let mut uvs = Vec::new();
+    let mut indices = Vec::new();
+
+    // Sample the base terrain height at the center for reference
+    let center_terrain_y = if let Some(hm) = heightmap {
+        hm.sample_height(center.x, center.z) + VISUAL_TERRAIN_OFFSET
+    } else {
+        center.y
+    };
+
+    // Add center vertex
+    positions.push([0.0, 0.0, 0.0]);
+    normals.push([0.0, 1.0, 0.0]);
+    uvs.push([0.5, 0.5]);
+
+    // Generate vertices around the circle
+    for i in 0..=SEGMENTS {
+        let angle = (i as f32 / SEGMENTS as f32) * std::f32::consts::TAU;
+        let cos = angle.cos();
+        let sin = angle.sin();
+
+        // Sample world position but store in local space
+        let x_world = center.x + cos * radius;
+        let z_world = center.z + sin * radius;
+        let y_world = if let Some(hm) = heightmap {
+            hm.sample_height(x_world, z_world) + VISUAL_TERRAIN_OFFSET
+        } else {
+            center_terrain_y
+        };
+
+        // Store in local space (Y relative to center's terrain height)
+        positions.push([cos * radius, y_world - center_terrain_y, sin * radius]);
+        normals.push([0.0, 1.0, 0.0]);
+        uvs.push([cos * 0.5 + 0.5, sin * 0.5 + 0.5]);
+    }
+
+    // Generate triangle indices (fan from center)
+    for i in 0..SEGMENTS {
+        indices.push(0); // Center vertex
+        indices.push((i + 1) as u32);
+        indices.push((i + 2) as u32);
+    }
+
+    Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())
+        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
+        .with_inserted_indices(Indices::U32(indices))
 }
