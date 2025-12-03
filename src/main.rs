@@ -60,6 +60,8 @@ fn main() {
         .add_systems(Update, (
             // Map switching - respawn turrets when terrain changes
             respawn_turrets_on_map_switch,
+            // Debug turret toggle (M=MG, H=Heavy when debug mode active)
+            debug_turret_toggle_system,
         ))
         .add_systems(Update, (
             // Formation and squad management systems run first

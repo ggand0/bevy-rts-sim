@@ -338,6 +338,8 @@ pub fn debug_explosion_hotkey_system(
 pub struct ExplosionDebugMode {
     pub explosion_mode: bool,
     pub show_collision_spheres: bool,
+    pub mg_turret_enabled: bool,
+    pub heavy_turret_enabled: bool,
 }
 
 impl Default for ExplosionDebugMode {
@@ -345,6 +347,8 @@ impl Default for ExplosionDebugMode {
         Self {
             explosion_mode: false,
             show_collision_spheres: false,
+            mg_turret_enabled: false,   // Turrets disabled by default for perf testing
+            heavy_turret_enabled: false,
         }
     }
 }
@@ -360,7 +364,12 @@ pub fn update_debug_mode_ui(
 
     for mut text in ui_query.iter_mut() {
         if debug_mode.explosion_mode {
-            **text = "[0] DEBUG: 1=glow 2=flames 3=smoke 4=sparkles 5=combined 6=dots | C=collision | S=destroy enemy shield".to_string();
+            let mg_status = if debug_mode.mg_turret_enabled { "ON" } else { "OFF" };
+            let heavy_status = if debug_mode.heavy_turret_enabled { "ON" } else { "OFF" };
+            **text = format!(
+                "[0] DEBUG: 1-6=explosions | C=collision | S=destroy shield | M=MG turret ({}) | H=Heavy turret ({})",
+                mg_status, heavy_status
+            );
         } else {
             **text = String::new();
         }
