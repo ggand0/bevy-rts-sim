@@ -9,7 +9,7 @@ impl Plugin for ParticleEffectsPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(HanabiPlugin)
             .add_systems(Startup, setup_particle_effects)
-            .add_systems(Update, cleanup_finished_particle_effects);
+            .add_systems(Update, (cleanup_finished_particle_effects, debug_hanabi_entities));
     }
 }
 
@@ -29,6 +29,7 @@ pub struct ExplosionParticleEffects {
     pub smoke_effect: Handle<EffectAsset>,
     pub shield_impact_effect: Handle<EffectAsset>,
     pub mass_explosion_effect: Handle<EffectAsset>,
+    pub unit_death_flash: Handle<EffectAsset>,
 }
 
 fn setup_particle_effects(
@@ -304,12 +305,67 @@ fn setup_particle_effects(
             .render(SizeOverLifetimeModifier { gradient: size_gradient5, screen_space_size: false })
     );
 
+    // === UNIT DEATH FLASH ===
+    // Quick, LOW ground-level flash - stays near unit position, doesn't fly high
+    // 10 particles, 0.4s lifetime, small-medium size
+    let mut color_gradient6 = bevy_hanabi::Gradient::new();
+    color_gradient6.add_key(0.0, Vec4::new(5.0, 4.0, 2.0, 1.0));  // Bright white-yellow HDR
+    color_gradient6.add_key(0.1, Vec4::new(4.0, 2.0, 0.3, 1.0));  // Orange
+    color_gradient6.add_key(0.3, Vec4::new(2.0, 0.5, 0.0, 0.8));  // Dark orange
+    color_gradient6.add_key(1.0, Vec4::new(0.3, 0.05, 0.0, 0.0)); // Fade out
+
+    let mut size_gradient6 = bevy_hanabi::Gradient::new();
+    size_gradient6.add_key(0.0, Vec3::splat(1.0));  // Start
+    size_gradient6.add_key(0.1, Vec3::splat(1.8));  // Quick flash
+    size_gradient6.add_key(0.5, Vec3::splat(1.0));  // Shrink
+    size_gradient6.add_key(1.0, Vec3::splat(0.2));  // End small
+
+    let writer6 = ExprWriter::new();
+
+    // Small spawn radius around unit center
+    let init_pos6 = SetPositionSphereModifier {
+        center: writer6.lit(Vec3::ZERO).expr(),
+        radius: writer6.lit(0.3).expr(),
+        dimension: ShapeDimension::Volume,
+    };
+
+    // VERY low velocity - particles barely move, stay at ground level
+    let init_vel6 = SetVelocitySphereModifier {
+        center: writer6.lit(Vec3::ZERO).expr(),
+        speed: writer6.lit(1.0).uniform(writer6.lit(3.0)).expr(),
+    };
+
+    let init_age6 = SetAttributeModifier::new(Attribute::AGE, writer6.lit(0.0).expr());
+    let init_lifetime6 = SetAttributeModifier::new(Attribute::LIFETIME, writer6.lit(0.4).expr());
+    let init_size6 = SetAttributeModifier::new(Attribute::SIZE, writer6.lit(1.0).expr());
+
+    // HEAVY drag + gravity to keep particles grounded
+    let update_drag6 = LinearDragModifier::new(writer6.lit(8.0).expr());
+    let update_accel6 = AccelModifier::new(writer6.lit(Vec3::new(0.0, -10.0, 0.0)).expr());
+
+    let death_flash_module = writer6.finish();
+
+    let unit_death_flash = effects.add(
+        EffectAsset::new(32, SpawnerSettings::once(10.0.into()), death_flash_module)
+            .with_name("unit_death_flash")
+            .init(init_pos6)
+            .init(init_vel6)
+            .init(init_age6)
+            .init(init_lifetime6)
+            .init(init_size6)
+            .update(update_drag6)
+            .update(update_accel6)
+            .render(ColorOverLifetimeModifier::new(color_gradient6))
+            .render(SizeOverLifetimeModifier { gradient: size_gradient6, screen_space_size: false })
+    );
+
     commands.insert_resource(ExplosionParticleEffects {
         debris_effect,
         sparks_effect,
         smoke_effect,
         shield_impact_effect,
         mass_explosion_effect,
+        unit_death_flash,
     });
 
     info!("✅ Particle effects ready!");
@@ -420,6 +476,28 @@ pub fn spawn_mass_explosion(
     ));
 }
 
+/// Spawns a death flash effect at unit position
+/// Small, quick burst effect for individual unit deaths
+pub fn spawn_unit_death_flash(
+    commands: &mut Commands,
+    particle_effects: &ExplosionParticleEffects,
+    position: Vec3,
+    current_time: f64,
+) {
+    // Use sparks_effect which WORKS in pending_explosion_system
+    // Scale 0.4 for small unit-sized explosion
+    commands.spawn((
+        ParticleEffect::new(particle_effects.sparks_effect.clone()),
+        Transform::from_translation(position)
+            .with_scale(Vec3::splat(0.4)),
+        ParticleEffectLifetime {
+            spawn_time: current_time,
+            duration: 2.0,
+        },
+        Name::new("UnitDeathFlash"),
+    ));
+}
+
 /// Spawns particles for shield impacts
 /// Small burst effect when lasers hit the shield
 pub fn spawn_shield_impact_particles(
@@ -439,6 +517,35 @@ pub fn spawn_shield_impact_particles(
         },
         Name::new("ShieldImpact"),
     ));
+}
+
+/// DEBUG: System to inspect Hanabi entity components
+pub fn debug_hanabi_entities(
+    query: Query<(
+        Entity,
+        &Name,
+        &Transform,
+        &ParticleEffect,
+        Option<&Visibility>,
+        Option<&InheritedVisibility>,
+        Option<&ViewVisibility>,
+        Option<&CompiledParticleEffect>,
+    )>,
+) {
+    for (entity, name, transform, _effect, vis, inherited_vis, view_vis, compiled) in query.iter() {
+        if name.as_str().contains("DeathFlash") || name.as_str().contains("MassExplosion") {
+            info!(
+                "🔍 ENTITY {:?} '{}': pos={:?} Visibility={:?} InheritedVis={:?} ViewVis={:?} Compiled={}",
+                entity,
+                name.as_str(),
+                transform.translation,
+                vis.map(|v| format!("{:?}", v)),
+                inherited_vis.map(|_| "Some"),
+                view_vis.map(|_| "Some"),
+                compiled.is_some()
+            );
+        }
+    }
 }
 
 /// System to cleanup particle effects after their lifetime expires

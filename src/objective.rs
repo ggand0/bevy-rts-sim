@@ -140,6 +140,8 @@ pub fn tower_destruction_system(
     time: Res<Time>,
     mut game_state: ResMut<GameState>,
 ) {
+    let current_time = time.elapsed_secs_f64();
+
     for (tower_entity, tower_transform, tower, tower_health) in tower_query.iter() {
         if tower_health.is_dead() {
             info!("Processing tower destruction for team {:?}", tower.team);
@@ -147,28 +149,44 @@ pub fn tower_destruction_system(
             // Mark game as ended
             game_state.tower_destroyed(tower.team);
 
-            // Find and IMMEDIATELY despawn all friendly units within destruction radius
+            // Find and despawn all friendly units within destruction radius
+            // Spawn a death flash at each unit position
             let mut unit_count = 0;
+            let mut flash_count = 0;
+            // Collect unit positions FIRST
+            let mut units_to_destroy: Vec<(Entity, Vec3)> = Vec::new();
             for (droid_entity, droid_transform, droid) in droid_query.iter() {
-                // Only friendly units explode (loss of command link)
                 if droid.team == tower.team {
                     let distance = tower_transform.translation.distance(droid_transform.translation);
                     if distance <= tower.destruction_radius {
-                        commands.entity(droid_entity).despawn();
-                        unit_count += 1;
+                        units_to_destroy.push((droid_entity, droid_transform.translation));
                     }
                 }
             }
 
-            // Spawn ONE mass explosion effect covering entire destruction radius
+            // Spawn mass explosion FIRST (at tower position - this works)
             if let Some(ref effects) = particle_effects {
-                let current_time = time.elapsed_secs_f64();
                 crate::particles::spawn_mass_explosion(
                     &mut commands,
                     effects,
                     tower_transform.translation,
                     current_time,
                 );
+            }
+
+            // Add PendingExplosion to units with staggered delays
+            // This uses the WORKING pending_explosion_system to spawn particles
+            for (i, (droid_entity, _position)) in units_to_destroy.iter().enumerate() {
+                // Stagger delays from 0.05s to 0.5s based on index
+                let delay = 0.05 + (i as f32 * 0.0005).min(0.45);
+                if let Ok(mut entity_commands) = commands.get_entity(*droid_entity) {
+                    entity_commands.try_insert(PendingExplosion {
+                        delay_timer: delay,
+                        explosion_power: 1.0,
+                    });
+                }
+                unit_count += 1;
+                flash_count += 1;
             }
 
             // Add PendingExplosion to tower - the actual WFX explosion is spawned in pending_explosion_system
@@ -179,7 +197,7 @@ pub fn tower_destruction_system(
                 });
             }
 
-            info!("Tower {:?} destroyed! {} units despawned, 1 mass explosion spawned",
+            info!("Tower {:?} destroyed! {} units despawned with death flashes, 1 mass explosion spawned",
                   tower.team, unit_count);
         }
     }

@@ -168,40 +168,40 @@ pub fn spawn_custom_shader_explosion(
 ) {
     trace!("🎭 Spawning CUSTOM SHADER explosion at {} with radius {}", position, radius);
 
-    // ABLATION TEST: Billboard disabled to test particles-only performance
-    // let quad_mesh = meshes.add(Rectangle::new(radius * 2.0, radius * 2.0));
-    //
-    // let explosion_material = explosion_materials.add(ExplosionMaterial {
-    //     frame_data: Vec4::new(0.0, 0.0, 5.0, 1.0),
-    //     color_data: Vec4::new(1.0, 1.0, 1.0, 2.0),
-    //     sprite_texture: explosion_assets.explosion_flipbook_texture.clone(),
-    // });
-    //
-    // commands.spawn((
-    //     Mesh3d(quad_mesh),
-    //     MeshMaterial3d(explosion_material),
-    //     Transform::from_translation(position),
-    //     ExplosionTimer {
-    //         timer: Timer::new(Duration::from_secs_f32(duration * 0.8), TimerMode::Once),
-    //     },
-    //     CustomShaderExplosion {
-    //         frame_count: 25,
-    //         current_frame: 0,
-    //         frame_duration: (duration * 0.8) / 25.0,
-    //         frame_timer: 0.0,
-    //         fade_alpha: 1.0,
-    //     },
-    //     NotShadowCaster,
-    //     NotShadowReceiver,
-    //     Name::new("CustomShaderExplosion"),
-    // ));
+    // Sprite sheet billboard explosion for units
+    if !is_tower {
+        let quad_mesh = meshes.add(Rectangle::new(radius * 2.0, radius * 2.0));
 
-    // Spawn particle effects with reduced buffer sizes (64-128 capacity instead of 32K)
+        let explosion_material = explosion_materials.add(ExplosionMaterial {
+            frame_data: Vec4::new(0.0, 0.0, 5.0, 1.0),
+            color_data: Vec4::new(1.0, 1.0, 1.0, 2.0),
+            sprite_texture: explosion_assets.explosion_flipbook_texture.clone(),
+        });
+
+        commands.spawn((
+            Mesh3d(quad_mesh),
+            MeshMaterial3d(explosion_material),
+            Transform::from_translation(position),
+            ExplosionTimer {
+                timer: Timer::new(Duration::from_secs_f32(duration * 0.8), TimerMode::Once),
+            },
+            CustomShaderExplosion {
+                frame_count: 25,
+                current_frame: 0,
+                frame_duration: (duration * 0.8) / 25.0,
+                frame_timer: 0.0,
+                fade_alpha: 1.0,
+            },
+            NotShadowCaster,
+            NotShadowReceiver,
+            Name::new("CustomShaderExplosion"),
+        ));
+    }
+
+    // Spawn particle effects for towers only
     if let Some(particles) = particle_effects {
         if is_tower {
             crate::particles::spawn_tower_explosion_particles(commands, particles, position, current_time);
-        } else if rand::random::<f32>() < crate::constants::PARTICLE_SPAWN_PROBABILITY {
-            crate::particles::spawn_unit_explosion_particles(commands, particles, position, current_time);
         }
     }
 }
