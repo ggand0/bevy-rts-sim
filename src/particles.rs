@@ -72,7 +72,7 @@ fn setup_particle_effects(
     let debris_module = writer.finish();
 
     let debris_effect = effects.add(
-        EffectAsset::new(32768, SpawnerSettings::once(100.0.into()), debris_module)
+        EffectAsset::new(64, SpawnerSettings::once(5.0.into()), debris_module)
             .with_name("explosion_debris")
             .init(init_pos)
             .init(init_vel)
@@ -120,7 +120,7 @@ fn setup_particle_effects(
     let sparks_module = writer2.finish();
 
     let sparks_effect = effects.add(
-        EffectAsset::new(32768, SpawnerSettings::once(200.0.into()), sparks_module)
+        EffectAsset::new(64, SpawnerSettings::once(5.0.into()), sparks_module)
             .with_name("explosion_sparks")
             .init(init_pos2)
             .init(init_vel2)
@@ -168,7 +168,7 @@ fn setup_particle_effects(
     let smoke_module = writer3.finish();
 
     let smoke_effect = effects.add(
-        EffectAsset::new(32768, SpawnerSettings::once(50.0.into()), smoke_module)
+        EffectAsset::new(128, SpawnerSettings::once(50.0.into()), smoke_module)
             .with_name("explosion_smoke")
             .init(init_pos3)
             .init(init_vel3)
@@ -216,7 +216,7 @@ fn setup_particle_effects(
     let shield_impact_module = writer4.finish();
 
     let shield_impact_effect = effects.add(
-        EffectAsset::new(8192, SpawnerSettings::once(40.0.into()), shield_impact_module)
+        EffectAsset::new(64, SpawnerSettings::once(40.0.into()), shield_impact_module)
             .with_name("shield_impact")
             .init(init_pos4)
             .init(init_vel4)
@@ -297,25 +297,15 @@ pub fn spawn_unit_explosion_particles(
 ) {
     trace!("💥 UNIT PARTICLES: Spawning unit explosion particles at {:?}", position);
 
-    // Smaller, simpler effect for units - just debris and quick sparks
-    commands.spawn((
-        ParticleEffect::new(particle_effects.debris_effect.clone()),
-        Transform::from_translation(position)
-            .with_scale(Vec3::splat(0.3)), // Much smaller
-        ParticleEffectLifetime {
-            spawn_time: current_time,
-            duration: 3.0, // Smaller explosions cleanup faster
-        },
-        Name::new("UnitDebris"),
-    ));
-
+    // PERFORMANCE: Only spawn 1 effect per unit (sparks only) to reduce entity count
+    // Each ParticleEffect entity has significant per-entity GPU overhead in Hanabi
     commands.spawn((
         ParticleEffect::new(particle_effects.sparks_effect.clone()),
         Transform::from_translation(position)
             .with_scale(Vec3::splat(0.25)),
         ParticleEffectLifetime {
             spawn_time: current_time,
-            duration: 2.0, // Quick sparks
+            duration: 2.0,
         },
         Name::new("UnitSparks"),
     ));
@@ -360,13 +350,24 @@ fn cleanup_finished_particle_effects(
     query: Query<(Entity, &ParticleEffectLifetime)>,
     time: Res<Time>,
 ) {
+    let start = std::time::Instant::now();
     let current_time = time.elapsed_secs_f64();
+    let entity_count = query.iter().count();
 
+    let mut despawned = 0;
     for (entity, lifetime) in query.iter() {
         let elapsed = (current_time - lifetime.spawn_time) as f32;
 
         if elapsed >= lifetime.duration {
             commands.entity(entity).despawn();
+            despawned += 1;
         }
+    }
+
+    let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
+    let frame_time_ms = time.delta_secs() * 1000.0;
+    if entity_count > 0 {
+        info!("📊 HANABI STATS: {} entities, {} despawned, {:.2}ms CPU, {:.2}ms frame_time ({:.0} FPS)",
+              entity_count, despawned, elapsed_ms, frame_time_ms, 1000.0 / frame_time_ms);
     }
 }
