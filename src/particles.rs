@@ -28,6 +28,7 @@ pub struct ExplosionParticleEffects {
     pub sparks_effect: Handle<EffectAsset>,
     pub smoke_effect: Handle<EffectAsset>,
     pub shield_impact_effect: Handle<EffectAsset>,
+    pub mass_explosion_effect: Handle<EffectAsset>,
 }
 
 fn setup_particle_effects(
@@ -228,11 +229,87 @@ fn setup_particle_effects(
             .render(SizeOverLifetimeModifier { gradient: size_gradient4, screen_space_size: false })
     );
 
+    // === MASS EXPLOSION EFFECT ===
+    // Single effect that spawns particles across large radius (for tower destruction)
+    // Replaces 1000+ individual explosion entities with ONE effect
+    let mut color_gradient5 = bevy_hanabi::Gradient::new();
+    color_gradient5.add_key(0.0, Vec4::new(1.0, 1.0, 0.9, 1.0)); // Bright white-yellow
+    color_gradient5.add_key(0.1, Vec4::new(1.0, 0.8, 0.3, 1.0)); // Yellow
+    color_gradient5.add_key(0.3, Vec4::new(1.0, 0.5, 0.1, 0.9)); // Orange
+    color_gradient5.add_key(0.6, Vec4::new(0.8, 0.2, 0.0, 0.6)); // Red-orange
+    color_gradient5.add_key(1.0, Vec4::new(0.3, 0.1, 0.0, 0.0)); // Fade out
+
+    let mut size_gradient5 = bevy_hanabi::Gradient::new();
+    size_gradient5.add_key(0.0, Vec3::splat(0.8));
+    size_gradient5.add_key(0.2, Vec3::splat(1.5));
+    size_gradient5.add_key(1.0, Vec3::splat(0.3));
+
+    let writer5 = ExprWriter::new();
+
+    // Spawn particles across TOWER_DESTRUCTION_RADIUS (80 units)
+    let init_pos5 = SetPositionSphereModifier {
+        center: writer5.lit(Vec3::ZERO).expr(),
+        radius: writer5.lit(crate::constants::TOWER_DESTRUCTION_RADIUS).expr(),
+        dimension: ShapeDimension::Volume,
+    };
+
+    // Particles fly upward and outward
+    let init_vel5 = SetVelocitySphereModifier {
+        center: writer5.lit(Vec3::ZERO).expr(),
+        speed: writer5.lit(15.0).uniform(writer5.lit(35.0)).expr(),
+    };
+
+    let init_age5 = SetAttributeModifier::new(Attribute::AGE, writer5.lit(0.0).expr());
+    // Random lifetime for staggered fade-out
+    let init_lifetime5 = SetAttributeModifier::new(
+        Attribute::LIFETIME,
+        writer5.lit(1.5).uniform(writer5.lit(3.0)).expr()
+    );
+    let init_size5 = SetAttributeModifier::new(
+        Attribute::SIZE,
+        writer5.lit(0.5).uniform(writer5.lit(1.5)).expr()
+    );
+
+    let update_accel5 = AccelModifier::new(writer5.lit(Vec3::new(0.0, -8.0, 0.0)).expr());
+    let update_drag5 = LinearDragModifier::new(writer5.lit(2.0).expr());
+
+    let mass_explosion_module = writer5.finish();
+
+    // Spawn ~500 particles over 2 seconds (250/sec rate)
+    // SpawnerSettings::new(count, spawn_duration, period, cycle_count)
+    // - count: particles per cycle
+    // - spawn_duration: time to spawn that count
+    // - period: total cycle time (spawn + pause)
+    // - cycle_count: how many cycles (0 = infinite)
+    let mass_explosion_effect = effects.add(
+        EffectAsset::new(
+            1024, // capacity
+            SpawnerSettings::new(
+                500.0.into(),  // 500 particles total
+                2.0.into(),    // spawn over 2 seconds
+                2.0.into(),    // no pause (period = spawn_duration)
+                1,             // single cycle
+            ),
+            mass_explosion_module
+        )
+            .with_name("mass_explosion")
+            .init(init_pos5)
+            .init(init_vel5)
+            .init(init_age5)
+            .init(init_lifetime5)
+            .init(init_size5)
+            .update(update_accel5)
+            .update(update_drag5)
+            .render(ColorOverLifetimeModifier::new(color_gradient5))
+            .render(SizeOverLifetimeModifier { gradient: size_gradient5, screen_space_size: false })
+    );
+
     commands.insert_resource(ExplosionParticleEffects {
         debris_effect,
         sparks_effect,
         smoke_effect,
         shield_impact_effect,
+        mass_explosion_effect,
     });
 
     info!("✅ Particle effects ready!");
@@ -320,6 +397,27 @@ pub fn spawn_tower_explosion_particles(
     current_time: f64, // Current elapsed time from Time resource
 ) {
     spawn_explosion_particles(commands, particle_effects, position, 4.0, current_time); // Large scale for towers
+}
+
+/// Spawns a single mass explosion effect covering the tower destruction radius
+/// Replaces 1000+ individual unit explosion entities with ONE Hanabi effect
+pub fn spawn_mass_explosion(
+    commands: &mut Commands,
+    particle_effects: &ExplosionParticleEffects,
+    position: Vec3,
+    current_time: f64,
+) {
+    info!("💥 MASS EXPLOSION: Spawning at {:?} (radius={})", position, crate::constants::TOWER_DESTRUCTION_RADIUS);
+
+    commands.spawn((
+        ParticleEffect::new(particle_effects.mass_explosion_effect.clone()),
+        Transform::from_translation(position),
+        ParticleEffectLifetime {
+            spawn_time: current_time,
+            duration: 5.0, // Cleanup after all particles fade (max lifetime 3s + buffer)
+        },
+        Name::new("MassExplosion"),
+    ));
 }
 
 /// Spawns particles for shield impacts

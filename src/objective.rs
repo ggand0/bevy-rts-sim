@@ -1,6 +1,5 @@
 // Objective system module - Uplink Tower mechanics
 use bevy::prelude::*;
-use rand::Rng;
 use crate::types::*;
 use crate::constants::*;
 use crate::procedural_meshes::*;
@@ -137,77 +136,39 @@ pub fn tower_destruction_system(
     mut commands: Commands,
     tower_query: Query<(Entity, &Transform, &UplinkTower, &Health), (With<UplinkTower>, Without<PendingExplosion>)>,
     droid_query: Query<(Entity, &Transform, &BattleDroid), With<BattleDroid>>,
+    particle_effects: Option<Res<crate::particles::ExplosionParticleEffects>>,
+    time: Res<Time>,
     mut game_state: ResMut<GameState>,
 ) {
     for (tower_entity, tower_transform, tower, tower_health) in tower_query.iter() {
         if tower_health.is_dead() {
             info!("Processing tower destruction for team {:?}", tower.team);
-            
+
             // Mark game as ended
             game_state.tower_destroyed(tower.team);
-            
-            // Find all friendly units within destruction radius
-            let mut units_to_explode = Vec::new();
+
+            // Find and IMMEDIATELY despawn all friendly units within destruction radius
+            let mut unit_count = 0;
             for (droid_entity, droid_transform, droid) in droid_query.iter() {
                 // Only friendly units explode (loss of command link)
                 if droid.team == tower.team {
                     let distance = tower_transform.translation.distance(droid_transform.translation);
                     if distance <= tower.destruction_radius {
-                        units_to_explode.push(droid_entity);
+                        commands.entity(droid_entity).despawn();
+                        unit_count += 1;
                     }
                 }
             }
-            
-            // Add delayed explosions for dramatic effect
-            // Quantize delays to discrete time slots to ensure multiple explosions per frame
-            let explosion_count = units_to_explode.len();
-            let mut rng = rand::thread_rng();
-            let mut delay_stats = Vec::new();
-            for unit_entity in units_to_explode {
-                // Generate continuous random delay, then quantize to nearest time slot
-                let raw_delay = rng.gen_range(EXPLOSION_DELAY_MIN..EXPLOSION_DELAY_MAX);
-                let delay = (raw_delay / EXPLOSION_TIME_QUANTUM).round() * EXPLOSION_TIME_QUANTUM;
-                delay_stats.push(delay);
-                // Use try_insert to gracefully handle entities that may have been despawned
-                if let Ok(mut entity_commands) = commands.get_entity(unit_entity) {
-                    entity_commands.try_insert(PendingExplosion {
-                        delay_timer: delay,
-                        explosion_power: 1.0,
-                    });
-                    debug!("🎲 Unit {:?} assigned explosion delay: {:.3}s (raw: {:.3}s)",
-                           unit_entity.index(), delay, raw_delay);
-                }
-            }
 
-            // Log delay distribution statistics with histogram
-            if !delay_stats.is_empty() {
-                delay_stats.sort_by(|a, b| a.partial_cmp(b).unwrap());
-                let min_delay = delay_stats[0];
-                let max_delay = delay_stats[delay_stats.len() - 1];
-                let avg_delay = delay_stats.iter().sum::<f32>() / delay_stats.len() as f32;
-
-                // Count occurrences of each unique delay value (histogram)
-                use std::collections::HashMap;
-                let mut histogram: HashMap<String, usize> = HashMap::new();
-                for &delay in &delay_stats {
-                    let key = format!("{:.2}", delay);
-                    *histogram.entry(key).or_insert(0) += 1;
-                }
-
-                // Sort histogram by delay value for readability
-                let mut hist_sorted: Vec<_> = histogram.iter().collect();
-                hist_sorted.sort_by(|a, b| a.0.cmp(b.0));
-
-                info!("📈 DELAY STRATEGY: Time quantum = {:.3}s", EXPLOSION_TIME_QUANTUM);
-                info!("📈 Delay distribution: min={:.3}s, max={:.3}s, avg={:.3}s, total={} units",
-                      min_delay, max_delay, avg_delay, delay_stats.len());
-                info!("📊 HISTOGRAM (quantized delays):");
-                for (delay_str, count) in hist_sorted.iter().take(10) {
-                    info!("  {}s: {} units", delay_str, count);
-                }
-                if hist_sorted.len() > 10 {
-                    info!("  ... ({} more time slots)", hist_sorted.len() - 10);
-                }
+            // Spawn ONE mass explosion effect covering entire destruction radius
+            if let Some(ref effects) = particle_effects {
+                let current_time = time.elapsed_secs_f64();
+                crate::particles::spawn_mass_explosion(
+                    &mut commands,
+                    effects,
+                    tower_transform.translation,
+                    current_time,
+                );
             }
 
             // Add PendingExplosion to tower - the actual WFX explosion is spawned in pending_explosion_system
@@ -217,9 +178,9 @@ pub fn tower_destruction_system(
                     explosion_power: 3.0,
                 });
             }
-            
-            info!("Tower {:?} destroyed! {} friendly units scheduled for cascade explosion", 
-                  tower.team, explosion_count);
+
+            info!("Tower {:?} destroyed! {} units despawned, 1 mass explosion spawned",
+                  tower.team, unit_count);
         }
     }
 }
@@ -337,99 +298,18 @@ pub fn spawn_objective_ui(mut commands: Commands) {
 
 pub fn debug_explosion_hotkey_system(
     keyboard_input: Res<ButtonInput<KeyCode>>,
-    mut commands: Commands,
-    mut tower_query: Query<(Entity, &Transform, &UplinkTower, &mut Health), With<UplinkTower>>,
-    droid_query: Query<(Entity, &Transform, &BattleDroid), With<BattleDroid>>,
-    mut game_state: ResMut<GameState>,
+    mut tower_query: Query<(&UplinkTower, &mut Health), With<UplinkTower>>,
 ) {
     if keyboard_input.just_pressed(KeyCode::KeyE) {
-        info!("🔥 DEBUG: Explosion hotkey pressed! Triggering tower destruction...");
-        
-        // Find Team B tower and destroy it
-        for (tower_entity, tower_transform, tower, mut tower_health) in tower_query.iter_mut() {
+        info!("🔥 DEBUG: Explosion hotkey pressed! Setting Team B tower health to 0...");
+
+        // Find Team B tower and set health to 0
+        // tower_destruction_system will handle the rest
+        for (tower, mut tower_health) in tower_query.iter_mut() {
             if tower.team == Team::B {
-                info!("🔥 DEBUG: Destroying Team B tower for explosion test");
-                
-                // Set health to 0 to trigger destruction
                 tower_health.current = 0.0;
-                
-                // Mark game as ended
-                game_state.tower_destroyed(tower.team);
-                
-                // Find all friendly units within destruction radius
-                let mut units_to_explode = Vec::new();
-                for (droid_entity, droid_transform, droid) in droid_query.iter() {
-                    if droid.team == tower.team {
-                        let distance = tower_transform.translation.distance(droid_transform.translation);
-                        if distance <= tower.destruction_radius {
-                            units_to_explode.push(droid_entity);
-                        }
-                    }
-                }
-                
-                // Add delayed explosions with quantization (same logic as tower_destruction_system)
-                let explosion_count = units_to_explode.len();
-                let mut rng = rand::thread_rng();
-                let mut delay_stats = Vec::new();
-                for unit_entity in units_to_explode {
-                    // Generate continuous random delay, then quantize to nearest time slot
-                    let raw_delay = rng.gen_range(EXPLOSION_DELAY_MIN..EXPLOSION_DELAY_MAX);
-                    let delay = (raw_delay / EXPLOSION_TIME_QUANTUM).round() * EXPLOSION_TIME_QUANTUM;
-                    delay_stats.push(delay);
-                    // Use try_insert to gracefully handle entities that may have been despawned
-                    if let Ok(mut entity_commands) = commands.get_entity(unit_entity) {
-                        entity_commands.try_insert(PendingExplosion {
-                            delay_timer: delay,
-                            explosion_power: 1.5,
-                        });
-                    }
-                }
-
-                // Log delay distribution statistics with histogram
-                if !delay_stats.is_empty() {
-                    delay_stats.sort_by(|a, b| a.partial_cmp(b).unwrap());
-                    let min_delay = delay_stats[0];
-                    let max_delay = delay_stats[delay_stats.len() - 1];
-                    let avg_delay = delay_stats.iter().sum::<f32>() / delay_stats.len() as f32;
-
-                    // Count occurrences of each unique delay value (histogram)
-                    use std::collections::HashMap;
-                    let mut histogram: HashMap<String, usize> = HashMap::new();
-                    for &delay in &delay_stats {
-                        let key = format!("{:.2}", delay);
-                        *histogram.entry(key).or_insert(0) += 1;
-                    }
-
-                    // Sort histogram by delay value for readability
-                    let mut hist_sorted: Vec<_> = histogram.iter().collect();
-                    hist_sorted.sort_by(|a, b| a.0.cmp(b.0));
-
-                    info!("📈 DEBUG TEST DELAY STRATEGY: Time quantum = {:.3}s", EXPLOSION_TIME_QUANTUM);
-                    info!("📈 Delay distribution: min={:.3}s, max={:.3}s, avg={:.3}s, total={} units",
-                          min_delay, max_delay, avg_delay, delay_stats.len());
-                    info!("📊 HISTOGRAM (quantized delays):");
-                    for (delay_str, count) in hist_sorted.iter().take(10) {
-                        info!("  {}s: {} units", delay_str, count);
-                    }
-                    if hist_sorted.len() > 10 {
-                        info!("  ... ({} more time slots)", hist_sorted.len() - 10);
-                    }
-                }
-                
-                // Tower explosion will be handled by the normal tower_destruction_system
-                // which will trigger when it detects health <= 0
-                info!("🔥 DEBUG: Tower health set to 0, destruction will be handled by tower_destruction_system");
-                
-                // Mark tower for destruction
-                if let Ok(mut entity_commands) = commands.get_entity(tower_entity) {
-                    entity_commands.try_insert(PendingExplosion {
-                        delay_timer: 0.5, // Half second delay
-                        explosion_power: 5.0,
-                    });
-                }
-                
-                info!("🔥 DEBUG: Triggered {} unit explosions + 6 test explosions", explosion_count);
-                break; // Only destroy one tower
+                info!("🔥 DEBUG: Team B tower health set to 0");
+                break;
             }
         }
     }
