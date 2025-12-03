@@ -84,6 +84,44 @@ pub fn calculate_laser_orientation(
     }
 }
 
+/// Initialize cached laser assets (materials and meshes) to avoid per-shot allocation
+pub fn setup_laser_assets(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    let team_a_material = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.0, 2.0, 0.0), // Green for Team A
+        emissive: Color::srgb(0.0, 1.0, 0.0).into(),
+        unlit: true,
+        alpha_mode: AlphaMode::Add,
+        cull_mode: None,
+        ..default()
+    });
+
+    let team_b_material = materials.add(StandardMaterial {
+        base_color: Color::srgb(2.0, 0.0, 0.0), // Red for Team B
+        emissive: Color::srgb(1.0, 0.0, 0.0).into(),
+        unlit: true,
+        alpha_mode: AlphaMode::Add,
+        cull_mode: None,
+        ..default()
+    });
+
+    // Standard laser mesh
+    let laser_mesh = meshes.add(Rectangle::new(LASER_WIDTH, LASER_LENGTH));
+
+    // MG turret uses shorter bolts (60% length)
+    let mg_laser_mesh = meshes.add(Rectangle::new(LASER_WIDTH, LASER_LENGTH * 0.6));
+
+    commands.insert_resource(LaserAssets {
+        team_a_material,
+        team_b_material,
+        laser_mesh,
+        mg_laser_mesh,
+    });
+}
+
 pub fn volley_fire_system(
     keyboard_input: Res<ButtonInput<KeyCode>>,
     mut commands: Commands,
@@ -340,8 +378,7 @@ pub fn target_acquisition_system(
 pub fn auto_fire_system(
     time: Res<Time>,
     mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    laser_assets: Res<LaserAssets>,
     mut combat_query: Query<(&GlobalTransform, &BattleDroid, &mut CombatUnit), Without<crate::types::TurretRotatingAssembly>>,
     mut turret_query: Query<(&GlobalTransform, &Transform, &BattleDroid, &mut CombatUnit, &mut crate::types::TurretRotatingAssembly, Option<&mut crate::types::MgTurret>)>,
     target_query: Query<&GlobalTransform, With<BattleDroid>>,
@@ -378,28 +415,14 @@ pub fn auto_fire_system(
                 if let Ok(target_transform) = target_transform {
                     // Reset timer
                     combat_unit.auto_fire_timer = AUTO_FIRE_INTERVAL;
-                    
-                    // Create laser material based on team
+
+                    // Use cached laser material based on team
                     let laser_material = match droid.team {
-                        Team::A => materials.add(StandardMaterial {
-                            base_color: Color::srgb(0.0, 2.0, 0.0), // Green for Team A
-                            emissive: Color::srgb(0.0, 1.0, 0.0).into(),
-                            unlit: true,
-                            alpha_mode: AlphaMode::Add,
-                            cull_mode: None,
-                            ..default()
-                        }),
-                        Team::B => materials.add(StandardMaterial {
-                            base_color: Color::srgb(2.0, 0.0, 0.0), // Red for Team B
-                            emissive: Color::srgb(1.0, 0.0, 0.0).into(),
-                            unlit: true,
-                            alpha_mode: AlphaMode::Add,
-                            cull_mode: None,
-                            ..default()
-                        }),
+                        Team::A => laser_assets.team_a_material.clone(),
+                        Team::B => laser_assets.team_b_material.clone(),
                     };
-                    
-                    let laser_mesh = meshes.add(Rectangle::new(LASER_WIDTH, LASER_LENGTH));
+
+                    let laser_mesh = laser_assets.laser_mesh.clone();
 
                     // Calculate firing position and direction toward target
                     // Use GlobalTransform to get world position (handles parent-child hierarchies like turrets)
@@ -599,27 +622,25 @@ pub fn auto_fire_system(
                         continue;
                     }
 
-                    // Determine barrel configuration, fire rate, laser speed, and bolt size
-                    let (barrel_positions, fire_interval, laser_speed, laser_length) = if is_mg {
-                        (&mg_barrel_positions[..], 0.05, LASER_SPEED * 3.0, LASER_LENGTH * 0.6) // MG: 20 shots/sec, 3x speed, shorter bolts
+                    // Determine barrel configuration, fire rate, and laser speed
+                    let (barrel_positions, fire_interval, laser_speed) = if is_mg {
+                        (&mg_barrel_positions[..], 0.05, LASER_SPEED * 3.0) // MG: 20 shots/sec, 3x speed
                     } else {
-                        (&standard_barrel_positions[..], AUTO_FIRE_INTERVAL, LASER_SPEED, LASER_LENGTH)
+                        (&standard_barrel_positions[..], AUTO_FIRE_INTERVAL, LASER_SPEED)
                     };
 
                     // Reset timer
                     combat_unit.auto_fire_timer = fire_interval;
 
-                    // Create laser material (green for Team A turret)
-                    let laser_material = materials.add(StandardMaterial {
-                        base_color: Color::srgb(0.0, 2.0, 0.0), // Green for Team A
-                        emissive: Color::srgb(0.0, 1.0, 0.0).into(),
-                        unlit: true,
-                        alpha_mode: AlphaMode::Add,
-                        cull_mode: None,
-                        ..default()
-                    });
+                    // Use cached laser material (turrets are Team A = green)
+                    let laser_material = laser_assets.team_a_material.clone();
 
-                    let laser_mesh = meshes.add(Rectangle::new(LASER_WIDTH, laser_length));
+                    // Use appropriate cached mesh based on turret type
+                    let laser_mesh = if is_mg {
+                        laser_assets.mg_laser_mesh.clone()
+                    } else {
+                        laser_assets.laser_mesh.clone()
+                    };
 
                     // Get current barrel position in local space
                     let local_barrel_pos = barrel_positions[turret.current_barrel_index % barrel_positions.len()];
@@ -753,10 +774,12 @@ pub fn collision_detection_system(
         }
 
         // Check building collisions first (buildings block lasers)
+        // Use distance_squared to avoid sqrt overhead
         let mut hit_building = false;
         for (_building_entity, building_transform, building_collider) in building_query.iter() {
-            let distance = laser_transform.translation.distance(building_transform.translation());
-            if distance <= building_collider.radius {
+            let distance_sq = laser_transform.translation.distance_squared(building_transform.translation());
+            let radius_sq = building_collider.radius * building_collider.radius;
+            if distance_sq <= radius_sq {
                 // Hit building! Mark laser for despawn (but not the building)
                 entities_to_despawn.insert(laser_entity);
                 hit_building = true;
@@ -785,9 +808,10 @@ pub fn collision_detection_system(
                     continue;
                 }
 
-                // Simple sphere collision detection
-                let distance = laser_transform.translation.distance(droid_transform.translation);
-                if distance <= COLLISION_RADIUS {
+                // Simple sphere collision detection using distance_squared to avoid sqrt
+                const COLLISION_RADIUS_SQ: f32 = COLLISION_RADIUS * COLLISION_RADIUS;
+                let distance_sq = laser_transform.translation.distance_squared(droid_transform.translation);
+                if distance_sq <= COLLISION_RADIUS_SQ {
                     // Hit! Mark both laser and droid for despawn
                     entities_to_despawn.insert(laser_entity);
                     entities_to_despawn.insert(droid_entity);

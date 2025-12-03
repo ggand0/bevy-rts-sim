@@ -149,6 +149,16 @@ impl AudioAssets {
     }
 }
 
+// Cached laser materials and meshes for performance
+// (avoids per-shot allocation which causes lag spikes with rapid-fire weapons)
+#[derive(Resource)]
+pub struct LaserAssets {
+    pub team_a_material: Handle<StandardMaterial>,
+    pub team_b_material: Handle<StandardMaterial>,
+    pub laser_mesh: Handle<Mesh>,
+    pub mg_laser_mesh: Handle<Mesh>,  // Shorter bolts for MG turret
+}
+
 // Spatial grid for collision optimization
 #[derive(Resource, Default)]
 pub struct SpatialGrid {

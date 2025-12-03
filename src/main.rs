@@ -49,7 +49,7 @@ fn main() {
         .insert_resource(GameState::default())
         .insert_resource(ExplosionDebugMode::default())
         .insert_resource(selection::SelectionState::default())
-        .add_systems(Startup, (setup::setup_scene, spawn_uplink_towers, spawn_objective_ui))
+        .add_systems(Startup, (setup::setup_scene, spawn_uplink_towers, spawn_objective_ui, setup_laser_assets))
         // Army spawning runs after terrain is ready (terrain spawns in TerrainPlugin's Startup)
         .add_systems(Startup, setup::spawn_army_with_squads.after(terrain::spawn_initial_terrain))
         // Turret spawning runs after terrain is ready
