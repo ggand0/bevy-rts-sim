@@ -583,4 +583,67 @@ Spawns flipbook explosion for unit deaths.
 
 ---
 
+## Tower Destruction Performance Optimization (December 2024)
+
+### Problem
+
+When a tower is destroyed, ~1200 units within the destruction radius need to explode. The original implementation caused FPS to drop from 120 to 20-30 FPS.
+
+### Attempts and Findings
+
+#### Attempt 1: Mass Hanabi Particle Effect
+- **Approach:** Single Hanabi particle effect at tower position covering the entire destruction radius
+- **Result:** Works well for the tower-level explosion, but user requested individual death flashes at unit positions
+
+#### Attempt 2: Per-Unit Hanabi Particles (Direct Spawn)
+- **Approach:** Spawn Hanabi `ParticleEffect` entities directly at each unit position from `tower_destruction_system`
+- **Result:** Particles NOT visible despite ECS components showing correct state (Visibility, InheritedVisibility, ViewVisibility, CompiledParticleEffect all present)
+- **Finding:** Same `sparks_effect` works when spawned from `pending_explosion_system` but NOT when spawned from `tower_destruction_system`
+
+#### Attempt 3: Per-Unit via PendingExplosion Queue
+- **Approach:** Add `PendingExplosion` component to units with staggered delays (0.05s-0.5s), let `pending_explosion_system` handle particle spawning
+- **Result:** Particles now visible! The queue-based approach works because it processes units over multiple frames
+- **Problem:** FPS still drops to 30 when spawning sprite sheet billboards for all 1200 units
+
+### Solution: Shared Assets + Spawn Probability
+
+Two key optimizations fixed the performance:
+
+1. **Spawn Probability (20%):** Only 20% of units spawn visible explosion billboards
+   ```rust
+   if !is_tower && rand::random::<f32>() < 0.2 {
+       // spawn billboard
+   }
+   ```
+
+2. **Shared Mesh and Material:** All explosion billboards share the same mesh and material handles, enabling GPU batching
+   ```rust
+   // In ExplosionAssets resource (created once at startup)
+   pub shared_explosion_mesh: Handle<Mesh>,
+   pub shared_explosion_material: Handle<ExplosionMaterial>,
+
+   // Usage - just clone the handles
+   Mesh3d(explosion_assets.shared_explosion_mesh.clone()),
+   MeshMaterial3d(explosion_assets.shared_explosion_material.clone()),
+   ```
+
+### Results
+
+| Metric | Before | After |
+|--------|--------|-------|
+| FPS during cascade | 20-30 | 85-130 |
+| Explosion entities | 1200 | ~250 (20%) |
+| Materials created | 1200 | 1 (shared) |
+| Draw call batching | None | Full |
+
+### Key Takeaways
+
+1. **Hanabi visibility issue:** Spawning 1000+ Hanabi effects in a single commands batch from `tower_destruction_system` doesn't work reliably. Using `PendingExplosion` queue spreads the load across frames.
+
+2. **Material/mesh creation is expensive:** Creating new `Handle<Mesh>` and `Handle<Material>` per entity prevents GPU batching. Pre-create shared assets and clone handles.
+
+3. **Not every unit needs a visual:** With mass explosions, 20% spawn rate looks nearly identical to 100% but with 5x better performance.
+
+---
+
 **End of Explosion System Documentation**
