@@ -160,67 +160,33 @@ pub struct LaserAssets {
 }
 
 // Spatial grid for collision optimization
-#[derive(Resource)]
+#[derive(Resource, Default)]
 pub struct SpatialGrid {
     // Grid cells containing entity IDs - [x][y]
     pub laser_cells: Vec<Vec<Vec<Entity>>>,
     pub droid_cells: Vec<Vec<Vec<Entity>>>,
-    // Frame counter for throttled rebuilds (units move slowly, no need to rebuild every frame)
-    pub frame_counter: u32,
-}
-
-impl Default for SpatialGrid {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 impl SpatialGrid {
-    /// How often to rebuild the droid grid (every N frames)
-    /// Units move at 3 units/sec, grid cells are 10 units wide
-    /// At 60 FPS, units move 0.05 units/frame - takes 200 frames to cross a cell
-    /// Rebuilding every 6 frames is very safe and reduces work by ~83%
-    pub const REBUILD_INTERVAL: u32 = 6;
-
     pub fn new() -> Self {
         let size = crate::constants::GRID_SIZE as usize;
         Self {
             laser_cells: vec![vec![Vec::new(); size]; size],
             droid_cells: vec![vec![Vec::new(); size]; size],
-            frame_counter: 0,
         }
     }
-
-    /// Returns true if it's time to rebuild the droid grid this frame
-    pub fn should_rebuild(&mut self) -> bool {
-        self.frame_counter += 1;
-        if self.frame_counter >= Self::REBUILD_INTERVAL {
-            self.frame_counter = 0;
-            true
-        } else {
-            false
-        }
-    }
-
-    pub fn clear_lasers(&mut self) {
+    
+    pub fn clear(&mut self) {
         for row in &mut self.laser_cells {
             for cell in row {
                 cell.clear();
             }
         }
-    }
-
-    pub fn clear_droids(&mut self) {
         for row in &mut self.droid_cells {
             for cell in row {
                 cell.clear();
             }
         }
-    }
-
-    pub fn clear(&mut self) {
-        self.clear_lasers();
-        self.clear_droids();
     }
     
     pub fn world_to_grid(pos: Vec3) -> (i32, i32) {

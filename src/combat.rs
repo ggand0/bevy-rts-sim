@@ -756,13 +756,12 @@ pub fn collision_detection_system(
     droid_query: Query<(Entity, &Transform, &BattleDroid, &SquadMember), Without<LaserProjectile>>,
     building_query: Query<(Entity, &GlobalTransform, &crate::types::BuildingCollider)>,
 ) {
-    // Only rebuild droid grid every N frames (units move slowly relative to grid cell size)
-    // This reduces 10,000 insertions/frame to ~1,667/frame on average
-    if spatial_grid.should_rebuild() {
-        spatial_grid.clear_droids();
-        for (droid_entity, droid_transform, _, _) in droid_query.iter() {
-            spatial_grid.add_droid(droid_entity, droid_transform.translation);
-        }
+    // Clear and rebuild the spatial grid each frame
+    spatial_grid.clear();
+
+    // Populate grid with droids
+    for (droid_entity, droid_transform, _, _) in droid_query.iter() {
+        spatial_grid.add_droid(droid_entity, droid_transform.translation);
     }
 
     let mut entities_to_despawn = std::collections::HashSet::new();
