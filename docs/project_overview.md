@@ -1,6 +1,6 @@
 # Bevy Mass Render - RTS Game Project Overview
 
-**Last Updated:** December 1, 2025
+**Last Updated:** December 4, 2025
 **Bevy Version:** 0.16.0
 **Rust Version:** 1.90.0
 **Platform:** Linux (tested on Ubuntu with AMD Radeon RX 7900 XTX)
@@ -298,6 +298,8 @@ Procedurally generated futuristic data towers:
   - **4:** Glow sparkles only
   - **5:** Combined explosion (all emitters)
   - **6:** Dot sparkles (falling + floating)
+  - **M:** Toggle MG turret spawn
+  - **H:** Toggle Heavy turret spawn
   - **S:** Instantly destroy enemy (Team B) shield
 
 ---
@@ -311,6 +313,8 @@ Procedurally generated futuristic data towers:
 4. **Instancing:** Single mesh shared across all units of same type
 5. **Conditional Systems:** Systems only run when needed (e.g., formation changes)
 6. **Release Profile:** LTO enabled, optimized compilation settings
+7. **Cached Laser Assets:** Laser materials/meshes pre-created at startup to avoid per-shot allocation
+8. **Proximity-based Audio:** `proximity_volume()` helper for distance-based volume attenuation
 
 ### Rendering
 - **Backend:** Vulkan (with AMD GPU workarounds required)
@@ -328,7 +332,7 @@ Procedurally generated futuristic data towers:
 
 **Required Launch Command:**
 ```bash
-VK_LOADER_DEBUG=error VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/radeon_icd.x86_64.json cargo run --release
+VK_LOADER_DEBUG=error VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/radeon_icd.x86_64.json cargo run --profile opt-dev
 ```
 
 This works around segfault issues with AMD drivers on Linux.
@@ -409,6 +413,13 @@ This works around segfault issues with AMD drivers on Linux.
   - Resolved bevy_hanabi shader crash with Bevy 0.17
   - Decal rendering system using ClusteredDecal
   - Bullet hole texture projections on terrain
+- **December 4, 2025:**
+  - Fixed post-0.16 bugs (terrain positioning, animation, audio)
+  - Optimized tower explosion visuals with shared assets
+  - Cached laser materials/meshes to reduce per-shot allocations
+  - Added proximity-based volume attenuation for spatial audio
+  - Added debug menu toggle for turrets (M/H keys)
+  - Extracted `proximity_volume()` helper for audio distance falloff
 
 ---
 

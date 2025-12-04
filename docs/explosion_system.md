@@ -1,8 +1,8 @@
 # Explosion System - Technical Documentation
 
-**Last Updated:** November 29, 2025
+**Last Updated:** December 4, 2025
 **System Version:** Dual System (v5 - Flipbook + War FX)
-**Bevy Version:** 0.14.2
+**Bevy Version:** 0.16
 
 ---
 
@@ -643,6 +643,38 @@ Two key optimizations fixed the performance:
 2. **Material/mesh creation is expensive:** Creating new `Handle<Mesh>` and `Handle<Material>` per entity prevents GPU batching. Pre-create shared assets and clone handles.
 
 3. **Not every unit needs a visual:** With mass explosions, 20% spawn rate looks nearly identical to 100% but with 5x better performance.
+
+---
+
+## Laser System Performance Optimization (December 2025)
+
+### Problem
+
+MG turret rapid-fire (12.5 shots/sec) caused lag spikes due to per-shot material and mesh allocation.
+
+### Solution: Cached Laser Assets
+
+Created `LaserAssets` resource initialized at startup:
+
+```rust
+#[derive(Resource)]
+pub struct LaserAssets {
+    pub team_a_material: Handle<StandardMaterial>,
+    pub team_b_material: Handle<StandardMaterial>,
+    pub laser_mesh: Handle<Mesh>,
+    pub mg_laser_mesh: Handle<Mesh>,
+}
+```
+
+All laser spawns now clone these cached handles instead of creating new assets.
+
+### Attempted Optimization: Spatial Grid Throttle
+
+Attempted to throttle spatial grid rebuilds from every frame to every 6 frames, since units move slowly (3 units/sec) relative to 10-unit grid cells.
+
+**Result:** Reverted - caused rear squads to stop firing because collision detection used stale grid data for fast-moving lasers.
+
+**Future Fix:** Implement hit-scan collision instead of projectile-based. Hit-scan eliminates need for spatial grid entirely.
 
 ---
 
