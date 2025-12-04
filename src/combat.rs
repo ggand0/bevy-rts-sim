@@ -458,24 +458,7 @@ pub fn auto_fire_system(
                         // Calculate proximity-based volume
                         let unit_pos = droid_transform.translation();
                         let distance = unit_pos.distance(camera_position);
-
-                        // Distance-based volume attenuation (same as MG turret)
-                        // Max volume at close range (< 50 units)
-                        // Min volume at far range (> 200 units)
-                        const MIN_DISTANCE: f32 = 50.0;
-                        const MAX_DISTANCE: f32 = 200.0;
-                        const MAX_VOLUME: f32 = 0.3;  // Same as VOLUME_LASER constant
-                        const MIN_VOLUME: f32 = 0.05;
-
-                        let volume = if distance <= MIN_DISTANCE {
-                            MAX_VOLUME
-                        } else if distance >= MAX_DISTANCE {
-                            MIN_VOLUME
-                        } else {
-                            // Linear interpolation between min and max
-                            let t = (distance - MIN_DISTANCE) / (MAX_DISTANCE - MIN_DISTANCE);
-                            MAX_VOLUME - t * (MAX_VOLUME - MIN_VOLUME)
-                        };
+                        let volume = proximity_volume(distance, 0.3);
 
                         commands.spawn((
                             AudioPlayer::new(sound),
@@ -686,24 +669,7 @@ pub fn auto_fire_system(
                             // MG uses single bullet sound with distance-based volume
                             let turret_pos = global_transform.translation();
                             let distance = turret_pos.distance(camera_position);
-
-                            // Distance-based volume attenuation
-                            // Max volume (0.25) at close range (< 50 units)
-                            // Min volume (0.05) at far range (> 200 units)
-                            const MIN_DISTANCE: f32 = 50.0;
-                            const MAX_DISTANCE: f32 = 200.0;
-                            const MAX_VOLUME: f32 = 0.25;
-                            const MIN_VOLUME: f32 = 0.05;
-
-                            let volume = if distance <= MIN_DISTANCE {
-                                MAX_VOLUME
-                            } else if distance >= MAX_DISTANCE {
-                                MIN_VOLUME
-                            } else {
-                                // Linear interpolation between min and max
-                                let t = (distance - MIN_DISTANCE) / (MAX_DISTANCE - MIN_DISTANCE);
-                                MAX_VOLUME - t * (MAX_VOLUME - MIN_VOLUME)
-                            };
+                            let volume = proximity_volume(distance, 0.25);
 
                             commands.spawn((
                                 AudioPlayer::new(audio_assets.mg_sound.clone()),
@@ -717,24 +683,9 @@ pub fn auto_fire_system(
                             let mut rng = rand::thread_rng();
                             let sound = audio_assets.get_random_laser_sound(&mut rng);
 
-                            // Calculate proximity-based volume
                             let turret_pos = global_transform.translation();
                             let distance = turret_pos.distance(camera_position);
-
-                            // Distance-based volume attenuation
-                            const MIN_DISTANCE: f32 = 50.0;
-                            const MAX_DISTANCE: f32 = 200.0;
-                            const MAX_VOLUME: f32 = 0.3;
-                            const MIN_VOLUME: f32 = 0.05;
-
-                            let volume = if distance <= MIN_DISTANCE {
-                                MAX_VOLUME
-                            } else if distance >= MAX_DISTANCE {
-                                MIN_VOLUME
-                            } else {
-                                let t = (distance - MIN_DISTANCE) / (MAX_DISTANCE - MIN_DISTANCE);
-                                MAX_VOLUME - t * (MAX_VOLUME - MIN_VOLUME)
-                            };
+                            let volume = proximity_volume(distance, 0.3);
 
                             commands.spawn((
                                 AudioPlayer::new(sound),

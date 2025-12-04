@@ -401,22 +401,8 @@ pub fn shield_collision_system(
                     // );
 
                     // Play shield impact sound with proximity-based volume
-                    let impact_pos = shield.center;
-                    let distance = impact_pos.distance(camera_position);
-
-                    // Distance-based volume attenuation (same as laser sounds)
-                    const MIN_DISTANCE: f32 = 50.0;
-                    const MAX_DISTANCE: f32 = 200.0;
-                    const MIN_VOLUME: f32 = 0.05;
-
-                    let volume = if distance <= MIN_DISTANCE {
-                        config.shield_impact_volume
-                    } else if distance >= MAX_DISTANCE {
-                        MIN_VOLUME
-                    } else {
-                        let t = (distance - MIN_DISTANCE) / (MAX_DISTANCE - MIN_DISTANCE);
-                        config.shield_impact_volume - t * (config.shield_impact_volume - MIN_VOLUME)
-                    };
+                    let distance = shield.center.distance(camera_position);
+                    let volume = crate::constants::proximity_volume(distance, config.shield_impact_volume);
 
                     commands.spawn((
                         AudioPlayer::new(audio_assets.shield_impact_sound.clone()),
