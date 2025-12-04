@@ -77,11 +77,11 @@ pub fn setup_scene(
         shield_impact_sound,
     });
 
-    // UI text for performance info
+    // UI text for game info
     commands.spawn((
-        Text::new("5,000 vs 5,000 Units | FPS: --\nWSAD: Move | Mouse: Rotate | Scroll: Zoom | F: Volley Fire\nQ/E/R/T: Formations (Rect/Line/Box/Wedge) | G: Advance | H: Retreat"),
+        Text::new("5,000 vs 5,000 Units (100 squads/team)\nLeft-click: Select | Right-click: Move | Middle-drag: Rotate | Scroll: Zoom\nShift+click: Add to selection | G: Advance All | H: Retreat All | F: Volley Fire"),
         TextFont {
-            font_size: 20.0,
+            font_size: 18.0,
             ..default()
         },
         TextColor(Color::WHITE),
@@ -91,6 +91,24 @@ pub fn setup_scene(
             left: Val::Px(10.0),
             ..default()
         },
+    ));
+
+    // Dedicated FPS display in green (top-right corner)
+    commands.spawn((
+        Text::new("FPS: --"),
+        TextFont {
+            font_size: 24.0,
+            ..default()
+        },
+        TextColor(Color::srgb(0.3, 0.95, 0.4)),  // Bright greenish color
+        Node {
+            position_type: PositionType::Absolute,
+            top: Val::Px(10.0),
+            right: Val::Px(10.0),
+            ..default()
+        },
+        BackgroundColor(Color::NONE),  // Transparent background
+        FpsText,
     ));
 }
 

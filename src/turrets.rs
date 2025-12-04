@@ -77,13 +77,19 @@ fn spawn_mg_turret_internal(
     commands.entity(base_entity).add_children(&[assembly_entity]);
 }
 
-/// Spawn a functional MG turret
+/// Spawn a functional MG turret (only if enabled in debug mode)
 pub fn spawn_mg_turret(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     heightmap: Res<TerrainHeightmap>,
+    debug_mode: Res<crate::objective::ExplosionDebugMode>,
 ) {
+    if !debug_mode.mg_turret_enabled {
+        info!("MG turret disabled at startup (press 0 then M to enable)");
+        return;
+    }
+
     let x = 10.0;
     let z = 10.0;
     let terrain_height = heightmap.sample_height(x, z);
@@ -158,12 +164,19 @@ fn spawn_heavy_turret_internal(
     commands.entity(base_entity).add_children(&[assembly_entity]);
 }
 
+/// Spawn a functional heavy turret (only if enabled in debug mode)
 pub fn spawn_functional_turret(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     heightmap: Res<TerrainHeightmap>,
+    debug_mode: Res<crate::objective::ExplosionDebugMode>,
 ) {
+    if !debug_mode.heavy_turret_enabled {
+        info!("Heavy turret disabled at startup (press 0 then H to enable)");
+        return;
+    }
+
     let x = 30.0;
     let z = 30.0;
     let terrain_height = heightmap.sample_height(x, z);
@@ -206,4 +219,73 @@ pub fn respawn_turrets_on_map_switch(
     let heavy_height = heightmap.sample_height(heavy_x, heavy_z);
     spawn_heavy_turret_internal(&mut commands, &mut meshes, &mut materials, heavy_x, heavy_z, heavy_height);
     info!("Respawned heavy turret at ({}, {}, {})", heavy_x, heavy_height, heavy_z);
+}
+
+/// Debug system to toggle turrets on/off (M=MG, H=Heavy) when debug mode is active
+pub fn debug_turret_toggle_system(
+    keyboard_input: Res<ButtonInput<KeyCode>>,
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    heightmap: Res<TerrainHeightmap>,
+    mut debug_mode: ResMut<crate::objective::ExplosionDebugMode>,
+    mg_turret_query: Query<Entity, With<MgTurret>>,
+    // Heavy turret has TurretRotatingAssembly but NOT MgTurret
+    heavy_turret_query: Query<Entity, (With<TurretRotatingAssembly>, Without<MgTurret>)>,
+    turret_base_query: Query<(Entity, &Children), With<TurretBase>>,
+) {
+    // Only process when debug mode is active
+    if !debug_mode.explosion_mode {
+        return;
+    }
+
+    // M key: Toggle MG turret
+    if keyboard_input.just_pressed(KeyCode::KeyM) {
+        debug_mode.mg_turret_enabled = !debug_mode.mg_turret_enabled;
+
+        if debug_mode.mg_turret_enabled {
+            // Spawn MG turret
+            let x = 10.0;
+            let z = 10.0;
+            let terrain_height = heightmap.sample_height(x, z);
+            spawn_mg_turret_internal(&mut commands, &mut meshes, &mut materials, x, z, terrain_height);
+            info!("🔫 MG turret ENABLED");
+        } else {
+            // Despawn MG turret - find the base that has MG turret as child
+            for (base_entity, children) in turret_base_query.iter() {
+                for child in children.iter() {
+                    if mg_turret_query.get(child).is_ok() {
+                        commands.entity(base_entity).despawn();
+                        info!("🔫 MG turret DISABLED");
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    // H key: Toggle Heavy turret
+    if keyboard_input.just_pressed(KeyCode::KeyH) {
+        debug_mode.heavy_turret_enabled = !debug_mode.heavy_turret_enabled;
+
+        if debug_mode.heavy_turret_enabled {
+            // Spawn Heavy turret
+            let x = 30.0;
+            let z = 30.0;
+            let terrain_height = heightmap.sample_height(x, z);
+            spawn_heavy_turret_internal(&mut commands, &mut meshes, &mut materials, x, z, terrain_height);
+            info!("🔫 Heavy turret ENABLED");
+        } else {
+            // Despawn Heavy turret - find the base that has heavy turret (no MgTurret) as child
+            for (base_entity, children) in turret_base_query.iter() {
+                for child in children.iter() {
+                    if heavy_turret_query.get(child).is_ok() {
+                        commands.entity(base_entity).despawn();
+                        info!("🔫 Heavy turret DISABLED");
+                        break;
+                    }
+                }
+            }
+        }
+    }
 }

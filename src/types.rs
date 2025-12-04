@@ -117,6 +117,9 @@ pub struct RtsCamera {
 }
 
 #[derive(Component)]
+pub struct FpsText;
+
+#[derive(Component)]
 pub struct LaserProjectile {
     pub velocity: Vec3,
     pub lifetime: f32,
@@ -144,6 +147,16 @@ impl AudioAssets {
         let index = rng.gen_range(0..self.laser_sounds.len());
         self.laser_sounds[index].clone()
     }
+}
+
+// Cached laser materials and meshes for performance
+// (avoids per-shot allocation which causes lag spikes with rapid-fire weapons)
+#[derive(Resource)]
+pub struct LaserAssets {
+    pub team_a_material: Handle<StandardMaterial>,
+    pub team_b_material: Handle<StandardMaterial>,
+    pub laser_mesh: Handle<Mesh>,
+    pub mg_laser_mesh: Handle<Mesh>,  // Shorter bolts for MG turret
 }
 
 // Spatial grid for collision optimization
@@ -333,6 +346,7 @@ pub struct BuildingCollider {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum FiringMode {
     Burst,      // Fires fixed number of shots then cooldown
     Continuous, // Continuously fires and switches targets ("mowing down")

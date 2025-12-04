@@ -34,7 +34,7 @@ impl Default for ShieldConfig {
             impact_flash_duration: 0.2,
             laser_damage: 25.0,
             particle_scale: 2.0,
-            shield_impact_volume: 0.4,
+            shield_impact_volume: 0.4,  // Reverted - was fine, issue was multiple sounds playing at once
             surface_offset: 0.5,
             fresnel_power: 3.0,
             hex_scale: 8.0,
@@ -355,11 +355,18 @@ pub fn shield_collision_system(
     config: Res<ShieldConfig>,
     mut shield_query: Query<(Entity, &mut Shield)>,
     laser_query: Query<(Entity, &crate::types::LaserProjectile, &Transform)>,
+    camera_query: Query<&Transform, With<Camera3d>>,
     // particle_effects: Res<crate::particles::ExplosionParticleEffects>,  // Temporarily disabled
     audio_assets: Res<crate::types::AudioAssets>,
 ) {
     let current_time = time.elapsed_secs();
-    let current_time_f64 = time.elapsed_secs_f64();
+
+    // Get camera position for proximity-based audio
+    #[allow(deprecated)]
+    let camera_position = camera_query
+        .get_single()
+        .map(|t| t.translation)
+        .unwrap_or(Vec3::ZERO);
 
     for (shield_entity, mut shield) in shield_query.iter_mut() {
         for (laser_entity, laser, laser_transform) in laser_query.iter() {
@@ -383,7 +390,7 @@ pub fn shield_collision_system(
 
                     // Calculate impact point on shield surface
                     let dir_to_laser = (laser_pos - shield.center).normalize();
-                    let surface_pos = shield.center + dir_to_laser * (shield.radius + config.surface_offset);
+                    let _surface_pos = shield.center + dir_to_laser * (shield.radius + config.surface_offset);
 
                     // Spawn particle effect at surface impact point
                     // crate::particles::spawn_shield_impact_particles(  // Temporarily disabled
@@ -393,10 +400,13 @@ pub fn shield_collision_system(
                     //     current_time_f64,
                     // );
 
-                    // Play shield impact sound
+                    // Play shield impact sound with proximity-based volume
+                    let distance = shield.center.distance(camera_position);
+                    let volume = crate::constants::proximity_volume(distance, config.shield_impact_volume);
+
                     commands.spawn((
                         AudioPlayer::new(audio_assets.shield_impact_sound.clone()),
-                        PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::Linear(config.shield_impact_volume)),
+                        PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::Linear(volume)),
                     ));
                 }
 
@@ -424,6 +434,9 @@ pub fn shield_collision_system(
                     });
 
                     commands.entity(shield_entity).despawn();
+
+                    // Break out of laser loop - shield is destroyed, no need to check more lasers
+                    break;
                 }
             }
         }

@@ -144,7 +144,7 @@ pub fn update_group_bounding_box_debug(
     mut materials: ResMut<Assets<StandardMaterial>>,
     selection_state: Res<SelectionState>,
     squad_manager: Res<SquadManager>,
-    mut existing_debug: Query<(Entity, &GroupBoundingBoxDebug, &mut Transform)>,
+    existing_debug: Query<(Entity, &GroupBoundingBoxDebug, &mut Transform)>,
     heightmap: Option<Res<TerrainHeightmap>>,
 ) {
     // Check if any group is currently selected
@@ -222,7 +222,7 @@ pub fn update_group_bounding_box_debug(
                 obb.facing.x, obb.facing.z);
         }
 
-        let line_thickness = 0.5;
+        let _line_thickness = 0.5;
 
         // Update existing edges by despawning and recreating (simpler than updating mesh geometry)
         if found {

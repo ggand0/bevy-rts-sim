@@ -60,7 +60,7 @@ pub fn orientation_arrow_system(
     selection_state: Res<SelectionState>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    mut arrow_query: Query<(Entity, &mut Transform), With<OrientationArrowVisual>>,
+    arrow_query: Query<(Entity, &mut Transform), With<OrientationArrowVisual>>,
     heightmap: Option<Res<TerrainHeightmap>>,
 ) {
     // Check if we should show the arrow
@@ -137,7 +137,7 @@ pub fn update_squad_path_arrows(
     selection_state: Res<SelectionState>,
     squad_manager: Res<SquadManager>,
     unit_query: Query<(&Transform, &SquadMember), (With<BattleDroid>, Without<SelectionVisual>)>,
-    mut existing_arrows: Query<(Entity, &SquadPathArrowVisual, &mut Transform), Without<BattleDroid>>,
+    existing_arrows: Query<(Entity, &SquadPathArrowVisual, &mut Transform), Without<BattleDroid>>,
     heightmap: Option<Res<TerrainHeightmap>>,
 ) {
     // Calculate actual squad centers from unit positions
@@ -188,11 +188,9 @@ pub fn update_squad_path_arrows(
             .unwrap_or(-1.0);
 
         // Check if arrow already exists for this squad - despawn and recreate for mesh regeneration
-        let mut found = false;
         for (entity, arrow, _transform) in existing_arrows.iter() {
             if arrow.squad_id == squad_id {
                 commands.entity(entity).despawn();
-                found = true;
                 break;
             }
         }
@@ -456,13 +454,14 @@ pub fn spawn_move_indicator_with_color(
 }
 
 /// Spawn a path line connecting squad position to destination
+#[allow(dead_code)]
 pub fn spawn_path_line(
-    commands: &mut Commands,
-    meshes: &mut ResMut<Assets<Mesh>>,
-    materials: &mut ResMut<Assets<StandardMaterial>>,
+    _commands: &mut Commands,
+    _meshes: &mut ResMut<Assets<Mesh>>,
+    _materials: &mut ResMut<Assets<StandardMaterial>>,
     start: Vec3,
     end: Vec3,
-    terrain_y: f32,
+    _terrain_y: f32,
 ) {
     let direction = horizontal_direction(start, end);
     let length = direction.length();
@@ -502,6 +501,7 @@ pub fn spawn_path_line(
 }
 
 /// Create a thin line mesh for path visualization (pointing in +Z, length 1.0)
+#[allow(dead_code)]
 fn create_path_line_mesh() -> Mesh {
     use bevy::render::mesh::PrimitiveTopology;
 

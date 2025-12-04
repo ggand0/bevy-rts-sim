@@ -112,6 +112,7 @@ impl TerrainHeightmap {
 
     /// Sample terrain normal at world position (x, z) using central differences
     /// Returns normalized normal vector pointing up from terrain surface
+    #[allow(dead_code)]
     pub fn sample_normal(&self, x: f32, z: f32) -> Vec3 {
         let offset = self.cell_size;
 
@@ -130,6 +131,7 @@ impl TerrainHeightmap {
     }
 
     /// Sample both height and normal at once (more efficient than separate calls)
+    #[allow(dead_code)]
     pub fn sample_height_and_normal(&self, x: f32, z: f32) -> (f32, Vec3) {
         let height = self.sample_height(x, z);
         let normal = self.sample_normal(x, z);
@@ -509,6 +511,10 @@ fn handle_map_switch_units(
             // Update spawn position so retreat works correctly
             droid.spawn_position.y = new_y;
             droid.target_position.y = new_y;
+
+            // Reset march animation to prevent units from appearing buried/floating
+            // The animate_march system will recalculate the bob based on the new terrain height
+            droid.march_speed = 1.0;
         }
 
         // Update squad center positions

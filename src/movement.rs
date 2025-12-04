@@ -54,16 +54,19 @@ pub fn animate_march(
             transform.translation.x += movement.x;
             transform.translation.z += movement.z;
 
-            // Sample terrain height at new position and set Y accordingly
-            if let Some(ref hm) = heightmap {
-                let terrain_y = hm.sample_height(transform.translation.x, transform.translation.z);
-                transform.translation.y = terrain_y + UNIT_TERRAIN_OFFSET;
-            }
+            // Sample terrain height at new position and set base Y
+            // Subtract bob amplitude so the bob animation can go both up and down from visual center
+            let bob_amplitude = 0.1;
+            let base_y = if let Some(ref hm) = heightmap {
+                hm.sample_height(transform.translation.x, transform.translation.z) + UNIT_TERRAIN_OFFSET - bob_amplitude
+            } else {
+                droid.spawn_position.y - bob_amplitude
+            };
 
-            // Add marching animation - subtle bobbing motion
+            // Add marching animation - bobbing motion (sin goes -1 to +1, so bob goes -amplitude to +amplitude)
             let march_cycle = (time_seconds * droid.march_speed * 4.0 + droid.march_offset).sin();
-            let bob_height = march_cycle * 0.008; // Very subtle up/down movement
-            transform.translation.y += bob_height;
+            let bob_height = march_cycle * bob_amplitude;
+            transform.translation.y = base_y + bob_amplitude + bob_height;
 
             // Slight rotation for more natural look and face movement direction
             let sway = (time_seconds * droid.march_speed * 2.0 + droid.march_offset).sin() * 0.01;
@@ -72,6 +75,12 @@ pub fn animate_march(
                 transform.rotation = forward_rotation * Quat::from_rotation_y(sway);
             }
         } else {
+            // When stationary, still update terrain height (important for map switching)
+            if let Some(ref hm) = heightmap {
+                let terrain_y = hm.sample_height(transform.translation.x, transform.translation.z);
+                transform.translation.y = terrain_y + UNIT_TERRAIN_OFFSET;
+            }
+
             // When stationary, smoothly rotate to face squad's facing direction
             if let Some(squad) = squad_manager.get_squad(squad_member.squad_id) {
                 let facing = squad.facing_direction;
@@ -85,8 +94,8 @@ pub fn animate_march(
     }
 }
 
-pub fn update_camera_info(
-    mut query: Query<&mut Text>,
+pub fn update_fps_display(
+    mut query: Query<&mut Text, With<FpsText>>,
     diagnostics: Res<bevy::diagnostic::DiagnosticsStore>,
 ) {
     if let Ok(mut text) = query.single_mut() {
@@ -95,10 +104,7 @@ pub fn update_camera_info(
             .and_then(|fps| fps.smoothed())
             .unwrap_or(0.0);
 
-        **text = format!(
-            "{} vs {} Units ({} squads/team) | FPS: {:.1}\nLeft-click: Select | Right-click: Move | Middle-drag: Rotate | Scroll: Zoom\nShift+click: Add to selection | G: Advance All | H: Retreat All | F: Volley Fire",
-            ARMY_SIZE_PER_TEAM, ARMY_SIZE_PER_TEAM, ARMY_SIZE_PER_TEAM / SQUAD_SIZE, fps
-        );
+        **text = format!("FPS: {:.0}", fps);
     }
 }
 

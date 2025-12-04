@@ -90,6 +90,8 @@ pub struct CustomShaderExplosion {
 #[derive(Resource)]
 pub struct ExplosionAssets {
     pub explosion_flipbook_texture: Handle<Image>,
+    pub shared_explosion_mesh: Handle<Mesh>,
+    pub shared_explosion_material: Handle<ExplosionMaterial>,
 }
 
 // ===== SETUP EXPLOSION ASSETS =====
@@ -97,12 +99,26 @@ pub struct ExplosionAssets {
 fn setup_explosion_assets(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut explosion_materials: ResMut<Assets<ExplosionMaterial>>,
 ) {
-    let explosion_flipbook_texture = asset_server.load("textures/Explosion02HD_5x5.tga");
+    let explosion_flipbook_texture: Handle<Image> = asset_server.load("textures/Explosion02HD_5x5.tga");
     info!("🎨 Loading explosion texture: textures/Explosion02HD_5x5.tga");
+
+    // Create shared mesh for unit explosions (radius 0.8 * 2 = 1.6 size)
+    let shared_explosion_mesh = meshes.add(Rectangle::new(1.6, 1.6));
+
+    // Create shared material for unit explosions
+    let shared_explosion_material = explosion_materials.add(ExplosionMaterial {
+        frame_data: Vec4::new(0.0, 0.0, 5.0, 1.0),
+        color_data: Vec4::new(1.0, 1.0, 1.0, 2.0),
+        sprite_texture: explosion_flipbook_texture.clone(),
+    });
 
     commands.insert_resource(ExplosionAssets {
         explosion_flipbook_texture,
+        shared_explosion_mesh,
+        shared_explosion_material,
     });
 }
 
@@ -155,55 +171,46 @@ pub fn spawn_animated_sprite_explosion(
 /// Custom shader explosion with flipbook animation (used for unit explosions)
 pub fn spawn_custom_shader_explosion(
     commands: &mut Commands,
-    meshes: &mut ResMut<Assets<Mesh>>,
-    explosion_materials: &mut ResMut<Assets<ExplosionMaterial>>,
+    _meshes: &mut ResMut<Assets<Mesh>>,
+    _explosion_materials: &mut ResMut<Assets<ExplosionMaterial>>,
     explosion_assets: &ExplosionAssets,
     particle_effects: Option<&crate::particles::ExplosionParticleEffects>,
     position: Vec3,
-    radius: f32,
+    _radius: f32,
     _intensity: f32,
     duration: f32,
     is_tower: bool,
     current_time: f64,
 ) {
-    trace!("🎭 Spawning CUSTOM SHADER explosion at {} with radius {}", position, radius);
+    trace!("🎭 Spawning CUSTOM SHADER explosion at {} with radius {}", position, _radius);
 
-    let quad_mesh = meshes.add(Rectangle::new(radius * 2.0, radius * 2.0));
+    // Sprite sheet billboard explosion for units - only spawn for 20% of units to reduce entity count
+    // Uses shared mesh and material for better batching performance
+    if !is_tower && rand::random::<f32>() < 0.2 {
+        commands.spawn((
+            Mesh3d(explosion_assets.shared_explosion_mesh.clone()),
+            MeshMaterial3d(explosion_assets.shared_explosion_material.clone()),
+            Transform::from_translation(position),
+            ExplosionTimer {
+                timer: Timer::new(Duration::from_secs_f32(duration * 0.8), TimerMode::Once),
+            },
+            CustomShaderExplosion {
+                frame_count: 25,
+                current_frame: 0,
+                frame_duration: (duration * 0.8) / 25.0,
+                frame_timer: 0.0,
+                fade_alpha: 1.0,
+            },
+            NotShadowCaster,
+            NotShadowReceiver,
+            Name::new("CustomShaderExplosion"),
+        ));
+    }
 
-    let explosion_material = explosion_materials.add(ExplosionMaterial {
-        frame_data: Vec4::new(0.0, 0.0, 5.0, 1.0),
-        color_data: Vec4::new(1.0, 1.0, 1.0, 2.0),
-        sprite_texture: explosion_assets.explosion_flipbook_texture.clone(),
-    });
-
-    commands.spawn((
-        Mesh3d(quad_mesh),
-        MeshMaterial3d(explosion_material),
-        Transform::from_translation(position),
-        ExplosionTimer {
-            timer: Timer::new(Duration::from_secs_f32(duration * 0.8), TimerMode::Once),
-        },
-        CustomShaderExplosion {
-            frame_count: 25,
-            current_frame: 0,
-            frame_duration: (duration * 0.8) / 25.0,
-            frame_timer: 0.0,
-            fade_alpha: 1.0,
-        },
-        NotShadowCaster,
-        NotShadowReceiver,
-        Name::new("CustomShaderExplosion"),
-    ));
-
-    // Spawn particle effects (towers always, units probabilistic)
+    // Spawn particle effects for towers only
     if let Some(particles) = particle_effects {
-        let should_spawn = is_tower || rand::random::<f32>() < crate::constants::PARTICLE_SPAWN_PROBABILITY;
-        if should_spawn {
-            if is_tower {
-                crate::particles::spawn_tower_explosion_particles(commands, particles, position, current_time);
-            } else {
-                crate::particles::spawn_unit_explosion_particles(commands, particles, position, current_time);
-            }
+        if is_tower {
+            crate::particles::spawn_tower_explosion_particles(commands, particles, position, current_time);
         }
     }
 }
@@ -401,13 +408,19 @@ fn animate_custom_shader_explosions(
     camera_query: Query<&Transform, (With<RtsCamera>, Without<CustomShaderExplosion>)>,
     time: Res<Time>,
 ) {
+    let start = std::time::Instant::now();
+
+    // Debug: Log material count and entity count periodically (every ~1 second based on frame timing)
+    let entity_count = query.iter().count();
+    let material_count = explosion_materials.len();
+
     // Get camera position for billboard effect
     let camera_position = if let Ok(camera_transform) = camera_query.single() {
         camera_transform.translation
     } else {
         Vec3::ZERO
     };
-    
+
     for (mut transform, material_handle, mut sprite_explosion, timer) in query.iter_mut() {
         let progress = timer.timer.elapsed_secs() / timer.timer.duration().as_secs_f32();
         let progress = progress.clamp(0.0, 1.0);
@@ -479,5 +492,12 @@ fn animate_custom_shader_explosions(
             let up = forward.cross(right).normalize();
             transform.rotation = Quat::from_mat3(&Mat3::from_cols(right, up, forward));
         }
+    }
+
+    let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
+    let frame_time_ms = time.delta_secs() * 1000.0;
+    if entity_count > 0 {
+        info!("📊 EXPLOSION STATS: {} entities, {} materials, {:.2}ms CPU, {:.2}ms frame_time ({:.0} FPS)",
+              entity_count, material_count, elapsed_ms, frame_time_ms, 1000.0 / frame_time_ms);
     }
 } 

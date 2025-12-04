@@ -18,6 +18,7 @@ impl Plugin for DecalPlugin {
 #[derive(Resource)]
 pub struct DecalTextures {
     pub bullet_hole: Handle<Image>,
+    #[allow(dead_code)]
     pub selection_ring: Handle<Image>,
 }
 
