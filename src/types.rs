@@ -346,6 +346,7 @@ pub struct BuildingCollider {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum FiringMode {
     Burst,      // Fires fixed number of shots then cooldown
     Continuous, // Continuously fires and switches targets ("mowing down")

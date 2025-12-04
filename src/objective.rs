@@ -152,7 +152,7 @@ pub fn tower_destruction_system(
             // Find and despawn all friendly units within destruction radius
             // Spawn a death flash at each unit position
             let mut unit_count = 0;
-            let mut flash_count = 0;
+            let mut _flash_count = 0;
             // Collect unit positions FIRST
             let mut units_to_destroy: Vec<(Entity, Vec3)> = Vec::new();
             for (droid_entity, droid_transform, droid) in droid_query.iter() {
@@ -186,7 +186,7 @@ pub fn tower_destruction_system(
                     });
                 }
                 unit_count += 1;
-                flash_count += 1;
+                _flash_count += 1;
             }
 
             // Add PendingExplosion to tower - the actual WFX explosion is spawned in pending_explosion_system

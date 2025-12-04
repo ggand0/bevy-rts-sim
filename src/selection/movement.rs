@@ -178,7 +178,7 @@ fn execute_group_move(
             .map_or(false, |s| !s.members.is_empty());
 
         // Get terrain height at destination
-        let terrain_y = heightmap
+        let _terrain_y = heightmap
             .map(|hm| hm.sample_height(squad_dest.x, squad_dest.z))
             .unwrap_or(-1.0);
 

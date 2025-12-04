@@ -255,7 +255,7 @@ pub fn debug_turret_toggle_system(
             for (base_entity, children) in turret_base_query.iter() {
                 for child in children.iter() {
                     if mg_turret_query.get(child).is_ok() {
-                        commands.entity(base_entity).despawn_recursive();
+                        commands.entity(base_entity).despawn();
                         info!("🔫 MG turret DISABLED");
                         break;
                     }
@@ -280,7 +280,7 @@ pub fn debug_turret_toggle_system(
             for (base_entity, children) in turret_base_query.iter() {
                 for child in children.iter() {
                     if heavy_turret_query.get(child).is_ok() {
-                        commands.entity(base_entity).despawn_recursive();
+                        commands.entity(base_entity).despawn();
                         info!("🔫 Heavy turret DISABLED");
                         break;
                     }

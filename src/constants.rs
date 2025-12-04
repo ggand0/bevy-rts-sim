@@ -45,12 +45,16 @@ pub const TOWER_HEIGHT: f32 = 35.0;
 pub const TOWER_BASE_WIDTH: f32 = 9.0;
 pub const TOWER_MAX_HEALTH: f32 = 2000.0;
 pub const TOWER_DESTRUCTION_RADIUS: f32 = 80.0; // Units within this range explode when tower dies
+#[allow(dead_code)]
 pub const EXPLOSION_DELAY_MIN: f32 = 0.1; // Minimum delay before unit explodes
+#[allow(dead_code)]
 pub const EXPLOSION_DELAY_MAX: f32 = 2.0; // Maximum delay for dramatic cascade effect
+#[allow(dead_code)]
 pub const EXPLOSION_TIME_QUANTUM: f32 = 0.05; // Quantize delays to 50ms slots for burst clustering
 pub const EXPLOSION_EFFECT_DURATION: f32 = 2.0; // Visual explosion duration
 #[allow(dead_code)]
 pub const MAX_EXPLOSIONS_PER_FRAME: usize = 50; // Limit explosions per frame to prevent stutter
+#[allow(dead_code)]
 pub const PARTICLE_SPAWN_PROBABILITY: f32 = 0.3; // Probability (0.0-1.0) that an explosion spawns particles
 
 // Selection system settings
@@ -81,6 +85,7 @@ pub const PERLIN_LACUNARITY: f64 = 2.0;             // Frequency multiplier per 
 
 // Audio volume settings
 pub const VOLUME_EXPLOSION: f32 = 0.5;              // Tower/unit explosion volume
+#[allow(dead_code)]
 pub const VOLUME_LASER: f32 = 0.3;                  // Laser fire volume (droids and turrets)
 #[allow(dead_code)]
 pub const VOLUME_SHIELD_IMPACT: f32 = 0.4;          // Shield impact volume (moved to ShieldConfig, kept for reference)

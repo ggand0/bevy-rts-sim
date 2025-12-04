@@ -355,11 +355,18 @@ pub fn shield_collision_system(
     config: Res<ShieldConfig>,
     mut shield_query: Query<(Entity, &mut Shield)>,
     laser_query: Query<(Entity, &crate::types::LaserProjectile, &Transform)>,
+    camera_query: Query<&Transform, With<Camera3d>>,
     // particle_effects: Res<crate::particles::ExplosionParticleEffects>,  // Temporarily disabled
     audio_assets: Res<crate::types::AudioAssets>,
 ) {
     let current_time = time.elapsed_secs();
-    let current_time_f64 = time.elapsed_secs_f64();
+
+    // Get camera position for proximity-based audio
+    #[allow(deprecated)]
+    let camera_position = camera_query
+        .get_single()
+        .map(|t| t.translation)
+        .unwrap_or(Vec3::ZERO);
 
     for (shield_entity, mut shield) in shield_query.iter_mut() {
         for (laser_entity, laser, laser_transform) in laser_query.iter() {
@@ -383,7 +390,7 @@ pub fn shield_collision_system(
 
                     // Calculate impact point on shield surface
                     let dir_to_laser = (laser_pos - shield.center).normalize();
-                    let surface_pos = shield.center + dir_to_laser * (shield.radius + config.surface_offset);
+                    let _surface_pos = shield.center + dir_to_laser * (shield.radius + config.surface_offset);
 
                     // Spawn particle effect at surface impact point
                     // crate::particles::spawn_shield_impact_particles(  // Temporarily disabled
@@ -393,10 +400,27 @@ pub fn shield_collision_system(
                     //     current_time_f64,
                     // );
 
-                    // Play shield impact sound
+                    // Play shield impact sound with proximity-based volume
+                    let impact_pos = shield.center;
+                    let distance = impact_pos.distance(camera_position);
+
+                    // Distance-based volume attenuation (same as laser sounds)
+                    const MIN_DISTANCE: f32 = 50.0;
+                    const MAX_DISTANCE: f32 = 200.0;
+                    const MIN_VOLUME: f32 = 0.05;
+
+                    let volume = if distance <= MIN_DISTANCE {
+                        config.shield_impact_volume
+                    } else if distance >= MAX_DISTANCE {
+                        MIN_VOLUME
+                    } else {
+                        let t = (distance - MIN_DISTANCE) / (MAX_DISTANCE - MIN_DISTANCE);
+                        config.shield_impact_volume - t * (config.shield_impact_volume - MIN_VOLUME)
+                    };
+
                     commands.spawn((
                         AudioPlayer::new(audio_assets.shield_impact_sound.clone()),
-                        PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::Linear(config.shield_impact_volume)),
+                        PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::Linear(volume)),
                     ));
                 }
 

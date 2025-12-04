@@ -27,8 +27,10 @@ pub struct ExplosionParticleEffects {
     pub debris_effect: Handle<EffectAsset>,
     pub sparks_effect: Handle<EffectAsset>,
     pub smoke_effect: Handle<EffectAsset>,
+    #[allow(dead_code)]
     pub shield_impact_effect: Handle<EffectAsset>,
     pub mass_explosion_effect: Handle<EffectAsset>,
+    #[allow(dead_code)]
     pub unit_death_flash: Handle<EffectAsset>,
 }
 
@@ -422,6 +424,7 @@ pub fn spawn_explosion_particles(
 
 /// Spawns particles for smaller unit explosions
 /// Uses fewer particles and smaller scale for better performance
+#[allow(dead_code)]
 pub fn spawn_unit_explosion_particles(
     commands: &mut Commands,
     particle_effects: &ExplosionParticleEffects,
@@ -478,6 +481,7 @@ pub fn spawn_mass_explosion(
 
 /// Spawns a death flash effect at unit position
 /// Small, quick burst effect for individual unit deaths
+#[allow(dead_code)]
 pub fn spawn_unit_death_flash(
     commands: &mut Commands,
     particle_effects: &ExplosionParticleEffects,
@@ -500,6 +504,7 @@ pub fn spawn_unit_death_flash(
 
 /// Spawns particles for shield impacts
 /// Small burst effect when lasers hit the shield
+#[allow(dead_code)]
 pub fn spawn_shield_impact_particles(
     commands: &mut Commands,
     particle_effects: &ExplosionParticleEffects,
