@@ -221,6 +221,32 @@ pub fn respawn_turrets_on_map_switch(
     info!("Respawned heavy turret at ({}, {}, {})", heavy_x, heavy_height, heavy_z);
 }
 
+// ============================================================================
+// PUBLIC API FOR SCENARIO SYSTEM
+// ============================================================================
+
+/// Spawn an MG turret at the specified world position
+/// Used by scenario systems to place turrets programmatically
+pub fn spawn_mg_turret_at(
+    commands: &mut Commands,
+    meshes: &mut ResMut<Assets<Mesh>>,
+    materials: &mut ResMut<Assets<StandardMaterial>>,
+    position: Vec3,
+) {
+    spawn_mg_turret_internal(commands, meshes, materials, position.x, position.z, position.y);
+}
+
+/// Spawn a heavy turret at the specified world position
+/// Used by scenario systems to place turrets programmatically
+pub fn spawn_heavy_turret_at(
+    commands: &mut Commands,
+    meshes: &mut ResMut<Assets<Mesh>>,
+    materials: &mut ResMut<Assets<StandardMaterial>>,
+    position: Vec3,
+) {
+    spawn_heavy_turret_internal(commands, meshes, materials, position.x, position.z, position.y);
+}
+
 /// Debug system to toggle turrets on/off (M=MG, H=Heavy) when debug mode is active
 pub fn debug_turret_toggle_system(
     keyboard_input: Res<ButtonInput<KeyCode>>,
