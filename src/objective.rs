@@ -621,7 +621,7 @@ pub fn spawn_tower_health_bars(
 }
 
 /// Distance to offset health bars towards camera (to prevent occlusion by tower)
-const HEALTH_BAR_CAMERA_OFFSET: f32 = 15.0;
+const HEALTH_BAR_CAMERA_OFFSET: f32 = 5.0;
 
 /// System to update tower and shield health bars
 pub fn update_tower_health_bars(
@@ -644,6 +644,10 @@ pub fn update_tower_health_bars(
         .map(|(e, t, h, u)| (e, (t, h, u)))
         .collect();
 
+    // Billboard rotation: use camera's rotation so bars are always parallel to camera view plane
+    // This works for any camera angle including top-down
+    let billboard_rotation = camera_transform.rotation;
+
     // Update tower health bars
     for (bar_entity, tower_bar, mut bar_transform, material_handle) in tower_bar_query.iter_mut() {
         if let Some((tower_transform, health, _)) = towers.get(&tower_bar.tower_entity) {
@@ -658,15 +662,16 @@ pub fn update_tower_health_bars(
             );
 
             // Calculate direction from bar to camera (horizontal only for offset)
-            let to_camera = (camera_pos - bar_base_pos).normalize_or_zero();
-            let horizontal_to_camera = Vec3::new(to_camera.x, 0.0, to_camera.z).normalize_or_zero();
+            let horizontal_to_camera = Vec3::new(
+                camera_pos.x - bar_base_pos.x,
+                0.0,
+                camera_pos.z - bar_base_pos.z,
+            ).normalize_or_zero();
 
             // Offset bar position towards camera to prevent occlusion
             let bar_pos = bar_base_pos + horizontal_to_camera * HEALTH_BAR_CAMERA_OFFSET;
             bar_transform.translation = bar_pos;
-
-            // Full billboard: make bar face the camera
-            bar_transform.look_at(camera_pos, Vec3::Y);
+            bar_transform.rotation = billboard_rotation;
 
             if let Some(material) = health_bar_materials.get_mut(&material_handle.0) {
                 material.health_data.x = health_fraction;
@@ -698,15 +703,16 @@ pub fn update_tower_health_bars(
             );
 
             // Calculate direction from bar to camera (horizontal only for offset)
-            let to_camera = (camera_pos - bar_base_pos).normalize_or_zero();
-            let horizontal_to_camera = Vec3::new(to_camera.x, 0.0, to_camera.z).normalize_or_zero();
+            let horizontal_to_camera = Vec3::new(
+                camera_pos.x - bar_base_pos.x,
+                0.0,
+                camera_pos.z - bar_base_pos.z,
+            ).normalize_or_zero();
 
             // Offset bar position towards camera to prevent occlusion
             let bar_pos = bar_base_pos + horizontal_to_camera * HEALTH_BAR_CAMERA_OFFSET;
             bar_transform.translation = bar_pos;
-
-            // Full billboard: make bar face the camera
-            bar_transform.look_at(camera_pos, Vec3::Y);
+            bar_transform.rotation = billboard_rotation;
 
             if let Some(material) = shield_bar_materials.get_mut(&material_handle.0) {
                 material.health_data.x = shield_fraction;

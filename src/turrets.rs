@@ -454,17 +454,8 @@ pub fn update_turret_health_bars(
         .map(|(e, t, h)| (e, (t, h)))
         .collect();
 
-    // Calculate billboard rotation to face camera (same for all bars)
-    // Use horizontal direction only (ignore camera pitch) to keep bars upright
-    let camera_horizontal_forward = Vec3::new(
-        camera_transform.forward().x,
-        0.0,
-        camera_transform.forward().z,
-    ).normalize_or_zero();
-
-    // The bar faces toward camera, so we want the bar's -Z to point toward camera
-    let angle = (-camera_horizontal_forward.x).atan2(-camera_horizontal_forward.z);
-    let billboard_rotation = Quat::from_rotation_y(angle);
+    // Billboard rotation: use camera's rotation so bars are always parallel to camera view plane
+    let billboard_rotation = camera_transform.rotation;
 
     // Update all health bars
     for (bar_entity, health_bar, mut bar_transform, material_handle) in bar_query.iter_mut() {
