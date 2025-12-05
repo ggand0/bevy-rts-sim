@@ -385,14 +385,15 @@ pub fn spawn_explosion_particles(
     trace!("💥 PARTICLES: Spawning explosion particles at {:?} with scale {}", position, scale);
 
     // Spawn debris particles
-    // Note: Using Spawner::once() with auto-despawn after particles finish
     commands.spawn((
         ParticleEffect::new(particle_effects.debris_effect.clone()),
+        EffectSpawner::new(&SpawnerSettings::once(5.0.into())),
         Transform::from_translation(position)
             .with_scale(Vec3::splat(scale)),
+        Visibility::Visible,
         ParticleEffectLifetime {
             spawn_time: current_time,
-            duration: 5.0, // Cleanup 5s after spawn (particles lifetime is 2.5s)
+            duration: 5.0,
         },
         Name::new("ExplosionDebris"),
     ));
@@ -400,11 +401,13 @@ pub fn spawn_explosion_particles(
     // Spawn sparks particles
     commands.spawn((
         ParticleEffect::new(particle_effects.sparks_effect.clone()),
+        EffectSpawner::new(&SpawnerSettings::once(5.0.into())),
         Transform::from_translation(position)
             .with_scale(Vec3::splat(scale)),
+        Visibility::Visible,
         ParticleEffectLifetime {
             spawn_time: current_time,
-            duration: 3.0, // Cleanup 3s after spawn (particles lifetime is 1.5s)
+            duration: 3.0,
         },
         Name::new("ExplosionSparks"),
     ));
@@ -412,11 +415,13 @@ pub fn spawn_explosion_particles(
     // Spawn smoke particles
     commands.spawn((
         ParticleEffect::new(particle_effects.smoke_effect.clone()),
+        EffectSpawner::new(&SpawnerSettings::once(50.0.into())),
         Transform::from_translation(position + Vec3::new(0.0, 2.0 * scale, 0.0))
             .with_scale(Vec3::splat(scale)),
+        Visibility::Visible,
         ParticleEffectLifetime {
             spawn_time: current_time,
-            duration: 6.0, // Cleanup 6s after spawn (particles lifetime is 3.5s)
+            duration: 6.0,
         },
         Name::new("ExplosionSmoke"),
     ));
@@ -538,11 +543,13 @@ pub fn debug_hanabi_entities(
     )>,
 ) {
     for (entity, name, transform, _effect, vis, inherited_vis, view_vis, compiled) in query.iter() {
-        if name.as_str().contains("DeathFlash") || name.as_str().contains("MassExplosion") {
+        let name_str = name.as_str();
+        if name_str.contains("DeathFlash") || name_str.contains("MassExplosion")
+            || name_str.contains("ExplosionDebris") || name_str.contains("ExplosionSparks") || name_str.contains("ExplosionSmoke") {
             info!(
-                "🔍 ENTITY {:?} '{}': pos={:?} Visibility={:?} InheritedVis={:?} ViewVis={:?} Compiled={}",
+                "🔍 HANABI {:?} '{}': pos={:?} Vis={:?} InheritedVis={:?} ViewVis={:?} Compiled={}",
                 entity,
-                name.as_str(),
+                name_str,
                 transform.translation,
                 vis.map(|v| format!("{:?}", v)),
                 inherited_vis.map(|_| "Some"),

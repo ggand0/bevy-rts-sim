@@ -669,7 +669,7 @@ pub fn auto_fire_system(
                             // MG uses single bullet sound with distance-based volume
                             let turret_pos = global_transform.translation();
                             let distance = turret_pos.distance(camera_position);
-                            let volume = proximity_volume(distance, 0.25);
+                            let volume = proximity_volume(distance, 0.08);
 
                             commands.spawn((
                                 AudioPlayer::new(audio_assets.mg_sound.clone()),

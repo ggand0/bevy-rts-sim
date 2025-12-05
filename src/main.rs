@@ -69,6 +69,8 @@ fn main() {
             // Turret health bars
             spawn_turret_health_bars,
             update_turret_health_bars,
+            // Turret death with explosion
+            turrets::turret_death_system,
         ))
         .add_systems(Update, (
             // Formation and squad management systems run first

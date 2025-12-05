@@ -489,3 +489,39 @@ pub fn update_turret_health_bars(
         }
     }
 }
+
+/// System to check turret health and trigger explosion + despawn when dead
+pub fn turret_death_system(
+    mut commands: Commands,
+    turret_query: Query<(Entity, &Transform, &Health), With<TurretBase>>,
+    particle_effects: Option<Res<crate::particles::ExplosionParticleEffects>>,
+    audio_assets: Res<crate::types::AudioAssets>,
+    time: Res<Time>,
+) {
+    for (entity, transform, health) in turret_query.iter() {
+        if health.current <= 0.0 {
+            let position = transform.translation;
+            info!("Turret destroyed at {:?}", position);
+
+            // Play explosion sound
+            commands.spawn((
+                AudioPlayer::new(audio_assets.explosion_sound.clone()),
+                PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::Linear(crate::constants::VOLUME_EXPLOSION)),
+            ));
+
+            // Spawn hanabi particle explosion for turrets
+            if let Some(ref particles) = particle_effects {
+                crate::particles::spawn_explosion_particles(
+                    &mut commands,
+                    particles,
+                    position + Vec3::Y * 2.0,
+                    1.5,
+                    time.elapsed_secs_f64(),
+                );
+            }
+
+            // Despawn the turret
+            commands.entity(entity).despawn();
+        }
+    }
+}
