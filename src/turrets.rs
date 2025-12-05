@@ -1,8 +1,65 @@
 // Turret spawn systems module
 use bevy::prelude::*;
+use bevy::pbr::{MaterialPipeline, MaterialPipelineKey};
+use bevy::render::mesh::MeshVertexBufferLayoutRef;
+use bevy::render::render_resource::{
+    AsBindGroup, RenderPipelineDescriptor, SpecializedMeshPipelineError, ShaderRef,
+};
+use bevy::render::alpha::AlphaMode;
 use crate::types::*;
 use crate::terrain::{TerrainHeightmap, MapSwitchEvent};
 use crate::procedural_meshes::*;
+
+/// MG turret health points
+pub const MG_TURRET_HEALTH: f32 = 10_000.0;
+/// Heavy turret health points
+pub const HEAVY_TURRET_HEALTH: f32 = 20_000.0;
+/// Health bar width in world units
+const HEALTH_BAR_WIDTH: f32 = 6.0;
+/// Health bar height in world units
+const HEALTH_BAR_HEIGHT: f32 = 0.5;
+/// Health bar offset above turret
+const HEALTH_BAR_Y_OFFSET: f32 = 8.0;
+
+/// Component linking health bar to its parent turret
+#[derive(Component)]
+pub struct TurretHealthBar {
+    /// The turret base entity this bar belongs to
+    pub turret_entity: Entity,
+}
+
+// ============================================================================
+// HEALTH BAR SHADER MATERIAL
+// ============================================================================
+
+/// Shader-based health bar material - renders green/gray split based on health
+#[derive(Asset, TypePath, AsBindGroup, Debug, Clone)]
+pub struct HealthBarMaterial {
+    /// x: health_fraction (0.0-1.0), yzw: unused
+    #[uniform(0)]
+    pub health_data: Vec4,
+}
+
+impl Material for HealthBarMaterial {
+    fn fragment_shader() -> ShaderRef {
+        "shaders/health_bar.wgsl".into()
+    }
+
+    fn alpha_mode(&self) -> AlphaMode {
+        AlphaMode::Opaque
+    }
+
+    fn specialize(
+        _pipeline: &MaterialPipeline<Self>,
+        descriptor: &mut RenderPipelineDescriptor,
+        _layout: &MeshVertexBufferLayoutRef,
+        _key: MaterialPipelineKey<Self>,
+    ) -> Result<(), SpecializedMeshPipelineError> {
+        // Disable backface culling so the bar is visible from both sides
+        descriptor.primitive.cull_mode = None;
+        Ok(())
+    }
+}
 
 /// Internal helper to spawn MG turret at specified position
 fn spawn_mg_turret_internal(
@@ -41,6 +98,7 @@ fn spawn_mg_turret_internal(
         Transform::from_translation(turret_world_pos),
         TurretBase,
         BuildingCollider { radius: 3.0 }, // Smaller collision radius
+        Health::new(MG_TURRET_HEALTH),
     )).id();
 
     // Spawn rotating assembly entity (child)
@@ -135,6 +193,7 @@ fn spawn_heavy_turret_internal(
         Transform::from_translation(turret_world_pos),
         TurretBase,
         BuildingCollider { radius: 4.0 }, // Collision radius for laser blocking
+        Health::new(HEAVY_TURRET_HEALTH),
     )).id();
 
     // Spawn rotating assembly entity (child)
@@ -312,6 +371,113 @@ pub fn debug_turret_toggle_system(
                     }
                 }
             }
+        }
+    }
+}
+
+// ============================================================================
+// HEALTH BAR SYSTEMS
+// ============================================================================
+
+/// Spawn a shader-based health bar for a turret (single quad, no z-fighting)
+fn spawn_health_bar_for_turret(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    health_bar_materials: &mut Assets<HealthBarMaterial>,
+    turret_entity: Entity,
+    turret_pos: Vec3,
+) {
+    // Create single quad mesh for the health bar
+    let bar_mesh = meshes.add(Mesh::from(Rectangle::new(HEALTH_BAR_WIDTH, HEALTH_BAR_HEIGHT)));
+
+    // Shader-based material - health_fraction controls green/gray split
+    let bar_material = health_bar_materials.add(HealthBarMaterial {
+        health_data: Vec4::new(1.0, 0.0, 0.0, 0.0), // Full health initially
+    });
+
+    let bar_y = turret_pos.y + HEALTH_BAR_Y_OFFSET;
+
+    // Spawn single health bar quad
+    commands.spawn((
+        Mesh3d(bar_mesh),
+        MeshMaterial3d(bar_material),
+        Transform::from_translation(Vec3::new(turret_pos.x, bar_y, turret_pos.z)),
+        TurretHealthBar { turret_entity },
+    ));
+}
+
+/// System to spawn health bars for turrets that don't have them yet
+pub fn spawn_turret_health_bars(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut health_bar_materials: ResMut<Assets<HealthBarMaterial>>,
+    turret_query: Query<(Entity, &Transform), (With<TurretBase>, With<Health>)>,
+    health_bar_query: Query<&TurretHealthBar>,
+) {
+    // Find turrets without health bars
+    for (turret_entity, transform) in turret_query.iter() {
+        let has_bar = health_bar_query.iter().any(|bar| bar.turret_entity == turret_entity);
+        if !has_bar {
+            spawn_health_bar_for_turret(
+                &mut commands,
+                &mut meshes,
+                &mut health_bar_materials,
+                turret_entity,
+                transform.translation,
+            );
+        }
+    }
+}
+
+/// System to update health bar position, rotation, and shader uniform based on turret health
+pub fn update_turret_health_bars(
+    mut commands: Commands,
+    turret_query: Query<(Entity, &Transform, &Health), With<TurretBase>>,
+    mut bar_query: Query<(Entity, &TurretHealthBar, &mut Transform, &MeshMaterial3d<HealthBarMaterial>), Without<TurretBase>>,
+    mut health_bar_materials: ResMut<Assets<HealthBarMaterial>>,
+    camera_query: Query<&Transform, (With<crate::types::RtsCamera>, Without<TurretBase>, Without<TurretHealthBar>)>,
+) {
+    let Ok(camera_transform) = camera_query.single() else { return };
+
+    // Create a lookup for turret health and position
+    let turrets: std::collections::HashMap<Entity, (&Transform, &Health)> = turret_query
+        .iter()
+        .map(|(e, t, h)| (e, (t, h)))
+        .collect();
+
+    // Calculate billboard rotation to face camera (same for all bars)
+    // Use horizontal direction only (ignore camera pitch) to keep bars upright
+    let camera_horizontal_forward = Vec3::new(
+        camera_transform.forward().x,
+        0.0,
+        camera_transform.forward().z,
+    ).normalize_or_zero();
+
+    // The bar faces toward camera, so we want the bar's -Z to point toward camera
+    let angle = (-camera_horizontal_forward.x).atan2(-camera_horizontal_forward.z);
+    let billboard_rotation = Quat::from_rotation_y(angle);
+
+    // Update all health bars
+    for (bar_entity, health_bar, mut bar_transform, material_handle) in bar_query.iter_mut() {
+        if let Some((turret_transform, health)) = turrets.get(&health_bar.turret_entity) {
+            let health_fraction = health.current / health.max;
+
+            // Update position to follow turret
+            let bar_pos = Vec3::new(
+                turret_transform.translation.x,
+                turret_transform.translation.y + HEALTH_BAR_Y_OFFSET,
+                turret_transform.translation.z,
+            );
+            bar_transform.translation = bar_pos;
+            bar_transform.rotation = billboard_rotation;
+
+            // Update shader uniform with current health fraction
+            if let Some(material) = health_bar_materials.get_mut(&material_handle.0) {
+                material.health_data.x = health_fraction;
+            }
+        } else {
+            // Turret no longer exists, despawn bar
+            commands.entity(bar_entity).despawn();
         }
     }
 }

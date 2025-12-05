@@ -47,6 +47,7 @@ fn main() {
         .add_plugins(MaterialPlugin::<SmokeScrollMaterial>::default())
         .add_plugins(MaterialPlugin::<AdditiveMaterial>::default())
         .add_plugins(MaterialPlugin::<SmokeOnlyMaterial>::default())
+        .add_plugins(MaterialPlugin::<turrets::HealthBarMaterial>::default())
         .insert_resource(SpatialGrid::new())
         .insert_resource(SquadManager::new())
         .insert_resource(GameState::default())
@@ -65,6 +66,9 @@ fn main() {
             respawn_turrets_on_map_switch,
             // Debug turret toggle (M=MG, H=Heavy when debug mode active)
             debug_turret_toggle_system,
+            // Turret health bars
+            spawn_turret_health_bars,
+            update_turret_health_bars,
         ))
         .add_systems(Update, (
             // Formation and squad management systems run first

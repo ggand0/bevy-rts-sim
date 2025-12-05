@@ -706,6 +706,7 @@ pub fn collision_detection_system(
     laser_query: Query<(Entity, &Transform, &LaserProjectile)>,
     droid_query: Query<(Entity, &Transform, &BattleDroid, &SquadMember), Without<LaserProjectile>>,
     building_query: Query<(Entity, &GlobalTransform, &crate::types::BuildingCollider)>,
+    mut turret_health_query: Query<&mut crate::types::Health, With<crate::types::TurretBase>>,
 ) {
     // Clear and rebuild the spatial grid each frame
     spatial_grid.clear();
@@ -727,13 +728,21 @@ pub fn collision_detection_system(
         // Check building collisions first (buildings block lasers)
         // Use distance_squared to avoid sqrt overhead
         let mut hit_building = false;
-        for (_building_entity, building_transform, building_collider) in building_query.iter() {
+        for (building_entity, building_transform, building_collider) in building_query.iter() {
             let distance_sq = laser_transform.translation.distance_squared(building_transform.translation());
             let radius_sq = building_collider.radius * building_collider.radius;
             if distance_sq <= radius_sq {
                 // Hit building! Mark laser for despawn (but not the building)
                 entities_to_despawn.insert(laser_entity);
                 hit_building = true;
+
+                // Apply damage to turrets if hit by enemy laser
+                if let Ok(mut turret_health) = turret_health_query.get_mut(building_entity) {
+                    // Only enemy lasers damage turrets (turrets are Team::A, enemies are Team::B)
+                    if laser.team == crate::types::Team::B {
+                        turret_health.damage(25.0); // Same damage as tower hits
+                    }
+                }
                 break;
             }
         }
