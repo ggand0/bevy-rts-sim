@@ -13,9 +13,10 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let gray = vec3<f32>(0.15, 0.2, 0.25); // Dark blue-gray for missing shield
 
     // Choose color based on UV position vs health fraction
-    // Shrink from right side: filled portion is on the right (high UV values)
+    // Shrink from right side: filled portion is on the left (low UV values)
+    // Note: Billboard rotation mirrors the quad, so we use < instead of >
     var color: vec3<f32>;
-    if in.uv.x > (1.0 - health_fraction) {
+    if in.uv.x < health_fraction {
         color = cyan;
     } else {
         color = gray;
