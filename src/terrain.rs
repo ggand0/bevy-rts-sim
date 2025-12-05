@@ -9,6 +9,8 @@ use noise::{NoiseFn, Perlin, Fbm, MultiFractal};
 use std::f32::consts::PI;
 use crate::constants::*;
 use crate::types::*;
+use crate::scenario::CommandBunker;
+use crate::shield::Shield;
 
 /// Marker component for skybox - used to remove skybox when switching maps
 #[derive(Component)]
@@ -591,6 +593,7 @@ fn handle_pending_heightmap(
     mut materials: ResMut<Assets<StandardMaterial>>,
     asset_server: Res<AssetServer>,
     mut map_switch_events: EventWriter<MapSwitchEvent>,
+    mut heightmap: ResMut<TerrainHeightmap>,
 ) {
     // Check if we have a pending heightmap to load
     let Some(handle) = config.pending_heightmap.clone() else {
@@ -626,15 +629,13 @@ fn handle_pending_heightmap(
     let heights = load_heightmap_from_png(image, config.max_height, config.grid_size);
     let mesh = build_terrain_mesh(&heights, &config);
 
-    // Update heightmap resource
+    // Update heightmap resource directly (not via commands, so it's available this frame)
     let cell_size = config.terrain_size / (config.grid_size - 1) as f32;
-    commands.insert_resource(TerrainHeightmap {
-        heights: heights.clone(),
-        grid_size: config.grid_size,
-        terrain_size: config.terrain_size,
-        cell_size,
-        base_height: 0.0,
-    });
+    heightmap.heights = heights.clone();
+    heightmap.grid_size = config.grid_size;
+    heightmap.terrain_size = config.terrain_size;
+    heightmap.cell_size = cell_size;
+    heightmap.base_height = 0.0;
 
     // Create terrain material (military base dusty brown/tan)
     let terrain_material = materials.add(StandardMaterial {
@@ -676,10 +677,13 @@ const UNIT_TERRAIN_OFFSET: f32 = 1.28;
 
 /// System to reposition units, towers, and reset game state when map is switched
 fn handle_map_switch_units(
+    mut commands: Commands,
     mut map_switch_events: EventReader<MapSwitchEvent>,
     heightmap: Res<TerrainHeightmap>,
-    mut droid_query: Query<(&mut Transform, &mut BattleDroid, &SquadMember)>,
-    mut tower_query: Query<(&mut Transform, &mut Health), (With<UplinkTower>, Without<BattleDroid>)>,
+    mut droid_query: Query<(Entity, &mut Transform, &mut BattleDroid, &SquadMember)>,
+    tower_query: Query<(Entity, &UplinkTower), Without<CommandBunker>>,
+    shield_query: Query<Entity, With<Shield>>,
+    mut tower_mut_query: Query<(&mut Transform, &mut Health), (With<UplinkTower>, Without<BattleDroid>)>,
     mut squad_manager: ResMut<SquadManager>,
     mut game_state: ResMut<GameState>,
 ) {
@@ -693,8 +697,39 @@ fn handle_map_switch_units(
         game_state.winner = None;
         info!("Game state reset");
 
-        // Reposition all units to terrain height
-        for (mut transform, mut droid, _squad_member) in droid_query.iter_mut() {
+        // For FirebaseDelta, despawn all default units and towers instead of repositioning
+        if event.new_map == MapPreset::FirebaseDelta {
+            // Collect entities to despawn first (can't despawn while iterating with mutable query)
+            let droid_entities: Vec<Entity> = droid_query.iter().map(|(e, _, _, _)| e).collect();
+            let despawned_units = droid_entities.len();
+            for entity in droid_entities {
+                commands.entity(entity).despawn();
+            }
+
+            // Clear squad manager
+            squad_manager.squads.clear();
+            squad_manager.next_squad_id = 0;
+
+            // Despawn all non-CommandBunker towers (scenario spawns its own)
+            let mut despawned_towers = 0;
+            for (entity, _tower) in tower_query.iter() {
+                commands.entity(entity).despawn();
+                despawned_towers += 1;
+            }
+
+            // Despawn all shields (scenario can spawn its own if needed)
+            let mut despawned_shields = 0;
+            for entity in shield_query.iter() {
+                commands.entity(entity).despawn();
+                despawned_shields += 1;
+            }
+
+            info!("FirebaseDelta: Despawned {} units, {} towers, {} shields", despawned_units, despawned_towers, despawned_shields);
+            continue;
+        }
+
+        // For other maps, reposition all units to terrain height
+        for (_entity, mut transform, mut droid, _squad_member) in droid_query.iter_mut() {
             let x = transform.translation.x;
             let z = transform.translation.z;
             let terrain_y = heightmap.sample_height(x, z);
@@ -720,7 +755,7 @@ fn handle_map_switch_units(
         }
 
         // Reposition towers and reset health
-        for (mut transform, mut health) in tower_query.iter_mut() {
+        for (mut transform, mut health) in tower_mut_query.iter_mut() {
             let x = transform.translation.x;
             let z = transform.translation.z;
             let terrain_y = heightmap.sample_height(x, z);
