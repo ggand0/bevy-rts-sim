@@ -503,6 +503,7 @@ pub fn turret_death_system(
 
             // Spawn hanabi particle explosion for turrets
             if let Some(ref particles) = particle_effects {
+                info!("Spawning explosion particles for turret at {:?}", position);
                 crate::particles::spawn_explosion_particles(
                     &mut commands,
                     particles,
@@ -510,6 +511,8 @@ pub fn turret_death_system(
                     1.5,
                     time.elapsed_secs_f64(),
                 );
+            } else {
+                warn!("ExplosionParticleEffects resource not available for turret explosion!");
             }
 
             // Despawn the turret

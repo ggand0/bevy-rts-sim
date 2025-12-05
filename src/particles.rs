@@ -85,6 +85,7 @@ fn setup_particle_effects(
             .init(init_size)
             .update(update_accel)
             .update(update_drag)
+            .render(OrientModifier::new(OrientMode::FaceCameraPosition))
             .render(ColorOverLifetimeModifier::new(color_gradient1))
             .render(SizeOverLifetimeModifier { gradient: size_gradient1, screen_space_size: false })
     );
@@ -133,6 +134,7 @@ fn setup_particle_effects(
             .init(init_size2)
             .update(update_accel2)
             .update(update_drag2)
+            .render(OrientModifier::new(OrientMode::FaceCameraPosition))
             .render(ColorOverLifetimeModifier::new(color_gradient2))
             .render(SizeOverLifetimeModifier { gradient: size_gradient2, screen_space_size: false })
     );
@@ -181,6 +183,7 @@ fn setup_particle_effects(
             .init(init_size3)
             .update(update_accel3)
             .update(update_drag3)
+            .render(OrientModifier::new(OrientMode::FaceCameraPosition))
             .render(ColorOverLifetimeModifier::new(color_gradient3))
             .render(SizeOverLifetimeModifier { gradient: size_gradient3, screen_space_size: false })
     );
@@ -228,6 +231,7 @@ fn setup_particle_effects(
             .init(init_lifetime4)
             .init(init_size4)
             .update(update_drag4)
+            .render(OrientModifier::new(OrientMode::FaceCameraPosition))
             .render(ColorOverLifetimeModifier::new(color_gradient4))
             .render(SizeOverLifetimeModifier { gradient: size_gradient4, screen_space_size: false })
     );
@@ -303,6 +307,7 @@ fn setup_particle_effects(
             .init(init_size5)
             .update(update_accel5)
             .update(update_drag5)
+            .render(OrientModifier::new(OrientMode::FaceCameraPosition))
             .render(ColorOverLifetimeModifier::new(color_gradient5))
             .render(SizeOverLifetimeModifier { gradient: size_gradient5, screen_space_size: false })
     );
@@ -357,20 +362,47 @@ fn setup_particle_effects(
             .init(init_size6)
             .update(update_drag6)
             .update(update_accel6)
+            .render(OrientModifier::new(OrientMode::FaceCameraPosition))
             .render(ColorOverLifetimeModifier::new(color_gradient6))
             .render(SizeOverLifetimeModifier { gradient: size_gradient6, screen_space_size: false })
     );
 
     commands.insert_resource(ExplosionParticleEffects {
-        debris_effect,
-        sparks_effect,
-        smoke_effect,
+        debris_effect: debris_effect.clone(),
+        sparks_effect: sparks_effect.clone(),
+        smoke_effect: smoke_effect.clone(),
         shield_impact_effect,
         mass_explosion_effect,
         unit_death_flash,
     });
 
-    info!("✅ Particle effects ready!");
+    // Warmup: Spawn particles far below the map to prime the GPU pipeline
+    // MUST use Visibility::Visible for GPU to compile the effect shader
+    // Position is far below map (-1000 Y) so they're not seen
+    let warmup_pos = Vec3::new(0.0, -1000.0, 0.0);
+    commands.spawn((
+        ParticleEffect::new(debris_effect),
+        Transform::from_translation(warmup_pos).with_scale(Vec3::splat(0.001)),
+        Visibility::Visible,  // Must be Visible for GPU compilation
+        ParticleEffectLifetime { spawn_time: 0.0, duration: 0.5 },  // Longer duration to ensure compilation
+        Name::new("WarmupDebris"),
+    ));
+    commands.spawn((
+        ParticleEffect::new(sparks_effect),
+        Transform::from_translation(warmup_pos).with_scale(Vec3::splat(0.001)),
+        Visibility::Visible,  // Must be Visible for GPU compilation
+        ParticleEffectLifetime { spawn_time: 0.0, duration: 0.5 },
+        Name::new("WarmupSparks"),
+    ));
+    commands.spawn((
+        ParticleEffect::new(smoke_effect),
+        Transform::from_translation(warmup_pos).with_scale(Vec3::splat(0.001)),
+        Visibility::Visible,  // Must be Visible for GPU compilation
+        ParticleEffectLifetime { spawn_time: 0.0, duration: 0.5 },
+        Name::new("WarmupSmoke"),
+    ));
+
+    info!("✅ Particle effects ready (with warmup)");
 }
 
 /// Spawns a complete particle explosion effect at the given location
@@ -387,7 +419,6 @@ pub fn spawn_explosion_particles(
     // Spawn debris particles
     commands.spawn((
         ParticleEffect::new(particle_effects.debris_effect.clone()),
-        EffectSpawner::new(&SpawnerSettings::once(5.0.into()).with_emit_on_start(true)),
         Transform::from_translation(position)
             .with_scale(Vec3::splat(scale)),
         Visibility::Visible,
@@ -401,7 +432,6 @@ pub fn spawn_explosion_particles(
     // Spawn sparks particles
     commands.spawn((
         ParticleEffect::new(particle_effects.sparks_effect.clone()),
-        EffectSpawner::new(&SpawnerSettings::once(5.0.into()).with_emit_on_start(true)),
         Transform::from_translation(position)
             .with_scale(Vec3::splat(scale)),
         Visibility::Visible,
@@ -415,7 +445,6 @@ pub fn spawn_explosion_particles(
     // Spawn smoke particles
     commands.spawn((
         ParticleEffect::new(particle_effects.smoke_effect.clone()),
-        EffectSpawner::new(&SpawnerSettings::once(50.0.into()).with_emit_on_start(true)),
         Transform::from_translation(position + Vec3::new(0.0, 2.0 * scale, 0.0))
             .with_scale(Vec3::splat(scale)),
         Visibility::Visible,

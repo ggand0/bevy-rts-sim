@@ -669,7 +669,7 @@ pub fn auto_fire_system(
                             // MG uses single bullet sound with distance-based volume
                             let turret_pos = global_transform.translation();
                             let distance = turret_pos.distance(camera_position);
-                            let volume = proximity_volume(distance, 0.08);
+                            let volume = proximity_volume(distance, crate::constants::VOLUME_MG_TURRET);
                             trace!("MG turret at {:?}, camera at {:?}, distance: {:.1}, volume: {:.3}",
                                 turret_pos, camera_position, distance, volume);
 
@@ -687,7 +687,7 @@ pub fn auto_fire_system(
 
                             let turret_pos = global_transform.translation();
                             let distance = turret_pos.distance(camera_position);
-                            let volume = proximity_volume(distance, 0.1);
+                            let volume = proximity_volume(distance, crate::constants::VOLUME_HEAVY_TURRET);
                             trace!("Heavy turret at {:?}, camera at {:?}, distance: {:.1}, volume: {:.3}",
                                 turret_pos, camera_position, distance, volume);
 
