@@ -138,6 +138,10 @@ pub struct WaveEnemy {
     pub wave_number: u32,
 }
 
+/// Marker for wave enemies that need their move orders set (deferred spawn workaround)
+#[derive(Component)]
+pub struct NeedsMoveOrder;
+
 /// Marker component for all scenario-spawned entities (for cleanup)
 #[derive(Component)]
 pub struct ScenarioUnit;
@@ -177,6 +181,7 @@ impl Plugin for ScenarioPlugin {
                 scenario_initialization_system.after(handle_map_switch_units),
                 wave_state_machine_system,
                 wave_spawner_system,
+                wave_enemy_move_order_system, // Process move orders for newly spawned enemies
                 enemy_death_tracking_system,
                 update_wave_counter_ui,
                 update_enemy_count_ui,
@@ -448,57 +453,184 @@ fn wave_spawner_system(
     mut wave_manager: ResMut<WaveManager>,
     scenario_state: Res<ScenarioState>,
     time: Res<Time>,
-    // TODO: Add spawn helper parameters
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut squad_manager: ResMut<SquadManager>,
+    heightmap: Res<TerrainHeightmap>,
+    bunker_query: Query<&Transform, With<CommandBunker>>,
 ) {
     if !scenario_state.active || wave_manager.wave_state != WaveState::Spawning {
         return;
     }
 
+    // Get bunker position for enemy targeting
+    let bunker_pos = bunker_query.single().map(|t| t.translation).unwrap_or(Vec3::ZERO);
+
     // Tick spawn timer
     wave_manager.spawn_timer.tick(time.delta());
 
-    // Spawn enemies when timer fires
-    while wave_manager.spawn_timer.finished() && wave_manager.enemies_spawned < wave_manager.wave_target {
+    // Spawn enemies when timer fires (spawn 1 squad = 50 units per tick)
+    if wave_manager.spawn_timer.finished() && wave_manager.enemies_spawned < wave_manager.wave_target {
         wave_manager.spawn_timer.reset();
 
-        // Calculate how many to spawn this tick (batch for performance)
+        // Spawn one squad at a time (50 units)
+        let squad_size = 50u32;
         let remaining = wave_manager.wave_target - wave_manager.enemies_spawned;
-        let batch_size = remaining.min(50); // Spawn up to 1 squad at a time
+        if remaining == 0 {
+            return;
+        }
 
-        // TODO: Actually spawn enemies using spawn_single_squad helper
-        // For now, just increment counter
-        wave_manager.enemies_spawned += batch_size;
-
-        // Determine spawn location based on wave number
-        let _spawn_pos = if wave_manager.current_wave <= 5 {
+        // Determine spawn location based on wave number and progress
+        let base_spawn_pos = if wave_manager.current_wave <= 5 {
+            // Waves 1-5: North spawn only
             NORTH_SPAWN
         } else {
             // Waves 6-10: alternate between north and east
-            if wave_manager.enemies_spawned % 100 < 50 {
+            let squad_num = wave_manager.enemies_spawned / squad_size;
+            if squad_num % 2 == 0 {
                 NORTH_SPAWN
             } else {
                 EAST_SPAWN
             }
         };
 
-        // info!("Spawned {} enemies ({}/{})", batch_size,
-        //     wave_manager.enemies_spawned, wave_manager.wave_target);
+        // Add some spread to spawn position so squads don't stack
+        let squad_num = wave_manager.enemies_spawned / squad_size;
+        let spread_offset = Vec3::new(
+            ((squad_num % 5) as f32 - 2.0) * 15.0, // -30 to +30 spread on X
+            0.0,
+            ((squad_num / 5 % 3) as f32 - 1.0) * 15.0, // -15 to +15 spread on Z
+        );
+        let spawn_x = base_spawn_pos.x + spread_offset.x;
+        let spawn_z = base_spawn_pos.z + spread_offset.z;
+        let spawn_y = heightmap.sample_height(spawn_x, spawn_z);
+        let spawn_pos = Vec3::new(spawn_x, spawn_y, spawn_z);
+
+        // Face toward bunker
+        let facing = (bunker_pos - spawn_pos).normalize();
+
+        // Create materials for enemy team (Team B)
+        let unit_materials = create_team_materials(&mut materials, Team::B);
+        let droid_mesh = create_droid_mesh(&mut meshes);
+
+        // Spawn the squad
+        let squad_id = spawn_single_squad(
+            &mut commands,
+            &mut squad_manager,
+            &droid_mesh,
+            &unit_materials,
+            &mut materials,
+            Team::B,
+            spawn_pos,
+            facing,
+            &heightmap,
+        );
+
+        // Set squad target to bunker position (movement happens when target != center)
+        if let Some(squad) = squad_manager.get_squad_mut(squad_id) {
+            squad.target_position = bunker_pos;
+            // Also set facing direction toward bunker
+            squad.target_facing_direction = facing;
+        }
+
+        // Add WaveEnemy and NeedsMoveOrder markers to all units in this squad
+        // NeedsMoveOrder will be processed next frame by wave_enemy_move_order_system
+        if let Some(squad) = squad_manager.get_squad(squad_id) {
+            for &unit_entity in &squad.members {
+                commands.entity(unit_entity).insert((
+                    WaveEnemy {
+                        wave_number: wave_manager.current_wave,
+                    },
+                    NeedsMoveOrder,
+                ));
+            }
+        }
+
+        wave_manager.enemies_spawned += squad_size.min(remaining);
+
+        // Log every 4th squad to reduce spam
+        if (wave_manager.enemies_spawned / squad_size) % 4 == 0 {
+            info!("Wave {}: Spawned squad ({}/{} enemies)",
+                wave_manager.current_wave,
+                wave_manager.enemies_spawned, wave_manager.wave_target);
+        }
     }
 }
 
 /// Track enemy deaths and update wave manager
+/// Counts remaining WaveEnemy entities to detect deaths
 fn enemy_death_tracking_system(
     mut wave_manager: ResMut<WaveManager>,
     scenario_state: Res<ScenarioState>,
-    // Query for wave enemies that were just killed
-    // TODO: Need to integrate with combat death system
+    wave_enemy_query: Query<Entity, With<WaveEnemy>>,
 ) {
     if !scenario_state.active {
         return;
     }
 
-    // TODO: Hook into combat system death events
-    // For now, this is a placeholder
+    // Only track during active combat (Spawning or Fighting states)
+    if wave_manager.wave_state != WaveState::Spawning && wave_manager.wave_state != WaveState::Fighting {
+        return;
+    }
+
+    // Count actual remaining enemies
+    let actual_remaining = wave_enemy_query.iter().count() as u32;
+
+    // Update enemies_remaining if it differs from actual count
+    // This detects deaths caused by combat system
+    if actual_remaining < wave_manager.enemies_remaining {
+        let deaths = wave_manager.enemies_remaining - actual_remaining;
+        if deaths > 0 {
+            // Log significant death counts (not every single death to avoid spam)
+            if deaths >= 5 || actual_remaining == 0 {
+                info!("Wave {}: {} enemies killed, {} remaining",
+                    wave_manager.current_wave, deaths, actual_remaining);
+            }
+        }
+        wave_manager.enemies_remaining = actual_remaining;
+    }
+}
+
+/// System to give move orders to newly spawned wave enemies
+/// Runs after spawner to handle deferred entity spawning
+fn wave_enemy_move_order_system(
+    mut commands: Commands,
+    scenario_state: Res<ScenarioState>,
+    squad_manager: Res<SquadManager>,
+    heightmap: Res<TerrainHeightmap>,
+    bunker_query: Query<&Transform, With<CommandBunker>>,
+    mut needs_order_query: Query<
+        (Entity, &SquadMember, &mut BattleDroid, &mut FormationOffset),
+        With<NeedsMoveOrder>,
+    >,
+) {
+    if !scenario_state.active {
+        return;
+    }
+
+    // Ensure bunker exists before processing
+    let Ok(_bunker_transform) = bunker_query.single() else {
+        return;
+    };
+
+    // Process all units that need move orders
+    for (entity, squad_member, mut droid, mut formation_offset) in needs_order_query.iter_mut() {
+        // Get the squad's target position (should be bunker)
+        if let Some(squad) = squad_manager.get_squad(squad_member.squad_id) {
+            // Calculate this unit's target position (squad target + formation offset)
+            let target_xz = squad.target_position + formation_offset.local_offset;
+            let target_y = heightmap.sample_height(target_xz.x, target_xz.z) + 1.28;
+            let unit_target = Vec3::new(target_xz.x, target_y, target_xz.z);
+
+            droid.target_position = unit_target;
+            droid.returning_to_spawn = false;
+            formation_offset.target_world_position = unit_target;
+        }
+
+        // Remove the marker - order has been given
+        commands.entity(entity).remove::<NeedsMoveOrder>();
+    }
 }
 
 /// Update wave counter UI
