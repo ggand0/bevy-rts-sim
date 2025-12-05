@@ -7,28 +7,29 @@ use crate::types::*;
 use crate::setup::{spawn_single_squad, create_team_materials, create_droid_mesh};
 use crate::turrets::{spawn_mg_turret_at, spawn_heavy_turret_at};
 use crate::procedural_meshes::create_uplink_tower_mesh;
+use crate::selection::screen_to_ground_with_heightmap;
 
 // ============================================================================
 // SCENARIO CONSTANTS (easily tunable)
 // ============================================================================
 
 /// Total number of waves in the scenario
-pub const TOTAL_WAVES: u32 = 10;
+pub const TOTAL_WAVES: u32 = 3;
 
 /// Delay between waves in seconds
-pub const INTER_WAVE_DELAY: f32 = 30.0;
+pub const INTER_WAVE_DELAY: f32 = 15.0;
 
 /// Units spawned per second during wave spawning
 pub const SPAWN_RATE: f32 = 10.0;
 
-/// Wave sizes (200 → 1000 enemies, 10 waves)
-pub const WAVE_SIZES: [u32; 10] = [200, 200, 300, 300, 400, 400, 500, 600, 800, 1000];
+/// Wave sizes for 3 waves (escalating difficulty)
+pub const WAVE_SIZES: [u32; 3] = [100, 150, 200];
 
 /// Initial garrison size (number of friendly units)
 pub const INITIAL_GARRISON_SIZE: u32 = 300; // 6 squads of 50
 
-/// Number of turrets to spawn
-pub const TURRET_COUNT: u32 = 5;
+/// Number of turrets player can place during preparation
+pub const TURRET_BUDGET: u32 = 5;
 
 /// Radius around command bunker for breach detection
 pub const BREACH_RADIUS: f32 = 50.0;
@@ -43,7 +44,9 @@ pub const NORTH_SPAWN: Vec3 = Vec3::new(0.0, 0.0, -200.0);
 pub const EAST_SPAWN: Vec3 = Vec3::new(200.0, 0.0, 0.0);
 
 /// Turret positions around the hilltop (relative to map center)
-pub const TURRET_POSITIONS: [Vec3; 5] = [
+/// Note: These are no longer used since turrets are player-placed, kept for reference
+#[allow(dead_code)]
+const TURRET_POSITIONS: [Vec3; 5] = [
     Vec3::new(-50.0, 0.0, -50.0),  // Northwest
     Vec3::new(50.0, 0.0, -50.0),   // Northeast
     Vec3::new(-60.0, 0.0, 20.0),   // West
@@ -68,6 +71,8 @@ pub enum ScenarioType {
 pub enum WaveState {
     #[default]
     Idle,
+    /// Preparation phase - player places turrets before waves start
+    Preparation,
     /// Spawning enemies for current wave
     Spawning,
     /// All enemies spawned, combat ongoing
@@ -110,6 +115,10 @@ pub struct WaveManager {
     pub wave_target: u32,
     /// Timer for progressive spawning
     pub spawn_timer: Timer,
+    /// Turrets remaining to place during preparation
+    pub turrets_remaining: u32,
+    /// Currently selected turret type for placement (true = MG, false = Heavy)
+    pub place_mg_turret: bool,
 }
 
 impl Default for WaveManager {
@@ -123,6 +132,8 @@ impl Default for WaveManager {
             enemies_spawned: 0,
             wave_target: 0,
             spawn_timer: Timer::from_seconds(1.0 / SPAWN_RATE, TimerMode::Repeating),
+            turrets_remaining: TURRET_BUDGET,
+            place_mg_turret: true, // Default to MG turret
         }
     }
 }
@@ -135,6 +146,7 @@ impl Default for WaveManager {
 #[derive(Component)]
 pub struct WaveEnemy {
     /// Which wave this enemy belongs to
+    #[allow(dead_code)]
     pub wave_number: u32,
 }
 
@@ -166,6 +178,10 @@ pub struct EnemyCountUI;
 #[derive(Component)]
 pub struct ScenarioUI;
 
+/// Marker for preparation phase instructions UI
+#[derive(Component)]
+pub struct PreparationInstructionsUI;
+
 // ============================================================================
 // PLUGIN
 // ============================================================================
@@ -179,12 +195,14 @@ impl Plugin for ScenarioPlugin {
             .add_systems(Update, (
                 // Must run after handle_map_switch_units clears default units/squads
                 scenario_initialization_system.after(handle_map_switch_units),
+                turret_placement_system,
                 wave_state_machine_system,
                 wave_spawner_system,
                 wave_enemy_move_order_system, // Process move orders for newly spawned enemies
                 enemy_death_tracking_system,
                 update_wave_counter_ui,
                 update_enemy_count_ui,
+                update_preparation_ui,
                 victory_defeat_check_system,
             ).chain());
     }
@@ -255,22 +273,9 @@ fn scenario_initialization_system(
             ));
             info!("Spawned command bunker at {:?}", bunker_pos);
 
-            // Spawn 5 turrets at TURRET_POSITIONS
-            for (i, &offset) in TURRET_POSITIONS.iter().enumerate() {
-                let turret_x = offset.x;
-                let turret_z = offset.z;
-                let turret_y = heightmap.sample_height(turret_x, turret_z);
-                let turret_pos = Vec3::new(turret_x, turret_y, turret_z);
-
-                // Alternate between MG and Heavy turrets
-                if i % 2 == 0 {
-                    spawn_mg_turret_at(&mut commands, &mut meshes, &mut materials, turret_pos);
-                    info!("Spawned MG turret {} at {:?}", i, turret_pos);
-                } else {
-                    spawn_heavy_turret_at(&mut commands, &mut meshes, &mut materials, turret_pos);
-                    info!("Spawned Heavy turret {} at {:?}", i, turret_pos);
-                }
-            }
+            // Set wave state to Preparation so player can place turrets
+            wave_manager.wave_state = WaveState::Preparation;
+            wave_manager.turrets_remaining = TURRET_BUDGET;
 
             // Spawn initial garrison (6 squads around the bunker)
             let droid_mesh = create_droid_mesh(&mut meshes);
@@ -306,7 +311,7 @@ fn scenario_initialization_system(
             // Spawn scenario UI
             spawn_scenario_ui(&mut commands);
 
-            info!("Firebase Delta scenario initialized - press SPACE to start wave 1");
+            info!("Firebase Delta scenario initialized - place {} turrets (T to toggle type, click to place, SPACE to start)", TURRET_BUDGET);
 
         } else if scenario_state.active {
             // Switching away from Firebase Delta - cleanup
@@ -330,7 +335,7 @@ fn scenario_initialization_system(
 fn spawn_scenario_ui(commands: &mut Commands) {
     // Wave counter UI
     commands.spawn((
-        Text::new("Wave: 0/10"),
+        Text::new("Wave: 0/3"),
         TextFont {
             font_size: 22.0,
             ..default()
@@ -364,20 +369,22 @@ fn spawn_scenario_ui(commands: &mut Commands) {
         ScenarioUI,
     ));
 
-    // Instructions
+    // Preparation phase instructions
     commands.spawn((
-        Text::new("Press SPACE to start wave 1"),
+        Text::new(format!("PREPARATION - Turrets: {}/{} | T: toggle type | Click: place | SPACE: start",
+            TURRET_BUDGET, TURRET_BUDGET)),
         TextFont {
             font_size: 18.0,
             ..default()
         },
-        TextColor(Color::srgb(0.7, 0.7, 0.7)), // Gray
+        TextColor(Color::srgb(0.3, 1.0, 0.3)), // Green
         Node {
             position_type: PositionType::Absolute,
             top: Val::Px(130.0),
             left: Val::Px(10.0),
             ..default()
         },
+        PreparationInstructionsUI,
         ScenarioUI,
     ));
 }
@@ -395,14 +402,23 @@ fn wave_state_machine_system(
 
     match wave_manager.wave_state {
         WaveState::Idle => {
-            // Wait for player to start (SPACE key)
-            if keys.just_pressed(KeyCode::Space) && wave_manager.current_wave == 0 {
+            // Idle state - shouldn't happen in FirebaseDelta, goes straight to Preparation
+        }
+        WaveState::Preparation => {
+            // Player is placing turrets. SPACE key starts wave 1.
+            if keys.just_pressed(KeyCode::Space) {
                 wave_manager.current_wave = 1;
                 wave_manager.wave_state = WaveState::Spawning;
                 wave_manager.enemies_spawned = 0;
                 wave_manager.wave_target = WAVE_SIZES[0];
                 wave_manager.enemies_remaining = wave_manager.wave_target;
-                info!("Wave 1 starting! Target: {} enemies", wave_manager.wave_target);
+                info!("Preparation complete! Wave 1 starting! Target: {} enemies", wave_manager.wave_target);
+            }
+            // T key toggles turret type
+            if keys.just_pressed(KeyCode::KeyT) {
+                wave_manager.place_mg_turret = !wave_manager.place_mg_turret;
+                let turret_type = if wave_manager.place_mg_turret { "MG" } else { "Heavy" };
+                info!("Turret type: {}", turret_type);
             }
         }
         WaveState::Spawning => {
@@ -660,6 +676,94 @@ fn update_enemy_count_ui(
 
     for mut text in query.iter_mut() {
         *text = Text::new(format!("Enemies: {}", wave_manager.enemies_remaining));
+    }
+}
+
+/// Turret placement system - handles mouse clicks during Preparation phase
+fn turret_placement_system(
+    mut wave_manager: ResMut<WaveManager>,
+    scenario_state: Res<ScenarioState>,
+    mouse_button: Res<ButtonInput<MouseButton>>,
+    window_query: Query<&Window>,
+    camera_query: Query<(&Camera, &GlobalTransform)>,
+    heightmap: Res<TerrainHeightmap>,
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    // Only active during preparation phase
+    if !scenario_state.active || wave_manager.wave_state != WaveState::Preparation {
+        return;
+    }
+
+    // No turrets left to place
+    if wave_manager.turrets_remaining == 0 {
+        return;
+    }
+
+    // Check for left mouse button click
+    if !mouse_button.just_pressed(MouseButton::Left) {
+        return;
+    }
+
+    // Get cursor position
+    let Ok(window) = window_query.single() else { return };
+    let Ok((camera, camera_transform)) = camera_query.single() else { return };
+    let Some(cursor_pos) = window.cursor_position() else { return };
+
+    // Convert to world position
+    let Some(world_pos) = screen_to_ground_with_heightmap(cursor_pos, camera, camera_transform, Some(&heightmap)) else {
+        return;
+    };
+
+    // Spawn the selected turret type at click position
+    if wave_manager.place_mg_turret {
+        spawn_mg_turret_at(&mut commands, &mut meshes, &mut materials, world_pos);
+        info!("Placed MG turret at {:?} ({} remaining)", world_pos, wave_manager.turrets_remaining - 1);
+    } else {
+        spawn_heavy_turret_at(&mut commands, &mut meshes, &mut materials, world_pos);
+        info!("Placed Heavy turret at {:?} ({} remaining)", world_pos, wave_manager.turrets_remaining - 1);
+    }
+
+    wave_manager.turrets_remaining -= 1;
+}
+
+/// Update preparation phase instructions UI
+fn update_preparation_ui(
+    wave_manager: Res<WaveManager>,
+    scenario_state: Res<ScenarioState>,
+    mut query: Query<(&mut Text, &mut TextColor), With<PreparationInstructionsUI>>,
+) {
+    if !scenario_state.active {
+        return;
+    }
+
+    for (mut text, mut color) in query.iter_mut() {
+        match wave_manager.wave_state {
+            WaveState::Preparation => {
+                let turret_type = if wave_manager.place_mg_turret { "MG" } else { "Heavy" };
+                *text = Text::new(format!(
+                    "PREPARATION - Turrets: {}/{} | Type: {} | T: toggle | Click: place | SPACE: start",
+                    wave_manager.turrets_remaining, TURRET_BUDGET, turret_type
+                ));
+                *color = TextColor(Color::srgb(0.3, 1.0, 0.3)); // Green
+            }
+            WaveState::Spawning | WaveState::Fighting => {
+                *text = Text::new("COMBAT - Defend the bunker!");
+                *color = TextColor(Color::srgb(1.0, 0.5, 0.3)); // Orange
+            }
+            WaveState::Cooldown => {
+                *text = Text::new("Wave cleared! Next wave incoming...");
+                *color = TextColor(Color::srgb(0.3, 0.8, 1.0)); // Cyan
+            }
+            WaveState::Complete => {
+                *text = Text::new("VICTORY! All waves cleared!");
+                *color = TextColor(Color::srgb(0.3, 1.0, 0.3)); // Green
+            }
+            WaveState::Idle => {
+                *text = Text::new("");
+            }
+        }
     }
 }
 
