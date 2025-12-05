@@ -411,6 +411,7 @@ fn spawn_health_bar_for_turret(
         MeshMaterial3d(bar_material),
         Transform::from_translation(Vec3::new(turret_pos.x, bar_y, turret_pos.z)),
         TurretHealthBar { turret_entity },
+        bevy::pbr::NotShadowCaster,
     ));
 }
 

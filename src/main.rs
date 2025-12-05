@@ -48,12 +48,13 @@ fn main() {
         .add_plugins(MaterialPlugin::<AdditiveMaterial>::default())
         .add_plugins(MaterialPlugin::<SmokeOnlyMaterial>::default())
         .add_plugins(MaterialPlugin::<turrets::HealthBarMaterial>::default())
+        .add_plugins(MaterialPlugin::<objective::ShieldBarMaterial>::default())
         .insert_resource(SpatialGrid::new())
         .insert_resource(SquadManager::new())
         .insert_resource(GameState::default())
         .insert_resource(ExplosionDebugMode::default())
         .insert_resource(selection::SelectionState::default())
-        .add_systems(Startup, (setup::setup_scene, spawn_uplink_towers, spawn_objective_ui, setup_laser_assets))
+        .add_systems(Startup, (setup::setup_scene, spawn_uplink_towers, spawn_debug_mode_ui, setup_laser_assets))
         // Army spawning runs after terrain is ready (terrain spawns in TerrainPlugin's Startup)
         .add_systems(Startup, setup::spawn_army_with_squads.after(terrain::spawn_initial_terrain))
         // Turret spawning runs after terrain is ready
@@ -138,10 +139,12 @@ fn main() {
             pending_explosion_system,
             explosion_effect_system,
             win_condition_system,
-            update_objective_ui_system,
             update_debug_mode_ui,
             debug_explosion_hotkey_system,
             debug_warfx_test_system,
+            // Tower and shield health bars
+            objective::spawn_tower_health_bars,
+            objective::update_tower_health_bars,
         ))
         .add_systems(Update, (
             // War FX explosion animations

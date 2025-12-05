@@ -8,15 +8,15 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     // UV.x goes from 0.0 (left) to 1.0 (right)
     let health_fraction = health_data.x;
 
-    // Colors
-    let green = vec3<f32>(0.4, 1.0, 0.4);  // Bright green for health
-    let gray = vec3<f32>(0.2, 0.2, 0.2);   // Dark gray for missing health
+    // Colors - cyan for shields
+    let cyan = vec3<f32>(0.3, 0.8, 1.0);   // Bright cyan for shield
+    let gray = vec3<f32>(0.15, 0.2, 0.25); // Dark blue-gray for missing shield
 
     // Choose color based on UV position vs health fraction
     // Shrink from right side: filled portion is on the right (high UV values)
     var color: vec3<f32>;
     if in.uv.x > (1.0 - health_fraction) {
-        color = green;
+        color = cyan;
     } else {
         color = gray;
     }

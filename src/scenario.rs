@@ -230,6 +230,8 @@ fn scenario_initialization_system(
     // Query for cleanup
     scenario_entities: Query<Entity, With<ScenarioUnit>>,
     scenario_ui: Query<Entity, With<ScenarioUI>>,
+    // Query to hide/show default UI during scenario
+    mut game_info_ui: Query<&mut Visibility, With<GameInfoUI>>,
 ) {
     for event in map_switch_events.read() {
         if event.new_map == MapPreset::FirebaseDelta {
@@ -314,6 +316,11 @@ fn scenario_initialization_system(
             // Spawn scenario UI
             spawn_scenario_ui(&mut commands);
 
+            // Hide default UI during scenario
+            for mut visibility in game_info_ui.iter_mut() {
+                *visibility = Visibility::Hidden;
+            }
+
             info!("Firebase Delta scenario initialized - place {} turrets (T to toggle type, click to place, SPACE to start)", TURRET_BUDGET);
 
         } else if scenario_state.active {
@@ -322,6 +329,11 @@ fn scenario_initialization_system(
             scenario_state.active = false;
             scenario_state.scenario_type = ScenarioType::None;
             *wave_manager = WaveManager::default();
+
+            // Show default UI again
+            for mut visibility in game_info_ui.iter_mut() {
+                *visibility = Visibility::Visible;
+            }
 
             // Cleanup scenario entities
             for entity in scenario_entities.iter() {

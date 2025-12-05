@@ -77,7 +77,7 @@ pub fn setup_scene(
         shield_impact_sound,
     });
 
-    // UI text for game info
+    // UI text for game info (can be hidden during scenarios)
     commands.spawn((
         Text::new("5,000 vs 5,000 Units (100 squads/team)\nLeft-click: Select | Right-click: Move | Middle-drag: Rotate | Scroll: Zoom\nShift+click: Add to selection | G: Advance All | H: Retreat All | F: Volley Fire"),
         TextFont {
@@ -91,6 +91,7 @@ pub fn setup_scene(
             left: Val::Px(10.0),
             ..default()
         },
+        GameInfoUI,
     ));
 
     // Dedicated FPS display in green (top-right corner)
