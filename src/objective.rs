@@ -648,6 +648,9 @@ pub fn update_tower_health_bars(
     // This works for any camera angle including top-down
     let billboard_rotation = camera_transform.rotation;
 
+    // Camera's up direction in world space - used to offset shield bar above tower bar
+    let camera_up = camera_transform.up();
+
     // Update tower health bars
     for (bar_entity, tower_bar, mut bar_transform, material_handle) in tower_bar_query.iter_mut() {
         if let Some((tower_transform, health, _)) = towers.get(&tower_bar.tower_entity) {
@@ -694,11 +697,11 @@ pub fn update_tower_health_bars(
                 0.0
             };
 
-            // Base position above tower (higher than tower bar)
+            // Base position above tower (same as tower bar base)
             let tower_pos = tower_transform.translation;
             let bar_base_pos = Vec3::new(
                 tower_pos.x,
-                tower_pos.y + TOWER_HEALTH_BAR_Y_OFFSET + SHIELD_BAR_Y_OFFSET,
+                tower_pos.y + TOWER_HEALTH_BAR_Y_OFFSET,
                 tower_pos.z,
             );
 
@@ -710,7 +713,8 @@ pub fn update_tower_health_bars(
             ).normalize_or_zero();
 
             // Offset bar position towards camera to prevent occlusion
-            let bar_pos = bar_base_pos + horizontal_to_camera * HEALTH_BAR_CAMERA_OFFSET;
+            // Then offset in camera's up direction so shield bar is always above tower bar on screen
+            let bar_pos = bar_base_pos + horizontal_to_camera * HEALTH_BAR_CAMERA_OFFSET + camera_up * SHIELD_BAR_Y_OFFSET;
             bar_transform.translation = bar_pos;
             bar_transform.rotation = billboard_rotation;
 
