@@ -676,7 +676,7 @@ fn handle_pending_heightmap(
 const UNIT_TERRAIN_OFFSET: f32 = 1.28;
 
 /// System to reposition units, towers, and reset game state when map is switched
-fn handle_map_switch_units(
+pub fn handle_map_switch_units(
     mut commands: Commands,
     mut map_switch_events: EventReader<MapSwitchEvent>,
     heightmap: Res<TerrainHeightmap>,

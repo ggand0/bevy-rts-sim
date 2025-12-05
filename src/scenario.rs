@@ -2,7 +2,7 @@
 // Wave-based defense scenario where players defend a hilltop command bunker
 
 use bevy::prelude::*;
-use crate::terrain::{MapPreset, MapSwitchEvent, TerrainHeightmap};
+use crate::terrain::{MapPreset, MapSwitchEvent, TerrainHeightmap, handle_map_switch_units};
 use crate::types::*;
 use crate::setup::{spawn_single_squad, create_team_materials, create_droid_mesh};
 use crate::turrets::{spawn_mg_turret_at, spawn_heavy_turret_at};
@@ -173,7 +173,8 @@ impl Plugin for ScenarioPlugin {
         app.init_resource::<ScenarioState>()
             .init_resource::<WaveManager>()
             .add_systems(Update, (
-                scenario_initialization_system,
+                // Must run after handle_map_switch_units clears default units/squads
+                scenario_initialization_system.after(handle_map_switch_units),
                 wave_state_machine_system,
                 wave_spawner_system,
                 enemy_death_tracking_system,
