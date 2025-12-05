@@ -15,12 +15,14 @@ mod wfx_materials;
 mod wfx_spawn;
 mod selection;
 mod terrain;
+mod terrain_decor;
 mod shield;
 mod decals;
 mod scenario;
 use explosion_shader::ExplosionShaderPlugin;
 use particles::ParticleEffectsPlugin;
 use terrain::TerrainPlugin;
+use terrain_decor::TerrainDecorPlugin;
 use wfx_materials::{SmokeScrollMaterial, AdditiveMaterial, SmokeOnlyMaterial};
 use shield::ShieldPlugin;
 use decals::DecalPlugin;
@@ -41,6 +43,7 @@ fn main() {
         .add_plugins(ExplosionShaderPlugin)
         .add_plugins(ParticleEffectsPlugin)
         .add_plugins(TerrainPlugin)
+        .add_plugins(TerrainDecorPlugin)
         .add_plugins(ShieldPlugin)
         .add_plugins(DecalPlugin)
         .add_plugins(ScenarioPlugin)
