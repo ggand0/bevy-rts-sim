@@ -62,6 +62,7 @@ impl Material for HealthBarMaterial {
 }
 
 /// Internal helper to spawn MG turret at specified position
+/// Returns the base entity for tracking/undo purposes
 fn spawn_mg_turret_internal(
     commands: &mut Commands,
     meshes: &mut ResMut<Assets<Mesh>>,
@@ -69,7 +70,7 @@ fn spawn_mg_turret_internal(
     x: f32,
     z: f32,
     terrain_height: f32,
-) {
+) -> Entity {
     let turret_world_pos = Vec3::new(x, terrain_height, z);
 
     // Create meshes
@@ -133,6 +134,8 @@ fn spawn_mg_turret_internal(
 
     // Link child to parent
     commands.entity(base_entity).add_children(&[assembly_entity]);
+
+    base_entity
 }
 
 /// Spawn a functional MG turret (only if enabled in debug mode)
@@ -157,6 +160,7 @@ pub fn spawn_mg_turret(
 }
 
 /// Internal helper to spawn heavy turret at specified position
+/// Returns the base entity for tracking/undo purposes
 fn spawn_heavy_turret_internal(
     commands: &mut Commands,
     meshes: &mut ResMut<Assets<Mesh>>,
@@ -164,7 +168,7 @@ fn spawn_heavy_turret_internal(
     x: f32,
     z: f32,
     terrain_height: f32,
-) {
+) -> Entity {
     let turret_world_pos = Vec3::new(x, terrain_height, z);
 
     // Create meshes
@@ -221,6 +225,8 @@ fn spawn_heavy_turret_internal(
 
     // Link child to parent
     commands.entity(base_entity).add_children(&[assembly_entity]);
+
+    base_entity
 }
 
 /// Spawn a functional heavy turret (only if enabled in debug mode)
@@ -286,24 +292,26 @@ pub fn respawn_turrets_on_map_switch(
 
 /// Spawn an MG turret at the specified world position
 /// Used by scenario systems to place turrets programmatically
+/// Returns the turret base entity for tracking/undo
 pub fn spawn_mg_turret_at(
     commands: &mut Commands,
     meshes: &mut ResMut<Assets<Mesh>>,
     materials: &mut ResMut<Assets<StandardMaterial>>,
     position: Vec3,
-) {
-    spawn_mg_turret_internal(commands, meshes, materials, position.x, position.z, position.y);
+) -> Entity {
+    spawn_mg_turret_internal(commands, meshes, materials, position.x, position.z, position.y)
 }
 
 /// Spawn a heavy turret at the specified world position
 /// Used by scenario systems to place turrets programmatically
+/// Returns the turret base entity for tracking/undo
 pub fn spawn_heavy_turret_at(
     commands: &mut Commands,
     meshes: &mut ResMut<Assets<Mesh>>,
     materials: &mut ResMut<Assets<StandardMaterial>>,
     position: Vec3,
-) {
-    spawn_heavy_turret_internal(commands, meshes, materials, position.x, position.z, position.y);
+) -> Entity {
+    spawn_heavy_turret_internal(commands, meshes, materials, position.x, position.z, position.y)
 }
 
 /// Debug system to toggle turrets on/off (M=MG, H=Heavy) when debug mode is active

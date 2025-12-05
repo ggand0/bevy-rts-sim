@@ -119,6 +119,8 @@ pub struct WaveManager {
     pub turrets_remaining: u32,
     /// Currently selected turret type for placement (true = MG, false = Heavy)
     pub place_mg_turret: bool,
+    /// Stack of placed turret entities for undo (most recent last)
+    pub placed_turrets: Vec<Entity>,
 }
 
 impl Default for WaveManager {
@@ -134,6 +136,7 @@ impl Default for WaveManager {
             spawn_timer: Timer::from_seconds(1.0 / SPAWN_RATE, TimerMode::Repeating),
             turrets_remaining: TURRET_BUDGET,
             place_mg_turret: true, // Default to MG turret
+            placed_turrets: Vec::new(),
         }
     }
 }
@@ -680,6 +683,7 @@ fn update_enemy_count_ui(
 }
 
 /// Turret placement system - handles mouse clicks during Preparation phase
+/// LMB: Place turret, RMB: Undo last placement
 fn turret_placement_system(
     mut wave_manager: ResMut<WaveManager>,
     scenario_state: Res<ScenarioState>,
@@ -693,6 +697,16 @@ fn turret_placement_system(
 ) {
     // Only active during preparation phase
     if !scenario_state.active || wave_manager.wave_state != WaveState::Preparation {
+        return;
+    }
+
+    // RMB: Undo last turret placement
+    if mouse_button.just_pressed(MouseButton::Right) {
+        if let Some(turret_entity) = wave_manager.placed_turrets.pop() {
+            commands.entity(turret_entity).despawn();
+            wave_manager.turrets_remaining += 1;
+            info!("Undid turret placement ({} remaining)", wave_manager.turrets_remaining);
+        }
         return;
     }
 
@@ -716,15 +730,18 @@ fn turret_placement_system(
         return;
     };
 
-    // Spawn the selected turret type at click position
-    if wave_manager.place_mg_turret {
-        spawn_mg_turret_at(&mut commands, &mut meshes, &mut materials, world_pos);
+    // Spawn the selected turret type at click position and track it
+    let turret_entity = if wave_manager.place_mg_turret {
+        let entity = spawn_mg_turret_at(&mut commands, &mut meshes, &mut materials, world_pos);
         info!("Placed MG turret at {:?} ({} remaining)", world_pos, wave_manager.turrets_remaining - 1);
+        entity
     } else {
-        spawn_heavy_turret_at(&mut commands, &mut meshes, &mut materials, world_pos);
+        let entity = spawn_heavy_turret_at(&mut commands, &mut meshes, &mut materials, world_pos);
         info!("Placed Heavy turret at {:?} ({} remaining)", world_pos, wave_manager.turrets_remaining - 1);
-    }
+        entity
+    };
 
+    wave_manager.placed_turrets.push(turret_entity);
     wave_manager.turrets_remaining -= 1;
 }
 
@@ -743,7 +760,7 @@ fn update_preparation_ui(
             WaveState::Preparation => {
                 let turret_type = if wave_manager.place_mg_turret { "MG" } else { "Heavy" };
                 *text = Text::new(format!(
-                    "PREPARATION - Turrets: {}/{} | Type: {} | T: toggle | Click: place | SPACE: start",
+                    "PREPARATION - Turrets: {}/{} | Type: {} | T: toggle | LMB: place | RMB: undo | SPACE: start",
                     wave_manager.turrets_remaining, TURRET_BUDGET, turret_type
                 ));
                 *color = TextColor(Color::srgb(0.3, 1.0, 0.3)); // Green
