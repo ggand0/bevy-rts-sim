@@ -387,7 +387,7 @@ pub fn spawn_explosion_particles(
     // Spawn debris particles
     commands.spawn((
         ParticleEffect::new(particle_effects.debris_effect.clone()),
-        EffectSpawner::new(&SpawnerSettings::once(5.0.into())),
+        EffectSpawner::new(&SpawnerSettings::once(5.0.into()).with_emit_on_start(true)),
         Transform::from_translation(position)
             .with_scale(Vec3::splat(scale)),
         Visibility::Visible,
@@ -401,7 +401,7 @@ pub fn spawn_explosion_particles(
     // Spawn sparks particles
     commands.spawn((
         ParticleEffect::new(particle_effects.sparks_effect.clone()),
-        EffectSpawner::new(&SpawnerSettings::once(5.0.into())),
+        EffectSpawner::new(&SpawnerSettings::once(5.0.into()).with_emit_on_start(true)),
         Transform::from_translation(position)
             .with_scale(Vec3::splat(scale)),
         Visibility::Visible,
@@ -415,7 +415,7 @@ pub fn spawn_explosion_particles(
     // Spawn smoke particles
     commands.spawn((
         ParticleEffect::new(particle_effects.smoke_effect.clone()),
-        EffectSpawner::new(&SpawnerSettings::once(50.0.into())),
+        EffectSpawner::new(&SpawnerSettings::once(50.0.into()).with_emit_on_start(true)),
         Transform::from_translation(position + Vec3::new(0.0, 2.0 * scale, 0.0))
             .with_scale(Vec3::splat(scale)),
         Visibility::Visible,

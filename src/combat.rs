@@ -670,6 +670,8 @@ pub fn auto_fire_system(
                             let turret_pos = global_transform.translation();
                             let distance = turret_pos.distance(camera_position);
                             let volume = proximity_volume(distance, 0.08);
+                            trace!("MG turret at {:?}, camera at {:?}, distance: {:.1}, volume: {:.3}",
+                                turret_pos, camera_position, distance, volume);
 
                             commands.spawn((
                                 AudioPlayer::new(audio_assets.mg_sound.clone()),
@@ -685,7 +687,9 @@ pub fn auto_fire_system(
 
                             let turret_pos = global_transform.translation();
                             let distance = turret_pos.distance(camera_position);
-                            let volume = proximity_volume(distance, 0.3);
+                            let volume = proximity_volume(distance, 0.1);
+                            trace!("Heavy turret at {:?}, camera at {:?}, distance: {:.1}, volume: {:.3}",
+                                turret_pos, camera_position, distance, volume);
 
                             commands.spawn((
                                 AudioPlayer::new(sound),

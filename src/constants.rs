@@ -91,9 +91,10 @@ pub const VOLUME_LASER: f32 = 0.3;                  // Laser fire volume (droids
 pub const VOLUME_SHIELD_IMPACT: f32 = 0.4;          // Shield impact volume (moved to ShieldConfig, kept for reference)
 
 // Proximity-based audio attenuation
-pub const AUDIO_MIN_DISTANCE: f32 = 50.0;   // Full volume below this distance
-pub const AUDIO_MAX_DISTANCE: f32 = 200.0;  // Minimum volume above this distance
-pub const AUDIO_MIN_VOLUME: f32 = 0.05;     // Volume at max distance
+// Note: RTS camera sits at ~150-200 units height, so we need larger distances
+pub const AUDIO_MIN_DISTANCE: f32 = 100.0;  // Full volume below this distance
+pub const AUDIO_MAX_DISTANCE: f32 = 400.0;  // Minimum volume above this distance
+pub const AUDIO_MIN_VOLUME: f32 = 0.02;     // Volume at max distance
 
 /// Calculate distance-based volume attenuation for spatial audio
 /// Returns a volume multiplier between min_volume and max_volume based on distance
