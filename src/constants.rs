@@ -85,6 +85,7 @@ pub const PERLIN_LACUNARITY: f64 = 2.0;             // Frequency multiplier per 
 
 // Audio volume settings
 pub const VOLUME_EXPLOSION: f32 = 0.5;              // Tower/unit explosion volume
+pub const VOLUME_TURRET_EXPLOSION: f32 = 0.15;      // Turret explosion volume (smaller than tower)
 #[allow(dead_code)]
 pub const VOLUME_LASER: f32 = 0.3;                  // Laser fire volume (droids and turrets)
 #[allow(dead_code)]

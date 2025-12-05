@@ -306,7 +306,7 @@ pub fn update_debug_mode_ui(
             let mg_status = if debug_mode.mg_turret_enabled { "ON" } else { "OFF" };
             let heavy_status = if debug_mode.heavy_turret_enabled { "ON" } else { "OFF" };
             **text = format!(
-                "[0] DEBUG: 1-6=explosions | C=collision | S=destroy shield | M=MG turret ({}) | H=Heavy turret ({})",
+                "[0] DEBUG: 1-6=explosions 7=turret WFX | C=collision | S=destroy shield | M=MG turret ({}) | H=Heavy turret ({})",
                 mg_status, heavy_status
             );
         } else {
@@ -474,6 +474,26 @@ pub fn debug_warfx_test_system(
         );
 
         info!("🔶 War FX dot sparkles (75 + 15) spawned at center (0, 10, 0)");
+    }
+
+    // 7 key: Spawn turret WFX explosion (lighter version)
+    if keyboard_input.just_pressed(KeyCode::Digit7) {
+        info!("💥 DEBUG: War FX TURRET explosion hotkey (7) pressed!");
+
+        let position = Vec3::new(0.0, 10.0, 0.0);
+        let scale = 1.5; // Smaller scale for turret explosion
+
+        crate::wfx_spawn::spawn_turret_wfx_explosion(
+            &mut commands,
+            &mut meshes,
+            &mut additive_materials,
+            &mut smoke_materials,
+            &asset_server,
+            position,
+            scale,
+        );
+
+        info!("💥 War FX TURRET explosion spawned at center (0, 10, 0) with scale {}", scale);
     }
 }
 

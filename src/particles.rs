@@ -456,6 +456,64 @@ pub fn spawn_explosion_particles(
     ));
 }
 
+/// Spawns particles for turret explosions
+/// More sparks/flames than standard explosion for visual impact
+pub fn spawn_turret_explosion_particles(
+    commands: &mut Commands,
+    particle_effects: &ExplosionParticleEffects,
+    position: Vec3,
+    scale: f32,
+    current_time: f64,
+) {
+    trace!("💥 TURRET PARTICLES: Spawning turret explosion at {:?}", position);
+
+    // Spawn debris particles
+    commands.spawn((
+        ParticleEffect::new(particle_effects.debris_effect.clone()),
+        Transform::from_translation(position)
+            .with_scale(Vec3::splat(scale)),
+        Visibility::Visible,
+        ParticleEffectLifetime {
+            spawn_time: current_time,
+            duration: 5.0,
+        },
+        Name::new("TurretExplosionDebris"),
+    ));
+
+    // Spawn multiple spark effects for more flames
+    for i in 0..3 {
+        let offset = Vec3::new(
+            (i as f32 - 1.0) * 0.5,
+            i as f32 * 0.3,
+            (i as f32 - 1.0) * 0.3,
+        );
+        commands.spawn((
+            ParticleEffect::new(particle_effects.sparks_effect.clone()),
+            Transform::from_translation(position + offset)
+                .with_scale(Vec3::splat(scale * (1.0 + i as f32 * 0.2))),
+            Visibility::Visible,
+            ParticleEffectLifetime {
+                spawn_time: current_time,
+                duration: 3.0,
+            },
+            Name::new("TurretExplosionSparks"),
+        ));
+    }
+
+    // Spawn smoke particles
+    commands.spawn((
+        ParticleEffect::new(particle_effects.smoke_effect.clone()),
+        Transform::from_translation(position + Vec3::new(0.0, 2.0 * scale, 0.0))
+            .with_scale(Vec3::splat(scale)),
+        Visibility::Visible,
+        ParticleEffectLifetime {
+            spawn_time: current_time,
+            duration: 6.0,
+        },
+        Name::new("TurretExplosionSmoke"),
+    ));
+}
+
 /// Spawns particles for smaller unit explosions
 /// Uses fewer particles and smaller scale for better performance
 #[allow(dead_code)]

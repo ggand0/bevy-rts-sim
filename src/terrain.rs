@@ -453,7 +453,8 @@ pub fn spawn_initial_terrain(
     info!("Flat ground spawned at Y=-1.0");
 }
 
-/// System to switch between map presets using 1-2 keys
+/// System to switch between map presets using 1-3 keys
+/// Skips map switching when explosion debug mode is active (0 -> 1/2/3)
 fn terrain_map_switching(
     keys: Res<ButtonInput<KeyCode>>,
     mut config: ResMut<TerrainConfig>,
@@ -466,7 +467,13 @@ fn terrain_map_switching(
     mut images: ResMut<Assets<Image>>,
     asset_server: Res<AssetServer>,
     mut map_switch_events: EventWriter<MapSwitchEvent>,
+    debug_mode: Res<crate::objective::ExplosionDebugMode>,
 ) {
+    // Skip map switching when debug mode is active (digit keys used for debug spawns)
+    if debug_mode.explosion_mode {
+        return;
+    }
+
     let new_preset = if keys.just_pressed(KeyCode::Digit1) {
         Some(MapPreset::Flat)
     } else if keys.just_pressed(KeyCode::Digit2) {

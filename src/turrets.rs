@@ -483,7 +483,48 @@ pub fn update_turret_health_bars(
 }
 
 /// System to check turret health and trigger explosion + despawn when dead
+/// Uses WFX billboard explosion for better visual quality than hanabi particles
 pub fn turret_death_system(
+    mut commands: Commands,
+    turret_query: Query<(Entity, &Transform, &Health), With<TurretBase>>,
+    audio_assets: Res<crate::types::AudioAssets>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut additive_materials: ResMut<Assets<crate::wfx_materials::AdditiveMaterial>>,
+    mut smoke_materials: ResMut<Assets<crate::wfx_materials::SmokeScrollMaterial>>,
+    asset_server: Res<AssetServer>,
+) {
+    for (entity, transform, health) in turret_query.iter() {
+        if health.current <= 0.0 {
+            let position = transform.translation;
+            info!("Turret destroyed at {:?}", position);
+
+            // Play explosion sound (smaller volume than tower explosions)
+            commands.spawn((
+                AudioPlayer::new(audio_assets.explosion_sound.clone()),
+                PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::Linear(crate::constants::VOLUME_TURRET_EXPLOSION)),
+            ));
+
+            // Spawn WFX billboard explosion (28 flames + 50 dot sparkles + 5 glow sparkles + 1 center glow)
+            crate::wfx_spawn::spawn_turret_wfx_explosion(
+                &mut commands,
+                &mut meshes,
+                &mut additive_materials,
+                &mut smoke_materials,
+                &asset_server,
+                position + Vec3::Y * 2.0,
+                1.5,
+            );
+
+            // Despawn the turret
+            commands.entity(entity).despawn();
+        }
+    }
+}
+
+/// Old turret death system using hanabi GPU particles
+/// Kept for reference - hanabi particles are faster but less visually detailed than WFX billboards
+#[allow(dead_code)]
+pub fn turret_death_system_hanabi(
     mut commands: Commands,
     turret_query: Query<(Entity, &Transform, &Health), With<TurretBase>>,
     particle_effects: Option<Res<crate::particles::ExplosionParticleEffects>>,
@@ -495,16 +536,16 @@ pub fn turret_death_system(
             let position = transform.translation;
             info!("Turret destroyed at {:?}", position);
 
-            // Play explosion sound
+            // Play explosion sound (smaller volume than tower explosions)
             commands.spawn((
                 AudioPlayer::new(audio_assets.explosion_sound.clone()),
-                PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::Linear(crate::constants::VOLUME_EXPLOSION)),
+                PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::Linear(crate::constants::VOLUME_TURRET_EXPLOSION)),
             ));
 
-            // Spawn hanabi particle explosion for turrets
+            // Spawn hanabi particle explosion for turrets (more sparks/flames)
             if let Some(ref particles) = particle_effects {
                 info!("Spawning explosion particles for turret at {:?}", position);
-                crate::particles::spawn_explosion_particles(
+                crate::particles::spawn_turret_explosion_particles(
                     &mut commands,
                     particles,
                     position + Vec3::Y * 2.0,
