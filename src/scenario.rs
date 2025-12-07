@@ -13,16 +13,23 @@ use crate::selection::screen_to_ground_with_heightmap;
 // SCENARIO CONSTANTS (easily tunable)
 // ============================================================================
 
-/// Total number of waves in the scenario
-pub const TOTAL_WAVES: u32 = 3;
+/// Number of strategic waves (major assault phases)
+/// Set to 1 to use only tactical waves (continuous spawning)
+pub const STRATEGIC_WAVES: u32 = 2;
 
-/// Delay between wave spawn starts (waves overlap, so this is shorter)
+/// Delay between strategic waves (after all enemies cleared)
+pub const STRATEGIC_WAVE_DELAY: f32 = 15.0;
+
+/// Total number of tactical waves per strategic wave
+pub const TACTICAL_WAVES: u32 = 3;
+
+/// Delay between tactical wave spawn starts (waves overlap, so this is shorter)
 pub const INTER_WAVE_DELAY: f32 = 8.0;
 
 /// Units spawned per second during wave spawning
 pub const SPAWN_RATE: f32 = 10.0;
 
-/// Wave sizes for 3 waves (largest first, then reinforcement waves)
+/// Tactical wave sizes (within each strategic wave)
 pub const WAVE_SIZES: [u32; 3] = [200, 200, 300];
 
 /// Initial garrison size (number of friendly units)
@@ -73,9 +80,11 @@ pub enum WaveState {
     Idle,
     /// Preparation phase - player places turrets before waves start
     Preparation,
-    /// Active combat - waves spawn continuously, overlapping
+    /// Active combat - tactical waves spawn continuously, overlapping
     Combat,
-    /// All waves completed (victory)
+    /// Cooldown between strategic waves (all tactical waves done, enemies cleared)
+    StrategicCooldown,
+    /// All strategic waves completed (victory)
     Complete,
 }
 
@@ -95,47 +104,74 @@ pub struct ScenarioState {
 /// Wave management resource
 #[derive(Resource)]
 pub struct WaveManager {
-    /// Current wave number (1-indexed, 0 = not started)
-    pub current_wave: u32,
-    /// Total waves in scenario
-    pub total_waves: u32,
-    /// Current state of wave progression
-    pub wave_state: WaveState,
-    /// Timer until next wave starts spawning (runs during combat)
+    // === Strategic Wave Tracking ===
+    /// Current strategic wave number (1-indexed, 0 = not started)
+    pub strategic_wave: u32,
+    /// Total strategic waves in scenario
+    pub total_strategic_waves: u32,
+    /// Timer for cooldown between strategic waves
+    pub strategic_cooldown_timer: Timer,
+
+    // === Tactical Wave Tracking (within current strategic wave) ===
+    /// Current tactical wave number within strategic wave (1-indexed, 0 = not started)
+    pub tactical_wave: u32,
+    /// Total tactical waves per strategic wave
+    pub total_tactical_waves: u32,
+    /// Timer until next tactical wave starts spawning
     pub next_wave_timer: Timer,
-    /// Number of enemies remaining across all waves
+    /// Whether we're actively spawning the current tactical wave
+    pub spawning_active: bool,
+
+    // === Enemy Tracking ===
+    /// Number of enemies remaining across all tactical waves in current strategic wave
     pub enemies_remaining: u32,
-    /// Number of enemies spawned so far in current wave
+    /// Number of enemies spawned so far in current tactical wave
     pub enemies_spawned: u32,
-    /// Target enemy count for current wave
+    /// Target enemy count for current tactical wave
     pub wave_target: u32,
     /// Timer for progressive spawning
     pub spawn_timer: Timer,
+
+    // === Overall State ===
+    /// Current state of wave progression
+    pub wave_state: WaveState,
+
+    // === Turret Placement ===
     /// Turrets remaining to place during preparation
     pub turrets_remaining: u32,
     /// Currently selected turret type for placement (true = MG, false = Heavy)
     pub place_mg_turret: bool,
     /// Stack of placed turret entities for undo (most recent last)
     pub placed_turrets: Vec<Entity>,
-    /// Whether we're actively spawning the current wave
-    pub spawning_active: bool,
 }
 
 impl Default for WaveManager {
     fn default() -> Self {
         Self {
-            current_wave: 0,
-            total_waves: TOTAL_WAVES,
-            wave_state: WaveState::Idle,
+            // Strategic
+            strategic_wave: 0,
+            total_strategic_waves: STRATEGIC_WAVES,
+            strategic_cooldown_timer: Timer::from_seconds(STRATEGIC_WAVE_DELAY, TimerMode::Once),
+
+            // Tactical
+            tactical_wave: 0,
+            total_tactical_waves: TACTICAL_WAVES,
             next_wave_timer: Timer::from_seconds(INTER_WAVE_DELAY, TimerMode::Once),
+            spawning_active: false,
+
+            // Enemies
             enemies_remaining: 0,
             enemies_spawned: 0,
             wave_target: 0,
             spawn_timer: Timer::from_seconds(1.0 / SPAWN_RATE, TimerMode::Repeating),
+
+            // State
+            wave_state: WaveState::Idle,
+
+            // Turrets
             turrets_remaining: TURRET_BUDGET,
-            place_mg_turret: true, // Default to MG turret
+            place_mg_turret: true,
             placed_turrets: Vec::new(),
-            spawning_active: false,
         }
     }
 }
@@ -469,7 +505,7 @@ fn spawn_spawn_point_markers(
 }
 
 /// Wave state machine - handles transitions between wave states
-/// Waves now overlap: next wave starts spawning while previous wave enemies are still fighting
+/// Two-tier system: Strategic waves contain multiple tactical waves that spawn continuously
 fn wave_state_machine_system(
     mut wave_manager: ResMut<WaveManager>,
     scenario_state: Res<ScenarioState>,
@@ -485,15 +521,10 @@ fn wave_state_machine_system(
             // Idle state - shouldn't happen in FirebaseDelta, goes straight to Preparation
         }
         WaveState::Preparation => {
-            // Player is placing turrets. SPACE key starts wave 1.
+            // Player is placing turrets. SPACE key starts strategic wave 1.
             if keys.just_pressed(KeyCode::Space) {
-                wave_manager.current_wave = 1;
-                wave_manager.wave_state = WaveState::Combat;
-                wave_manager.spawning_active = true;
-                wave_manager.enemies_spawned = 0;
-                wave_manager.wave_target = WAVE_SIZES[0];
-                wave_manager.enemies_remaining = wave_manager.wave_target;
-                info!("Preparation complete! Wave 1 starting! Target: {} enemies", wave_manager.wave_target);
+                start_strategic_wave(&mut wave_manager, 1);
+                info!("Preparation complete! Strategic Wave 1 starting!");
             }
             // T key toggles turret type
             if keys.just_pressed(KeyCode::KeyT) {
@@ -503,40 +534,72 @@ fn wave_state_machine_system(
             }
         }
         WaveState::Combat => {
-            // Victory: all waves done spawning AND all enemies dead
-            let all_waves_spawned = wave_manager.current_wave >= wave_manager.total_waves
-                                    && !wave_manager.spawning_active;
+            // Check if all tactical waves in this strategic wave are done
+            let all_tactical_waves_spawned = wave_manager.tactical_wave >= wave_manager.total_tactical_waves
+                                              && !wave_manager.spawning_active;
 
-            if all_waves_spawned && wave_manager.enemies_remaining == 0 {
-                wave_manager.wave_state = WaveState::Complete;
-                info!("All waves completed! Victory!");
+            if all_tactical_waves_spawned && wave_manager.enemies_remaining == 0 {
+                // All tactical waves cleared - check if more strategic waves remain
+                if wave_manager.strategic_wave >= wave_manager.total_strategic_waves {
+                    // Victory!
+                    wave_manager.wave_state = WaveState::Complete;
+                    info!("All strategic waves completed! Victory!");
+                } else {
+                    // Start cooldown before next strategic wave
+                    wave_manager.wave_state = WaveState::StrategicCooldown;
+                    wave_manager.strategic_cooldown_timer.reset();
+                    info!("Strategic Wave {} cleared! Next assault in {:.0}s",
+                        wave_manager.strategic_wave, STRATEGIC_WAVE_DELAY);
+                }
                 return;
             }
 
-            // When current wave finishes spawning, start timer for next wave
+            // When current tactical wave finishes spawning, start timer for next tactical wave
             if !wave_manager.spawning_active
-               && wave_manager.current_wave < wave_manager.total_waves
+               && wave_manager.tactical_wave < wave_manager.total_tactical_waves
             {
                 wave_manager.next_wave_timer.tick(time.delta());
 
                 if wave_manager.next_wave_timer.just_finished() {
-                    // Start next wave (enemies ADD to remaining, waves overlap)
-                    wave_manager.current_wave += 1;
+                    // Start next tactical wave (enemies ADD to remaining, waves overlap)
+                    wave_manager.tactical_wave += 1;
                     wave_manager.enemies_spawned = 0;
-                    let wave_idx = (wave_manager.current_wave - 1) as usize;
+                    let wave_idx = (wave_manager.tactical_wave - 1) as usize;
                     wave_manager.wave_target = WAVE_SIZES.get(wave_idx).copied().unwrap_or(200);
                     wave_manager.enemies_remaining += wave_manager.wave_target;
                     wave_manager.spawning_active = true;
                     wave_manager.next_wave_timer.reset();
-                    info!("Wave {} starting! Target: {} enemies, total remaining: {}",
-                        wave_manager.current_wave, wave_manager.wave_target, wave_manager.enemies_remaining);
+                    info!("Strategic {}, Tactical {} starting! Target: {} enemies, total remaining: {}",
+                        wave_manager.strategic_wave, wave_manager.tactical_wave,
+                        wave_manager.wave_target, wave_manager.enemies_remaining);
                 }
+            }
+        }
+        WaveState::StrategicCooldown => {
+            // Wait for timer, then start next strategic wave
+            wave_manager.strategic_cooldown_timer.tick(time.delta());
+
+            if wave_manager.strategic_cooldown_timer.just_finished() {
+                let next_strategic = wave_manager.strategic_wave + 1;
+                start_strategic_wave(&mut wave_manager, next_strategic);
+                info!("Strategic Wave {} starting!", wave_manager.strategic_wave);
             }
         }
         WaveState::Complete => {
             // Victory state - handled by victory_defeat_check_system
         }
     }
+}
+
+/// Helper to start a new strategic wave
+fn start_strategic_wave(wave_manager: &mut WaveManager, strategic_wave_num: u32) {
+    wave_manager.strategic_wave = strategic_wave_num;
+    wave_manager.tactical_wave = 1;
+    wave_manager.wave_state = WaveState::Combat;
+    wave_manager.spawning_active = true;
+    wave_manager.enemies_spawned = 0;
+    wave_manager.wave_target = WAVE_SIZES[0];
+    wave_manager.enemies_remaining = wave_manager.wave_target;
 }
 
 /// Progressive spawning of enemies during wave
@@ -579,10 +642,11 @@ fn wave_spawner_system(
 
         // Determine spawn location based on wave number and progress
         let squad_num = wave_manager.enemies_spawned / squad_size;
-        let is_final_wave = wave_manager.current_wave == wave_manager.total_waves;
+        let is_final_strategic_wave = wave_manager.strategic_wave == wave_manager.total_strategic_waves;
+        let is_final_tactical_wave = wave_manager.tactical_wave == wave_manager.total_tactical_waves;
 
-        let base_spawn_pos = if is_final_wave {
-            // Final wave: first 2 squads from east (flanking), rest from north
+        let base_spawn_pos = if is_final_strategic_wave && is_final_tactical_wave {
+            // Final tactical wave of final strategic wave: first 2 squads from east (flanking), rest from north
             if squad_num < 2 {
                 EAST_SPAWN
             } else {
@@ -638,7 +702,7 @@ fn wave_spawner_system(
             for &unit_entity in &squad.members {
                 commands.entity(unit_entity).insert((
                     WaveEnemy {
-                        wave_number: wave_manager.current_wave,
+                        wave_number: wave_manager.tactical_wave,
                     },
                     NeedsMoveOrder,
                 ));
@@ -649,21 +713,21 @@ fn wave_spawner_system(
 
         // Log every 4th squad to reduce spam
         if (wave_manager.enemies_spawned / squad_size) % 4 == 0 {
-            info!("Wave {}: Spawned squad ({}/{} enemies)",
-                wave_manager.current_wave,
+            info!("S{}/T{}: Spawned squad ({}/{} enemies)",
+                wave_manager.strategic_wave, wave_manager.tactical_wave,
                 wave_manager.enemies_spawned, wave_manager.wave_target);
         }
 
-        // When done spawning this wave, deactivate spawning and start next wave timer
+        // When done spawning this tactical wave, deactivate spawning and start next wave timer
         if wave_manager.enemies_spawned >= wave_manager.wave_target {
             wave_manager.spawning_active = false;
             wave_manager.next_wave_timer.reset();
-            if wave_manager.current_wave < wave_manager.total_waves {
-                info!("Wave {} fully spawned, next wave in {:.0}s",
-                    wave_manager.current_wave, INTER_WAVE_DELAY);
+            if wave_manager.tactical_wave < wave_manager.total_tactical_waves {
+                info!("S{}/T{} fully spawned, next tactical wave in {:.0}s",
+                    wave_manager.strategic_wave, wave_manager.tactical_wave, INTER_WAVE_DELAY);
             } else {
-                info!("Wave {} fully spawned (final wave!)",
-                    wave_manager.current_wave);
+                info!("S{}/T{} fully spawned (final tactical wave of this assault!)",
+                    wave_manager.strategic_wave, wave_manager.tactical_wave);
             }
         }
     }
@@ -695,8 +759,8 @@ fn enemy_death_tracking_system(
         if deaths > 0 {
             // Log significant death counts (not every single death to avoid spam)
             if deaths >= 5 || actual_remaining == 0 {
-                info!("Wave {}: {} enemies killed, {} remaining",
-                    wave_manager.current_wave, deaths, actual_remaining);
+                info!("Strategic {} / Tactical {}: {} enemies killed, {} remaining",
+                    wave_manager.strategic_wave, wave_manager.tactical_wave, deaths, actual_remaining);
             }
         }
         wave_manager.enemies_remaining = actual_remaining;
@@ -755,7 +819,10 @@ fn update_wave_counter_ui(
     }
 
     for mut text in query.iter_mut() {
-        *text = Text::new(format!("Wave: {}/{}", wave_manager.current_wave, wave_manager.total_waves));
+        // Show strategic wave and tactical wave progress
+        *text = Text::new(format!("Assault: {}/{} | Wave: {}/{}",
+            wave_manager.strategic_wave, wave_manager.total_strategic_waves,
+            wave_manager.tactical_wave, wave_manager.total_tactical_waves));
     }
 }
 
@@ -920,18 +987,27 @@ fn update_preparation_ui(
             }
             WaveState::Combat => {
                 let status_text = if wave_manager.spawning_active {
-                    format!("COMBAT - Wave {} spawning...", wave_manager.current_wave)
-                } else if wave_manager.current_wave < wave_manager.total_waves {
+                    format!("COMBAT - Assault {} Wave {} spawning...",
+                        wave_manager.strategic_wave, wave_manager.tactical_wave)
+                } else if wave_manager.tactical_wave < wave_manager.total_tactical_waves {
                     let remaining = INTER_WAVE_DELAY - wave_manager.next_wave_timer.elapsed_secs();
                     format!("COMBAT - Next wave in {:.0}s", remaining.max(0.0))
                 } else {
-                    "COMBAT - Final wave!".to_string()
+                    format!("COMBAT - Final wave of Assault {}!", wave_manager.strategic_wave)
                 };
                 *text = Text::new(status_text);
                 *color = TextColor(Color::srgb(1.0, 0.5, 0.3)); // Orange
             }
+            WaveState::StrategicCooldown => {
+                let remaining = STRATEGIC_WAVE_DELAY - wave_manager.strategic_cooldown_timer.elapsed_secs();
+                *text = Text::new(format!(
+                    "ASSAULT {} CLEARED! Next assault in {:.0}s",
+                    wave_manager.strategic_wave, remaining.max(0.0)
+                ));
+                *color = TextColor(Color::srgb(0.3, 0.8, 1.0)); // Cyan
+            }
             WaveState::Complete => {
-                *text = Text::new("VICTORY! All waves cleared!");
+                *text = Text::new("VICTORY! All assaults repelled!");
                 *color = TextColor(Color::srgb(0.3, 1.0, 0.3)); // Green
             }
             WaveState::Idle => {
@@ -953,9 +1029,9 @@ fn victory_defeat_check_system(
         return;
     }
 
-    // Victory: all waves complete
+    // Victory: all strategic waves complete
     if wave_manager.wave_state == WaveState::Complete {
-        info!("VICTORY! All {} waves cleared!", wave_manager.total_waves);
+        info!("VICTORY! All {} assaults repelled!", wave_manager.total_strategic_waves);
         game_state.game_ended = true;
         game_state.winner = Some(Team::A);
         return;
@@ -964,7 +1040,7 @@ fn victory_defeat_check_system(
     // Defeat: bunker destroyed
     if bunker_query.is_empty() && scenario_state.scenario_type == ScenarioType::FirebaseDelta {
         // Only trigger if we've started (bunker should exist after initialization)
-        if wave_manager.current_wave > 0 {
+        if wave_manager.strategic_wave > 0 {
             info!("DEFEAT! Command bunker destroyed!");
             game_state.game_ended = true;
             game_state.winner = Some(Team::B);
