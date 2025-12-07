@@ -1,9 +1,15 @@
 // Objective system module - Uplink Tower mechanics
 use bevy::prelude::*;
+use bevy::pbr::{MaterialPipeline, MaterialPipelineKey};
+use bevy::render::mesh::MeshVertexBufferLayoutRef;
+use bevy::render::render_resource::{
+    AsBindGroup, RenderPipelineDescriptor, SpecializedMeshPipelineError, ShaderRef,
+};
+use bevy::render::alpha::AlphaMode;
 use crate::types::*;
 use crate::constants::*;
 use crate::procedural_meshes::*;
-use crate::shield::{spawn_shield, ShieldMaterial, ShieldConfig};
+use crate::shield::{spawn_shield, ShieldMaterial, ShieldConfig, Shield, DestroyedShield};
 
 // ===== TOWER CREATION =====
 
@@ -221,79 +227,12 @@ pub fn win_condition_system(
     }
 }
 
-// ===== UI SYSTEM =====
-
-pub fn update_objective_ui_system(
-    mut ui_query: Query<&mut Text, With<ObjectiveUI>>,
-    tower_query: Query<(&UplinkTower, &Health), With<UplinkTower>>,
-    shield_query: Query<&crate::shield::Shield>,
-    destroyed_shield_query: Query<&crate::shield::DestroyedShield>,
-    game_state: Res<GameState>,
-) {
-    for mut text in ui_query.iter_mut() {
-        let mut ui_text = String::new();
-
-        // Tower and Shield health display
-        ui_text.push_str("=== UPLINK TOWERS ===\n");
-        for (tower, health) in tower_query.iter() {
-            // Find shield for this team
-            let shield_status = if let Some(shield) = shield_query.iter().find(|s| s.team == tower.team) {
-                format!("Shield: {:.0}/{:.0} ({:.0}%)",
-                    shield.current_hp,
-                    shield.max_hp,
-                    shield.health_percent() * 100.0)
-            } else if let Some(destroyed) = destroyed_shield_query.iter().find(|d| d.team == tower.team) {
-                format!("Shield: RESPAWN IN {:.1}s", destroyed.respawn_timer)
-            } else {
-                "Shield: OFFLINE".to_string()
-            };
-
-            ui_text.push_str(&format!(
-                "Team {:?}:\n  Tower: {:.0}/{:.0} HP ({:.1}%)\n  {}\n",
-                tower.team,
-                health.current,
-                health.max,
-                health.health_percentage() * 100.0,
-                shield_status
-            ));
-        }
-
-        // Game status
-        if game_state.game_ended {
-            if let Some(winner) = game_state.winner {
-                ui_text.push_str(&format!("\n🏆 VICTORY: Team {:?} Wins! 🏆", winner));
-            }
-        } else {
-            ui_text.push_str("\n⚔️ Battle in Progress ⚔️");
-        }
-
-        **text = ui_text;
-    }
-}
-
-#[derive(Component)]
-pub struct ObjectiveUI;
 
 #[derive(Component)]
 pub struct DebugModeUI;
 
-pub fn spawn_objective_ui(mut commands: Commands) {
-    commands.spawn((
-        Text::new("Loading objective data..."),
-        TextFont {
-            font_size: 18.0,
-            ..default()
-        },
-        TextColor(Color::WHITE),
-        Node {
-            position_type: PositionType::Absolute,
-            top: Val::Px(120.0),
-            left: Val::Px(10.0),
-            ..default()
-        },
-        ObjectiveUI,
-    ));
-
+/// Spawn debug mode UI indicator (shown at bottom left when debug mode active)
+pub fn spawn_debug_mode_ui(mut commands: Commands) {
     // Debug mode indicator (hidden by default)
     commands.spawn((
         Text::new(""),
@@ -367,7 +306,7 @@ pub fn update_debug_mode_ui(
             let mg_status = if debug_mode.mg_turret_enabled { "ON" } else { "OFF" };
             let heavy_status = if debug_mode.heavy_turret_enabled { "ON" } else { "OFF" };
             **text = format!(
-                "[0] DEBUG: 1-6=explosions | C=collision | S=destroy shield | M=MG turret ({}) | H=Heavy turret ({})",
+                "[0] DEBUG: 1-6=explosions 7=turret WFX | C=collision | S=destroy shield | M=MG turret ({}) | H=Heavy turret ({})",
                 mg_status, heavy_status
             );
         } else {
@@ -535,5 +474,275 @@ pub fn debug_warfx_test_system(
         );
 
         info!("🔶 War FX dot sparkles (75 + 15) spawned at center (0, 10, 0)");
+    }
+
+    // 7 key: Spawn turret WFX explosion (lighter version)
+    if keyboard_input.just_pressed(KeyCode::Digit7) {
+        info!("💥 DEBUG: War FX TURRET explosion hotkey (7) pressed!");
+
+        let position = Vec3::new(0.0, 10.0, 0.0);
+        let scale = 1.5; // Smaller scale for turret explosion
+
+        crate::wfx_spawn::spawn_turret_wfx_explosion(
+            &mut commands,
+            &mut meshes,
+            &mut additive_materials,
+            &mut smoke_materials,
+            &asset_server,
+            position,
+            scale,
+        );
+
+        info!("💥 War FX TURRET explosion spawned at center (0, 10, 0) with scale {}", scale);
+    }
+}
+
+// ============================================================================
+// TOWER & SHIELD HEALTH BAR SYSTEM
+// ============================================================================
+
+/// Tower health bar width
+const TOWER_HEALTH_BAR_WIDTH: f32 = 12.0;
+/// Tower health bar height
+const TOWER_HEALTH_BAR_HEIGHT: f32 = 0.8;
+/// Height offset above tower for health bar
+const TOWER_HEALTH_BAR_Y_OFFSET: f32 = 25.0;
+/// Shield bar offset above tower health bar
+const SHIELD_BAR_Y_OFFSET: f32 = 1.5;
+
+/// Component linking tower health bar to its parent tower
+#[derive(Component)]
+pub struct TowerHealthBar {
+    pub tower_entity: Entity,
+}
+
+/// Component linking shield health bar to its parent tower
+#[derive(Component)]
+pub struct ShieldHealthBar {
+    pub tower_entity: Entity,
+    pub team: Team,
+}
+
+/// Shader-based shield bar material - renders cyan/gray split based on health
+#[derive(Asset, TypePath, AsBindGroup, Debug, Clone)]
+pub struct ShieldBarMaterial {
+    /// x: health_fraction (0.0-1.0), yzw: unused
+    #[uniform(0)]
+    pub health_data: Vec4,
+}
+
+impl Material for ShieldBarMaterial {
+    fn fragment_shader() -> ShaderRef {
+        "shaders/shield_bar.wgsl".into()
+    }
+
+    fn alpha_mode(&self) -> AlphaMode {
+        AlphaMode::Opaque
+    }
+
+    fn specialize(
+        _pipeline: &MaterialPipeline<Self>,
+        descriptor: &mut RenderPipelineDescriptor,
+        _layout: &MeshVertexBufferLayoutRef,
+        _key: MaterialPipelineKey<Self>,
+    ) -> Result<(), SpecializedMeshPipelineError> {
+        descriptor.primitive.cull_mode = None;
+        Ok(())
+    }
+}
+
+/// Spawn a health bar for a tower
+fn spawn_tower_health_bar(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    health_bar_materials: &mut Assets<crate::turrets::HealthBarMaterial>,
+    tower_entity: Entity,
+    tower_pos: Vec3,
+) {
+    let bar_mesh = meshes.add(Mesh::from(Rectangle::new(TOWER_HEALTH_BAR_WIDTH, TOWER_HEALTH_BAR_HEIGHT)));
+
+    let bar_material = health_bar_materials.add(crate::turrets::HealthBarMaterial {
+        health_data: Vec4::new(1.0, 0.0, 0.0, 0.0),
+    });
+
+    let bar_y = tower_pos.y + TOWER_HEALTH_BAR_Y_OFFSET;
+
+    commands.spawn((
+        Mesh3d(bar_mesh),
+        MeshMaterial3d(bar_material),
+        Transform::from_translation(Vec3::new(tower_pos.x, bar_y, tower_pos.z)),
+        TowerHealthBar { tower_entity },
+        bevy::pbr::NotShadowCaster,
+    ));
+}
+
+/// Spawn a shield bar for a tower
+fn spawn_shield_health_bar(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    shield_bar_materials: &mut Assets<ShieldBarMaterial>,
+    tower_entity: Entity,
+    tower_pos: Vec3,
+    team: Team,
+) {
+    let bar_mesh = meshes.add(Mesh::from(Rectangle::new(TOWER_HEALTH_BAR_WIDTH, TOWER_HEALTH_BAR_HEIGHT)));
+
+    let bar_material = shield_bar_materials.add(ShieldBarMaterial {
+        health_data: Vec4::new(1.0, 0.0, 0.0, 0.0),
+    });
+
+    let bar_y = tower_pos.y + TOWER_HEALTH_BAR_Y_OFFSET + SHIELD_BAR_Y_OFFSET;
+
+    commands.spawn((
+        Mesh3d(bar_mesh),
+        MeshMaterial3d(bar_material),
+        Transform::from_translation(Vec3::new(tower_pos.x, bar_y, tower_pos.z)),
+        ShieldHealthBar { tower_entity, team },
+        bevy::pbr::NotShadowCaster,
+    ));
+}
+
+/// System to spawn health bars for towers that don't have them yet
+pub fn spawn_tower_health_bars(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut health_bar_materials: ResMut<Assets<crate::turrets::HealthBarMaterial>>,
+    mut shield_bar_materials: ResMut<Assets<ShieldBarMaterial>>,
+    tower_query: Query<(Entity, &Transform, &UplinkTower), With<Health>>,
+    tower_health_bar_query: Query<&TowerHealthBar>,
+    shield_health_bar_query: Query<&ShieldHealthBar>,
+) {
+    for (tower_entity, transform, uplink_tower) in tower_query.iter() {
+        // Spawn tower health bar if missing
+        let has_tower_bar = tower_health_bar_query.iter().any(|bar| bar.tower_entity == tower_entity);
+        if !has_tower_bar {
+            spawn_tower_health_bar(
+                &mut commands,
+                &mut meshes,
+                &mut health_bar_materials,
+                tower_entity,
+                transform.translation,
+            );
+        }
+
+        // Spawn shield health bar if missing
+        let has_shield_bar = shield_health_bar_query.iter().any(|bar| bar.tower_entity == tower_entity);
+        if !has_shield_bar {
+            spawn_shield_health_bar(
+                &mut commands,
+                &mut meshes,
+                &mut shield_bar_materials,
+                tower_entity,
+                transform.translation,
+                uplink_tower.team,
+            );
+        }
+    }
+}
+
+/// Distance to offset health bars towards camera (to prevent occlusion by tower)
+const HEALTH_BAR_CAMERA_OFFSET: f32 = 5.0;
+
+/// System to update tower and shield health bars
+pub fn update_tower_health_bars(
+    mut commands: Commands,
+    tower_query: Query<(Entity, &Transform, &Health, &UplinkTower), With<UplinkTower>>,
+    mut tower_bar_query: Query<(Entity, &TowerHealthBar, &mut Transform, &MeshMaterial3d<crate::turrets::HealthBarMaterial>), Without<UplinkTower>>,
+    mut shield_bar_query: Query<(Entity, &ShieldHealthBar, &mut Transform, &MeshMaterial3d<ShieldBarMaterial>), (Without<UplinkTower>, Without<TowerHealthBar>)>,
+    mut health_bar_materials: ResMut<Assets<crate::turrets::HealthBarMaterial>>,
+    mut shield_bar_materials: ResMut<Assets<ShieldBarMaterial>>,
+    shield_query: Query<&Shield>,
+    destroyed_shield_query: Query<&DestroyedShield>,
+    camera_query: Query<&Transform, (With<RtsCamera>, Without<UplinkTower>, Without<TowerHealthBar>, Without<ShieldHealthBar>)>,
+) {
+    let Ok(camera_transform) = camera_query.single() else { return };
+    let camera_pos = camera_transform.translation;
+
+    // Create lookup for tower data
+    let towers: std::collections::HashMap<Entity, (&Transform, &Health, &UplinkTower)> = tower_query
+        .iter()
+        .map(|(e, t, h, u)| (e, (t, h, u)))
+        .collect();
+
+    // Billboard rotation: use camera's rotation so bars are always parallel to camera view plane
+    // This works for any camera angle including top-down
+    let billboard_rotation = camera_transform.rotation;
+
+    // Camera's up direction in world space - used to offset shield bar above tower bar
+    let camera_up = camera_transform.up();
+
+    // Update tower health bars
+    for (bar_entity, tower_bar, mut bar_transform, material_handle) in tower_bar_query.iter_mut() {
+        if let Some((tower_transform, health, _)) = towers.get(&tower_bar.tower_entity) {
+            let health_fraction = health.current / health.max;
+
+            // Base position above tower
+            let tower_pos = tower_transform.translation;
+            let bar_base_pos = Vec3::new(
+                tower_pos.x,
+                tower_pos.y + TOWER_HEALTH_BAR_Y_OFFSET,
+                tower_pos.z,
+            );
+
+            // Calculate direction from bar to camera (horizontal only for offset)
+            let horizontal_to_camera = Vec3::new(
+                camera_pos.x - bar_base_pos.x,
+                0.0,
+                camera_pos.z - bar_base_pos.z,
+            ).normalize_or_zero();
+
+            // Offset bar position towards camera to prevent occlusion
+            let bar_pos = bar_base_pos + horizontal_to_camera * HEALTH_BAR_CAMERA_OFFSET;
+            bar_transform.translation = bar_pos;
+            bar_transform.rotation = billboard_rotation;
+
+            if let Some(material) = health_bar_materials.get_mut(&material_handle.0) {
+                material.health_data.x = health_fraction;
+            }
+        } else {
+            commands.entity(bar_entity).despawn();
+        }
+    }
+
+    // Update shield health bars
+    for (bar_entity, shield_bar, mut bar_transform, material_handle) in shield_bar_query.iter_mut() {
+        if let Some((tower_transform, _, _)) = towers.get(&shield_bar.tower_entity) {
+            // Find shield for this team
+            let shield_fraction = if let Some(shield) = shield_query.iter().find(|s| s.team == shield_bar.team) {
+                shield.current_hp / shield.max_hp
+            } else if destroyed_shield_query.iter().any(|d| d.team == shield_bar.team) {
+                // Shield destroyed - show empty bar
+                0.0
+            } else {
+                0.0
+            };
+
+            // Base position above tower (same as tower bar base)
+            let tower_pos = tower_transform.translation;
+            let bar_base_pos = Vec3::new(
+                tower_pos.x,
+                tower_pos.y + TOWER_HEALTH_BAR_Y_OFFSET,
+                tower_pos.z,
+            );
+
+            // Calculate direction from bar to camera (horizontal only for offset)
+            let horizontal_to_camera = Vec3::new(
+                camera_pos.x - bar_base_pos.x,
+                0.0,
+                camera_pos.z - bar_base_pos.z,
+            ).normalize_or_zero();
+
+            // Offset bar position towards camera to prevent occlusion
+            // Then offset in camera's up direction so shield bar is always above tower bar on screen
+            let bar_pos = bar_base_pos + horizontal_to_camera * HEALTH_BAR_CAMERA_OFFSET + camera_up * SHIELD_BAR_Y_OFFSET;
+            bar_transform.translation = bar_pos;
+            bar_transform.rotation = billboard_rotation;
+
+            if let Some(material) = shield_bar_materials.get_mut(&material_handle.0) {
+                material.health_data.x = shield_fraction;
+            }
+        } else {
+            commands.entity(bar_entity).despawn();
+        }
     }
 } 

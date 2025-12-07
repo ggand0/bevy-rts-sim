@@ -19,6 +19,7 @@ mod utils;
 
 // Re-export main types for external use
 pub use state::SelectionState;
+pub use utils::screen_to_ground_with_heightmap;
 
 // Re-export systems for main.rs
 pub use input::{selection_input_system, box_selection_update_system};

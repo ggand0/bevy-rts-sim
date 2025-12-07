@@ -1383,6 +1383,473 @@ pub fn animate_warfx_smoke_billboards(
     }
 }
 
+/// Spawns a lighter WFX explosion suitable for turrets
+/// Smaller scale, fewer particles, shorter lifetime than tower explosions
+///
+/// Components:
+/// - 1 center glow (instead of 2) - smaller, shorter lifetime
+/// - 28 flame billboards (instead of 57) - smaller scale
+/// - Skip delayed smoke emitter
+/// - 5 glow sparkles (instead of 35)
+/// - 50 dot sparkles (instead of 75) - larger size
+/// - Skip vertical sparkles
+///
+/// Scale: 1.0-1.5x (vs tower's 4.0x)
+/// Lifetime: 0.4-0.5s (vs 0.7s)
+pub fn spawn_turret_wfx_explosion(
+    commands: &mut Commands,
+    meshes: &mut ResMut<Assets<Mesh>>,
+    additive_materials: &mut ResMut<Assets<AdditiveMaterial>>,
+    smoke_scroll_materials: &mut ResMut<Assets<SmokeScrollMaterial>>,
+    asset_server: &Res<AssetServer>,
+    position: Vec3,
+    scale: f32,
+) {
+    info!("💥 WAR FX: Spawning TURRET explosion at {:?} (scale: {})", position, scale);
+
+    // 1. Single center glow (smaller, shorter lifetime)
+    spawn_turret_center_glow(
+        commands,
+        meshes,
+        additive_materials,
+        asset_server,
+        position,
+        scale,
+    );
+
+    // 2. Fewer flame billboards (12 instead of 57)
+    spawn_turret_explosion_flames(
+        commands,
+        meshes,
+        smoke_scroll_materials,
+        asset_server,
+        position,
+        scale,
+    );
+
+    // 3. Skip smoke emitter (too long-lasting for small turret)
+
+    // 4. Fewer glow sparkles (5 instead of 35)
+    spawn_turret_glow_sparkles(
+        commands,
+        meshes,
+        additive_materials,
+        asset_server,
+        position,
+        scale,
+    );
+
+    // 5. Fewer dot sparkles (10 instead of 75)
+    spawn_turret_dot_sparkles(
+        commands,
+        meshes,
+        additive_materials,
+        asset_server,
+        position,
+        scale,
+    );
+
+    // 6. Skip vertical sparkles
+
+    info!("✅ WAR FX: Turret explosion complete - 4 emitters spawned");
+}
+
+/// Single center glow for turret explosion (shorter lifetime, smaller)
+fn spawn_turret_center_glow(
+    commands: &mut Commands,
+    meshes: &mut ResMut<Assets<Mesh>>,
+    additive_materials: &mut ResMut<Assets<AdditiveMaterial>>,
+    asset_server: &Res<AssetServer>,
+    position: Vec3,
+    scale: f32,
+) {
+    let glow_texture = asset_server.load("textures/wfx/WFX_T_GlowCircle A8.png");
+
+    // Single glow (not 2 like tower)
+    let glow_material = additive_materials.add(AdditiveMaterial {
+        tint_color: Vec4::new(1.0, 1.0, 1.0, 1.0),
+        soft_particles_fade: Vec4::new(1.0, 0.0, 0.0, 0.0),
+        particle_texture: glow_texture,
+    });
+
+    // Smaller quad (6.0 instead of 9.0)
+    let quad_size = 6.0 * scale;
+    let quad_mesh = meshes.add(Rectangle::new(quad_size, quad_size));
+
+    // Shorter lifetime (0.5s instead of 0.7s)
+    let lifetime = 0.5;
+
+    let scale_curve = AnimationCurve {
+        keyframes: vec![
+            (0.0, 0.3),
+            (0.15, 0.7),
+            (0.50, 1.0),
+            (0.75, 0.7),
+            (1.0, 0.4),
+        ],
+    };
+
+    let alpha_curve = AnimationCurve {
+        keyframes: vec![
+            (0.0, 0.0),
+            (0.10, 1.0),
+            (0.25, 1.0),
+            (0.95, 0.0),
+            (1.0, 0.0),
+        ],
+    };
+
+    let color_curve = ColorCurve {
+        keyframes: vec![
+            (0.0, Vec3::new(0.976, 0.753, 0.714)),
+            (0.5, Vec3::new(1.0, 0.478, 0.478)),
+            (1.0, Vec3::new(1.0, 0.478, 0.478)),
+        ],
+    };
+
+    commands.spawn((
+        Mesh3d(quad_mesh),
+        MeshMaterial3d(glow_material),
+        Transform::from_translation(position)
+            .with_rotation(Quat::from_rotation_z(45.0_f32.to_radians())),
+        Visibility::Visible,
+        bevy::pbr::NotShadowCaster,
+        bevy::pbr::NotShadowReceiver,
+        WarFXExplosion {
+            lifetime: 0.0,
+            max_lifetime: lifetime,
+        },
+        AnimatedBillboard {
+            scale_curve,
+            alpha_curve,
+            color_curve,
+            velocity: Vec3::ZERO,
+            rotation_speed: 0.0,
+            base_rotation: 0.0,
+        },
+        Name::new("WFX_TurretGlow"),
+    ));
+}
+
+/// Flame billboards for turret explosion (28 particles)
+fn spawn_turret_explosion_flames(
+    commands: &mut Commands,
+    meshes: &mut ResMut<Assets<Mesh>>,
+    smoke_materials: &mut ResMut<Assets<SmokeScrollMaterial>>,
+    asset_server: &Res<AssetServer>,
+    position: Vec3,
+    base_scale: f32,
+) {
+    let smoke_texture = asset_server.load("textures/wfx/WFX_T_SmokeLoopAlpha.tga");
+
+    let mut rng = rand::thread_rng();
+
+    // 28 particles total
+    let bursts = [
+        (0.00_f32, 14_u32),
+        (0.08_f32, 9_u32),
+        (0.15_f32, 5_u32),
+    ];
+
+    let start_colors = [
+        Vec3::new(1.0, 0.922, 0.827),
+        Vec3::new(1.0, 0.522, 0.2),
+        Vec3::new(0.663, 0.235, 0.184),
+        Vec3::new(0.996, 0.741, 0.498),
+    ];
+
+    // Smaller quad (3.5 instead of 5.0)
+    let quad_size = 3.5 * base_scale;
+    let quad_mesh = meshes.add(create_quad_mesh(quad_size));
+
+    for (delay, count) in bursts {
+        for i in 0..count {
+            // Smaller spread radius
+            let radius = rng.gen_range(1.0..2.5) * base_scale;
+            let theta = rng.gen_range(0.0..std::f32::consts::TAU);
+            let phi = rng.gen_range(0.3..std::f32::consts::PI);
+            let offset = Vec3::new(
+                radius * phi.sin() * theta.cos(),
+                radius * phi.cos(),
+                radius * phi.sin() * theta.sin(),
+            );
+
+            // Shorter lifetime (2.0-2.5s instead of 3-4s)
+            let lifetime = rng.gen_range(2.0..2.5);
+            let initial_rotation = rng.gen_range(0.0..std::f32::consts::TAU);
+            let size_mult = rng.gen_range(0.7..1.0);
+            let color_index = rng.gen_range(0..4);
+            let start_color = start_colors[color_index];
+
+            let scroll_speed = 10.0_f32;
+            let initial_alpha = 0.999_f32;
+            let packed_w = scroll_speed + initial_alpha;
+            let smoke_material = smoke_materials.add(SmokeScrollMaterial {
+                tint_color_and_speed: Vec4::new(
+                    start_color.x,
+                    start_color.y,
+                    start_color.z,
+                    packed_w,
+                ),
+                smoke_texture: smoke_texture.clone(),
+            });
+
+            let scale_curve = AnimationCurve {
+                keyframes: vec![
+                    (0.0, 0.396 * size_mult),
+                    (0.05, 0.814 * size_mult),
+                    (1.0, 1.0 * size_mult),
+                ],
+            };
+
+            let alpha_curve = AnimationCurve {
+                keyframes: vec![
+                    (0.0, 1.0),
+                    (0.25, 1.0),
+                    (0.5, 0.6),
+                    (1.0, 0.0),
+                ],
+            };
+
+            let color_curve = ColorCurve {
+                keyframes: vec![
+                    (0.0, start_color),
+                    (0.2, start_color * 0.694),
+                    (0.41, start_color * 0.404),
+                    (1.0, start_color * 0.596),
+                ],
+            };
+
+            // Slower velocity
+            let velocity = Vec3::new(
+                rng.gen_range(-2.0..2.0),
+                rng.gen_range(2.0..5.0),
+                rng.gen_range(-2.0..2.0),
+            ) * base_scale * 0.4;
+
+            let rotation_speed = rng.gen_range(-1.2..1.2);
+            let is_active = delay == 0.0;
+
+            commands.spawn((
+                Mesh3d(quad_mesh.clone()),
+                MeshMaterial3d(smoke_material),
+                Transform::from_translation(position + offset)
+                    .with_rotation(Quat::from_rotation_z(initial_rotation))
+                    .with_scale(if is_active { Vec3::splat(0.396 * size_mult) } else { Vec3::ZERO }),
+                if is_active { Visibility::Visible } else { Visibility::Hidden },
+                bevy::pbr::NotShadowCaster,
+                bevy::pbr::NotShadowReceiver,
+                WarFXExplosion {
+                    lifetime: 0.0,
+                    max_lifetime: lifetime,
+                },
+                WarFxFlame {
+                    spawn_delay: delay,
+                    active: is_active,
+                },
+                AnimatedExplosionBillboard {
+                    scale_curve,
+                    alpha_curve,
+                    color_curve,
+                    velocity,
+                    rotation_speed,
+                    base_rotation: initial_rotation,
+                },
+                Name::new(format!("WFX_TurretFlame_{}_{}", delay as i32 * 100, i)),
+            ));
+        }
+    }
+}
+
+/// Fewer glow sparkles for turret (5 instead of 35)
+fn spawn_turret_glow_sparkles(
+    commands: &mut Commands,
+    meshes: &mut ResMut<Assets<Mesh>>,
+    additive_materials: &mut ResMut<Assets<AdditiveMaterial>>,
+    asset_server: &Res<AssetServer>,
+    position: Vec3,
+    scale: f32,
+) {
+    let glow_texture = asset_server.load("textures/wfx/WFX_T_GlowCircle A8.png");
+
+    let mut rng = rand::thread_rng();
+
+    // Single burst of 5 particles (vs 20+10+5=35)
+    let particle_count = 5;
+
+    let base_size = 0.12 * scale;
+    let quad_mesh = meshes.add(Rectangle::new(base_size, base_size));
+
+    for _ in 0..particle_count {
+        let theta = rng.gen_range(0.0..std::f32::consts::TAU);
+        let phi = rng.gen_range(0.0..(60.0_f32).to_radians());
+        let dir = Vec3::new(
+            phi.sin() * theta.cos(),
+            phi.cos(),
+            phi.sin() * theta.sin(),
+        ).normalize();
+
+        let spawn_offset = dir * rng.gen_range(0.0..1.5) * scale;
+        let speed = 18.0 * scale; // Slightly slower
+        let initial_velocity = dir * speed;
+        let lifetime = rng.gen_range(0.2..0.3);
+        let size_mult = rng.gen_range(0.5..1.0);
+
+        let scale_curve = AnimationCurve {
+            keyframes: vec![
+                (0.0, 0.399 * size_mult * scale),
+                (0.35, 0.764 * size_mult * scale),
+                (1.0, 0.990 * size_mult * scale),
+            ],
+        };
+
+        let alpha_curve = AnimationCurve {
+            keyframes: vec![
+                (0.0, 1.0),
+                (0.7, 1.0),
+                (1.0, 0.0),
+            ],
+        };
+
+        let color_curve = ColorCurve {
+            keyframes: vec![
+                (0.0, Vec3::new(1.0, 1.0, 1.0)),
+                (0.1, Vec3::new(1.0, 0.973, 0.843)),
+                (0.3, Vec3::new(1.0, 0.945, 0.471)),
+                (0.6, Vec3::new(1.0, 0.796, 0.420)),
+                (0.85, Vec3::new(0.718, 0.196, 0.0)),
+            ],
+        };
+
+        let sparkle_material = additive_materials.add(AdditiveMaterial {
+            tint_color: Vec4::new(1.0, 1.0, 1.0, 1.0),
+            soft_particles_fade: Vec4::new(1.0, 0.0, 0.0, 0.0),
+            particle_texture: glow_texture.clone(),
+        });
+
+        commands.spawn((
+            Mesh3d(quad_mesh.clone()),
+            MeshMaterial3d(sparkle_material),
+            Transform::from_translation(position + spawn_offset)
+                .with_scale(Vec3::splat(0.399 * size_mult)),
+            Visibility::Visible,
+            bevy::pbr::NotShadowCaster,
+            bevy::pbr::NotShadowReceiver,
+            WarFXExplosion {
+                lifetime: 0.0,
+                max_lifetime: lifetime,
+            },
+            WarFxFlame {
+                spawn_delay: 0.0,
+                active: true,
+            },
+            AnimatedSparkle {
+                scale_curve,
+                alpha_curve,
+                color_curve,
+                velocity: initial_velocity,
+                gravity: 3.0 * scale,
+            },
+            Name::new("WFX_TurretSparkle"),
+        ));
+    }
+}
+
+/// Dot sparkles for turret (50 particles, larger size)
+fn spawn_turret_dot_sparkles(
+    commands: &mut Commands,
+    meshes: &mut ResMut<Assets<Mesh>>,
+    additive_materials: &mut ResMut<Assets<AdditiveMaterial>>,
+    asset_server: &Res<AssetServer>,
+    position: Vec3,
+    scale: f32,
+) {
+    let dot_texture = asset_server.load("textures/wfx/WFX_T_GlowCircle A8.png");
+
+    let mut rng = rand::thread_rng();
+
+    // 50 particles
+    let particle_count = 50;
+
+    // Larger size (0.25 instead of 0.15)
+    let base_size = 0.25 * scale;
+    let quad_mesh = meshes.add(Rectangle::new(base_size, base_size));
+
+    for _ in 0..particle_count {
+        let theta = rng.gen_range(0.0..std::f32::consts::TAU);
+        let phi = rng.gen_range(0.0..(45.0_f32).to_radians());
+        let dir = Vec3::new(
+            phi.sin() * theta.cos(),
+            phi.cos(),
+            phi.sin() * theta.sin(),
+        ).normalize();
+
+        let spawn_offset = dir * rng.gen_range(0.0..1.2) * scale;
+        let speed = rng.gen_range(10.0..18.0) * scale;
+        let initial_velocity = dir * speed;
+        let lifetime = rng.gen_range(0.15..0.25);
+        let size_mult = rng.gen_range(0.5..1.0);
+
+        let scale_curve = AnimationCurve {
+            keyframes: vec![
+                (0.0, 0.399 * size_mult * scale),
+                (0.35, 0.764 * size_mult * scale),
+                (1.0, 0.990 * size_mult * scale),
+            ],
+        };
+
+        let alpha_curve = AnimationCurve {
+            keyframes: vec![
+                (0.0, 1.0),
+                (0.5, 1.0),
+                (1.0, 0.0),
+            ],
+        };
+
+        let color_curve = ColorCurve {
+            keyframes: vec![
+                (0.0, Vec3::new(1.0, 1.0, 1.0)),
+                (0.2, Vec3::new(1.0, 0.984, 0.843)),
+                (0.4, Vec3::new(1.0, 0.945, 0.471)),
+                (0.5, Vec3::new(1.0, 0.796, 0.420)),
+                (0.75, Vec3::new(0.718, 0.196, 0.0)),
+        ],
+        };
+
+        let sparkle_material = additive_materials.add(AdditiveMaterial {
+            tint_color: Vec4::new(1.0, 1.0, 1.0, 1.0),
+            soft_particles_fade: Vec4::new(1.0, 0.0, 0.0, 0.0),
+            particle_texture: dot_texture.clone(),
+        });
+
+        commands.spawn((
+            Mesh3d(quad_mesh.clone()),
+            MeshMaterial3d(sparkle_material),
+            Transform::from_translation(position + spawn_offset)
+                .with_scale(Vec3::splat(0.399 * size_mult)),
+            Visibility::Visible,
+            bevy::pbr::NotShadowCaster,
+            bevy::pbr::NotShadowReceiver,
+            WarFXExplosion {
+                lifetime: 0.0,
+                max_lifetime: lifetime,
+            },
+            WarFxFlame {
+                spawn_delay: 0.0,
+                active: true,
+            },
+            AnimatedSparkle {
+                scale_curve,
+                alpha_curve,
+                color_curve,
+                velocity: initial_velocity,
+                gravity: 1.5 * scale,
+            },
+            Name::new("WFX_TurretDotSparkle"),
+        ));
+    }
+}
+
 /// System to handle spawn delay for explosion flames
 /// Flames with spawn_delay > 0 are hidden until their delay elapses
 /// Once active, the animate_warfx_billboards system handles animation

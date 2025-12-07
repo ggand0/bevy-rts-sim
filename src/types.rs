@@ -119,6 +119,10 @@ pub struct RtsCamera {
 #[derive(Component)]
 pub struct FpsText;
 
+/// Marker for the game info text (can be hidden during scenarios)
+#[derive(Component)]
+pub struct GameInfoUI;
+
 #[derive(Component)]
 pub struct LaserProjectile {
     pub velocity: Vec3,

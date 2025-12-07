@@ -77,7 +77,7 @@ pub fn setup_scene(
         shield_impact_sound,
     });
 
-    // UI text for game info
+    // UI text for game info (can be hidden during scenarios)
     commands.spawn((
         Text::new("5,000 vs 5,000 Units (100 squads/team)\nLeft-click: Select | Right-click: Move | Middle-drag: Rotate | Scroll: Zoom\nShift+click: Add to selection | G: Advance All | H: Retreat All | F: Volley Fire"),
         TextFont {
@@ -91,6 +91,7 @@ pub fn setup_scene(
             left: Val::Px(10.0),
             ..default()
         },
+        GameInfoUI,
     ));
 
     // Dedicated FPS display in green (top-right corner)
@@ -120,7 +121,7 @@ pub fn spawn_army_with_squads(
     heightmap: Res<TerrainHeightmap>,
 ) {
     // Create battle droid mesh (simple humanoid shape using cubes)
-    let droid_mesh = create_battle_droid_mesh(&mut meshes);
+    let droid_mesh = create_battle_droid_mesh_internal(&mut meshes);
     
     // Team A materials (current blue-gray theme)
     let team_a_body_material = materials.add(StandardMaterial {
@@ -228,6 +229,210 @@ pub fn spawn_army_with_squads(
     
     info!("Spawned {} squads per team ({} droids per squad, {} total units)", 
           squads_per_team, SQUAD_SIZE, squads_per_team * SQUAD_SIZE * 2);
+}
+
+/// Materials needed for spawning units
+pub struct UnitMaterials {
+    pub body_material: Handle<StandardMaterial>,
+    pub head_material: Handle<StandardMaterial>,
+    pub commander_body_material: Handle<StandardMaterial>,
+    pub commander_head_material: Handle<StandardMaterial>,
+}
+
+/// Spawn a single squad at a specific position
+/// Returns the squad_id of the newly created squad
+pub fn spawn_single_squad(
+    commands: &mut Commands,
+    squad_manager: &mut SquadManager,
+    droid_mesh: &Handle<Mesh>,
+    unit_materials: &UnitMaterials,
+    materials: &mut Assets<StandardMaterial>,
+    team: Team,
+    position: Vec3,
+    facing_direction: Vec3,
+    heightmap: &TerrainHeightmap,
+) -> u32 {
+    let mut rng = rand::thread_rng();
+
+    // Create the squad
+    let squad_id = squad_manager.create_squad(team, position, facing_direction);
+
+    // Get formation positions for this squad
+    let formation_positions = assign_formation_positions(FormationType::Rectangle);
+    let commander_pos = get_commander_position(FormationType::Rectangle);
+
+    // Spawn units for this squad
+    for (unit_index, &(row, col)) in formation_positions.iter().enumerate() {
+        if unit_index >= SQUAD_SIZE {
+            break;
+        }
+
+        let is_commander = (row, col) == commander_pos;
+
+        // Calculate unit position within the squad formation
+        let formation_offset = calculate_formation_offset(
+            FormationType::Rectangle,
+            row,
+            col,
+            facing_direction,
+        );
+        // Calculate XZ position first, then sample terrain height
+        let xz_position = position + formation_offset;
+        let terrain_height = heightmap.sample_height(xz_position.x, xz_position.z);
+        // Offset Y to place feet at ground level (mesh feet are at Y=-1.6, scaled by 0.8 = -1.28)
+        let unit_position = Vec3::new(xz_position.x, terrain_height + 1.28, xz_position.z);
+
+        // Add some randomness to march timing but reduce speed variance
+        let march_offset = rng.gen_range(0.0..2.0 * PI);
+        let march_speed = rng.gen_range(0.96..1.04);
+
+        // Units start stationary
+        let target_position = unit_position;
+
+        // Choose materials based on commander status
+        let unit_body_material = if is_commander {
+            materials.add(StandardMaterial {
+                base_color: match team {
+                    Team::A => Color::srgb(0.9, 0.8, 0.4),
+                    Team::B => Color::srgb(0.9, 0.5, 0.3),
+                },
+                metallic: 0.5,
+                perceptual_roughness: 0.3,
+                ..default()
+            })
+        } else {
+            unit_materials.body_material.clone()
+        };
+        let unit_head_material = if is_commander {
+            materials.add(StandardMaterial {
+                base_color: match team {
+                    Team::A => Color::srgb(1.0, 0.9, 0.5),
+                    Team::B => Color::srgb(1.0, 0.6, 0.4),
+                },
+                metallic: 0.4,
+                perceptual_roughness: 0.4,
+                ..default()
+            })
+        } else {
+            unit_materials.head_material.clone()
+        };
+
+        // Spawn the battle droid
+        let droid_entity = commands.spawn((
+            Mesh3d(droid_mesh.clone()),
+            MeshMaterial3d(unit_body_material),
+            Transform::from_translation(unit_position)
+                .with_scale(if is_commander { Vec3::splat(0.9) } else { Vec3::splat(0.8) })
+                .looking_at(unit_position + facing_direction, Vec3::Y),
+            BattleDroid {
+                march_speed,
+                spawn_position: unit_position,
+                target_position,
+                march_offset,
+                returning_to_spawn: false,
+                team,
+            },
+            CombatUnit {
+                target_scan_timer: rng.gen_range(0.0..TARGET_SCAN_INTERVAL),
+                auto_fire_timer: rng.gen_range(0.0..AUTO_FIRE_INTERVAL),
+                current_target: None,
+            },
+            SquadMember {
+                squad_id,
+                formation_position: (row, col),
+                is_commander,
+            },
+            FormationOffset {
+                local_offset: formation_offset,
+                target_world_position: unit_position,
+            },
+        )).id();
+
+        // Add unit to squad manager
+        squad_manager.add_unit_to_squad(squad_id, droid_entity);
+
+        // Set commander if this is the commander unit
+        if is_commander {
+            if let Some(squad) = squad_manager.get_squad_mut(squad_id) {
+                squad.commander = Some(droid_entity);
+            }
+        }
+
+        // Add a head (separate entity as child)
+        let head_entity = commands.spawn((
+            Mesh3d(droid_mesh.clone()),
+            MeshMaterial3d(unit_head_material),
+            Transform::from_xyz(0.0, 1.2, 0.0)
+                .with_scale(Vec3::splat(0.3)),
+        )).id();
+
+        commands.entity(droid_entity).add_children(&[head_entity]);
+    }
+
+    squad_id
+}
+
+/// Create unit materials for a team
+pub fn create_team_materials(materials: &mut Assets<StandardMaterial>, team: Team) -> UnitMaterials {
+    match team {
+        Team::A => UnitMaterials {
+            body_material: materials.add(StandardMaterial {
+                base_color: Color::srgb(0.7, 0.7, 0.8),
+                metallic: 0.3,
+                perceptual_roughness: 0.5,
+                ..default()
+            }),
+            head_material: materials.add(StandardMaterial {
+                base_color: Color::srgb(0.8, 0.6, 0.4),
+                metallic: 0.2,
+                perceptual_roughness: 0.6,
+                ..default()
+            }),
+            commander_body_material: materials.add(StandardMaterial {
+                base_color: Color::srgb(0.9, 0.8, 0.4),
+                metallic: 0.5,
+                perceptual_roughness: 0.3,
+                ..default()
+            }),
+            commander_head_material: materials.add(StandardMaterial {
+                base_color: Color::srgb(1.0, 0.9, 0.5),
+                metallic: 0.4,
+                perceptual_roughness: 0.4,
+                ..default()
+            }),
+        },
+        Team::B => UnitMaterials {
+            body_material: materials.add(StandardMaterial {
+                base_color: Color::srgb(0.9, 0.9, 0.95),
+                metallic: 0.4,
+                perceptual_roughness: 0.3,
+                ..default()
+            }),
+            head_material: materials.add(StandardMaterial {
+                base_color: Color::srgb(0.95, 0.95, 1.0),
+                metallic: 0.3,
+                perceptual_roughness: 0.4,
+                ..default()
+            }),
+            commander_body_material: materials.add(StandardMaterial {
+                base_color: Color::srgb(0.9, 0.5, 0.3),
+                metallic: 0.5,
+                perceptual_roughness: 0.3,
+                ..default()
+            }),
+            commander_head_material: materials.add(StandardMaterial {
+                base_color: Color::srgb(1.0, 0.6, 0.4),
+                metallic: 0.4,
+                perceptual_roughness: 0.4,
+                ..default()
+            }),
+        },
+    }
+}
+
+/// Create the battle droid mesh (public for reuse)
+pub fn create_droid_mesh(meshes: &mut Assets<Mesh>) -> Handle<Mesh> {
+    create_battle_droid_mesh_internal(meshes)
 }
 
 fn spawn_team_squads(
@@ -403,7 +608,7 @@ fn spawn_team_squads(
     }
 }
 
-fn create_battle_droid_mesh(meshes: &mut ResMut<Assets<Mesh>>) -> Handle<Mesh> {
+fn create_battle_droid_mesh_internal(meshes: &mut Assets<Mesh>) -> Handle<Mesh> {
     // Create a simple humanoid battle droid shape
     // This creates a basic robot-like figure that resembles Trade Federation battle droids
     

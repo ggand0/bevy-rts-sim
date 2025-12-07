@@ -85,6 +85,7 @@ fn setup_particle_effects(
             .init(init_size)
             .update(update_accel)
             .update(update_drag)
+            .render(OrientModifier::new(OrientMode::FaceCameraPosition))
             .render(ColorOverLifetimeModifier::new(color_gradient1))
             .render(SizeOverLifetimeModifier { gradient: size_gradient1, screen_space_size: false })
     );
@@ -133,6 +134,7 @@ fn setup_particle_effects(
             .init(init_size2)
             .update(update_accel2)
             .update(update_drag2)
+            .render(OrientModifier::new(OrientMode::FaceCameraPosition))
             .render(ColorOverLifetimeModifier::new(color_gradient2))
             .render(SizeOverLifetimeModifier { gradient: size_gradient2, screen_space_size: false })
     );
@@ -181,6 +183,7 @@ fn setup_particle_effects(
             .init(init_size3)
             .update(update_accel3)
             .update(update_drag3)
+            .render(OrientModifier::new(OrientMode::FaceCameraPosition))
             .render(ColorOverLifetimeModifier::new(color_gradient3))
             .render(SizeOverLifetimeModifier { gradient: size_gradient3, screen_space_size: false })
     );
@@ -228,6 +231,7 @@ fn setup_particle_effects(
             .init(init_lifetime4)
             .init(init_size4)
             .update(update_drag4)
+            .render(OrientModifier::new(OrientMode::FaceCameraPosition))
             .render(ColorOverLifetimeModifier::new(color_gradient4))
             .render(SizeOverLifetimeModifier { gradient: size_gradient4, screen_space_size: false })
     );
@@ -303,6 +307,7 @@ fn setup_particle_effects(
             .init(init_size5)
             .update(update_accel5)
             .update(update_drag5)
+            .render(OrientModifier::new(OrientMode::FaceCameraPosition))
             .render(ColorOverLifetimeModifier::new(color_gradient5))
             .render(SizeOverLifetimeModifier { gradient: size_gradient5, screen_space_size: false })
     );
@@ -357,20 +362,47 @@ fn setup_particle_effects(
             .init(init_size6)
             .update(update_drag6)
             .update(update_accel6)
+            .render(OrientModifier::new(OrientMode::FaceCameraPosition))
             .render(ColorOverLifetimeModifier::new(color_gradient6))
             .render(SizeOverLifetimeModifier { gradient: size_gradient6, screen_space_size: false })
     );
 
     commands.insert_resource(ExplosionParticleEffects {
-        debris_effect,
-        sparks_effect,
-        smoke_effect,
+        debris_effect: debris_effect.clone(),
+        sparks_effect: sparks_effect.clone(),
+        smoke_effect: smoke_effect.clone(),
         shield_impact_effect,
         mass_explosion_effect,
         unit_death_flash,
     });
 
-    info!("✅ Particle effects ready!");
+    // Warmup: Spawn particles far below the map to prime the GPU pipeline
+    // MUST use Visibility::Visible for GPU to compile the effect shader
+    // Position is far below map (-1000 Y) so they're not seen
+    let warmup_pos = Vec3::new(0.0, -1000.0, 0.0);
+    commands.spawn((
+        ParticleEffect::new(debris_effect),
+        Transform::from_translation(warmup_pos).with_scale(Vec3::splat(0.001)),
+        Visibility::Visible,  // Must be Visible for GPU compilation
+        ParticleEffectLifetime { spawn_time: 0.0, duration: 0.5 },  // Longer duration to ensure compilation
+        Name::new("WarmupDebris"),
+    ));
+    commands.spawn((
+        ParticleEffect::new(sparks_effect),
+        Transform::from_translation(warmup_pos).with_scale(Vec3::splat(0.001)),
+        Visibility::Visible,  // Must be Visible for GPU compilation
+        ParticleEffectLifetime { spawn_time: 0.0, duration: 0.5 },
+        Name::new("WarmupSparks"),
+    ));
+    commands.spawn((
+        ParticleEffect::new(smoke_effect),
+        Transform::from_translation(warmup_pos).with_scale(Vec3::splat(0.001)),
+        Visibility::Visible,  // Must be Visible for GPU compilation
+        ParticleEffectLifetime { spawn_time: 0.0, duration: 0.5 },
+        Name::new("WarmupSmoke"),
+    ));
+
+    info!("✅ Particle effects ready (with warmup)");
 }
 
 /// Spawns a complete particle explosion effect at the given location
@@ -385,14 +417,14 @@ pub fn spawn_explosion_particles(
     trace!("💥 PARTICLES: Spawning explosion particles at {:?} with scale {}", position, scale);
 
     // Spawn debris particles
-    // Note: Using Spawner::once() with auto-despawn after particles finish
     commands.spawn((
         ParticleEffect::new(particle_effects.debris_effect.clone()),
         Transform::from_translation(position)
             .with_scale(Vec3::splat(scale)),
+        Visibility::Visible,
         ParticleEffectLifetime {
             spawn_time: current_time,
-            duration: 5.0, // Cleanup 5s after spawn (particles lifetime is 2.5s)
+            duration: 5.0,
         },
         Name::new("ExplosionDebris"),
     ));
@@ -402,9 +434,10 @@ pub fn spawn_explosion_particles(
         ParticleEffect::new(particle_effects.sparks_effect.clone()),
         Transform::from_translation(position)
             .with_scale(Vec3::splat(scale)),
+        Visibility::Visible,
         ParticleEffectLifetime {
             spawn_time: current_time,
-            duration: 3.0, // Cleanup 3s after spawn (particles lifetime is 1.5s)
+            duration: 3.0,
         },
         Name::new("ExplosionSparks"),
     ));
@@ -414,11 +447,70 @@ pub fn spawn_explosion_particles(
         ParticleEffect::new(particle_effects.smoke_effect.clone()),
         Transform::from_translation(position + Vec3::new(0.0, 2.0 * scale, 0.0))
             .with_scale(Vec3::splat(scale)),
+        Visibility::Visible,
         ParticleEffectLifetime {
             spawn_time: current_time,
-            duration: 6.0, // Cleanup 6s after spawn (particles lifetime is 3.5s)
+            duration: 6.0,
         },
         Name::new("ExplosionSmoke"),
+    ));
+}
+
+/// Spawns particles for turret explosions
+/// More sparks/flames than standard explosion for visual impact
+pub fn spawn_turret_explosion_particles(
+    commands: &mut Commands,
+    particle_effects: &ExplosionParticleEffects,
+    position: Vec3,
+    scale: f32,
+    current_time: f64,
+) {
+    trace!("💥 TURRET PARTICLES: Spawning turret explosion at {:?}", position);
+
+    // Spawn debris particles
+    commands.spawn((
+        ParticleEffect::new(particle_effects.debris_effect.clone()),
+        Transform::from_translation(position)
+            .with_scale(Vec3::splat(scale)),
+        Visibility::Visible,
+        ParticleEffectLifetime {
+            spawn_time: current_time,
+            duration: 5.0,
+        },
+        Name::new("TurretExplosionDebris"),
+    ));
+
+    // Spawn multiple spark effects for more flames
+    for i in 0..3 {
+        let offset = Vec3::new(
+            (i as f32 - 1.0) * 0.5,
+            i as f32 * 0.3,
+            (i as f32 - 1.0) * 0.3,
+        );
+        commands.spawn((
+            ParticleEffect::new(particle_effects.sparks_effect.clone()),
+            Transform::from_translation(position + offset)
+                .with_scale(Vec3::splat(scale * (1.0 + i as f32 * 0.2))),
+            Visibility::Visible,
+            ParticleEffectLifetime {
+                spawn_time: current_time,
+                duration: 3.0,
+            },
+            Name::new("TurretExplosionSparks"),
+        ));
+    }
+
+    // Spawn smoke particles
+    commands.spawn((
+        ParticleEffect::new(particle_effects.smoke_effect.clone()),
+        Transform::from_translation(position + Vec3::new(0.0, 2.0 * scale, 0.0))
+            .with_scale(Vec3::splat(scale)),
+        Visibility::Visible,
+        ParticleEffectLifetime {
+            spawn_time: current_time,
+            duration: 6.0,
+        },
+        Name::new("TurretExplosionSmoke"),
     ));
 }
 
@@ -538,11 +630,13 @@ pub fn debug_hanabi_entities(
     )>,
 ) {
     for (entity, name, transform, _effect, vis, inherited_vis, view_vis, compiled) in query.iter() {
-        if name.as_str().contains("DeathFlash") || name.as_str().contains("MassExplosion") {
+        let name_str = name.as_str();
+        if name_str.contains("DeathFlash") || name_str.contains("MassExplosion")
+            || name_str.contains("ExplosionDebris") || name_str.contains("ExplosionSparks") || name_str.contains("ExplosionSmoke") {
             info!(
-                "🔍 ENTITY {:?} '{}': pos={:?} Visibility={:?} InheritedVis={:?} ViewVis={:?} Compiled={}",
+                "🔍 HANABI {:?} '{}': pos={:?} Vis={:?} InheritedVis={:?} ViewVis={:?} Compiled={}",
                 entity,
-                name.as_str(),
+                name_str,
                 transform.translation,
                 vis.map(|v| format!("{:?}", v)),
                 inherited_vis.map(|_| "Some"),

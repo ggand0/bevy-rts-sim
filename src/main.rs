@@ -15,14 +15,18 @@ mod wfx_materials;
 mod wfx_spawn;
 mod selection;
 mod terrain;
+mod terrain_decor;
 mod shield;
 mod decals;
+mod scenario;
 use explosion_shader::ExplosionShaderPlugin;
 use particles::ParticleEffectsPlugin;
 use terrain::TerrainPlugin;
+use terrain_decor::TerrainDecorPlugin;
 use wfx_materials::{SmokeScrollMaterial, AdditiveMaterial, SmokeOnlyMaterial};
 use shield::ShieldPlugin;
 use decals::DecalPlugin;
+use scenario::ScenarioPlugin;
 
 use bevy::prelude::*;
 use types::*;
@@ -39,17 +43,21 @@ fn main() {
         .add_plugins(ExplosionShaderPlugin)
         .add_plugins(ParticleEffectsPlugin)
         .add_plugins(TerrainPlugin)
+        .add_plugins(TerrainDecorPlugin)
         .add_plugins(ShieldPlugin)
         .add_plugins(DecalPlugin)
+        .add_plugins(ScenarioPlugin)
         .add_plugins(MaterialPlugin::<SmokeScrollMaterial>::default())
         .add_plugins(MaterialPlugin::<AdditiveMaterial>::default())
         .add_plugins(MaterialPlugin::<SmokeOnlyMaterial>::default())
+        .add_plugins(MaterialPlugin::<turrets::HealthBarMaterial>::default())
+        .add_plugins(MaterialPlugin::<objective::ShieldBarMaterial>::default())
         .insert_resource(SpatialGrid::new())
         .insert_resource(SquadManager::new())
         .insert_resource(GameState::default())
         .insert_resource(ExplosionDebugMode::default())
         .insert_resource(selection::SelectionState::default())
-        .add_systems(Startup, (setup::setup_scene, spawn_uplink_towers, spawn_objective_ui, setup_laser_assets))
+        .add_systems(Startup, (setup::setup_scene, spawn_uplink_towers, spawn_debug_mode_ui, setup_laser_assets))
         // Army spawning runs after terrain is ready (terrain spawns in TerrainPlugin's Startup)
         .add_systems(Startup, setup::spawn_army_with_squads.after(terrain::spawn_initial_terrain))
         // Turret spawning runs after terrain is ready
@@ -62,6 +70,11 @@ fn main() {
             respawn_turrets_on_map_switch,
             // Debug turret toggle (M=MG, H=Heavy when debug mode active)
             debug_turret_toggle_system,
+            // Turret health bars
+            spawn_turret_health_bars,
+            update_turret_health_bars,
+            // Turret death with explosion
+            turrets::turret_death_system,
         ))
         .add_systems(Update, (
             // Formation and squad management systems run first
@@ -129,10 +142,12 @@ fn main() {
             pending_explosion_system,
             explosion_effect_system,
             win_condition_system,
-            update_objective_ui_system,
             update_debug_mode_ui,
             debug_explosion_hotkey_system,
             debug_warfx_test_system,
+            // Tower and shield health bars
+            objective::spawn_tower_health_bars,
+            objective::update_tower_health_bars,
         ))
         .add_systems(Update, (
             // War FX explosion animations

@@ -5,6 +5,7 @@ use crate::types::*;
 use crate::constants::*;
 use crate::formation::calculate_formation_offset;
 use crate::terrain::TerrainHeightmap;
+use crate::scenario::{ScenarioState, WaveManager, WaveState};
 
 use super::state::{SelectionState, OrientationArrowVisual};
 use super::groups::check_is_complete_group;
@@ -13,6 +14,7 @@ use super::visuals::{spawn_move_indicator, spawn_move_indicator_with_color, spaw
 
 /// System: Handle right-click move commands for selected squads
 /// Supports drag-to-set-orientation (CoH1-style)
+/// During preparation phase, units teleport instantly to their destination
 pub fn move_command_system(
     mut commands: Commands,
     mouse_button: Res<ButtonInput<MouseButton>>,
@@ -20,11 +22,13 @@ pub fn move_command_system(
     camera_query: Query<(&Camera, &GlobalTransform), With<RtsCamera>>,
     mut squad_manager: ResMut<SquadManager>,
     mut selection_state: ResMut<SelectionState>,
-    mut droid_query: Query<(Entity, &mut BattleDroid, &SquadMember, &FormationOffset, &Transform)>,
+    mut droid_query: Query<(Entity, &mut BattleDroid, &SquadMember, &mut FormationOffset, &mut Transform)>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     arrow_query: Query<Entity, With<OrientationArrowVisual>>,
     heightmap: Option<Res<TerrainHeightmap>>,
+    scenario_state: Option<Res<ScenarioState>>,
+    wave_manager: Option<Res<WaveManager>>,
 ) {
     let Ok(window) = window_query.single() else { return };
     let Ok((camera, camera_transform)) = camera_query.single() else { return };
@@ -100,9 +104,20 @@ pub fn move_command_system(
             calculate_default_facing(&selection_state.selected_squads, &squad_manager, destination)
         };
 
-        info!("Move command to ({:.1}, {:.1}) for {} squads, orientation: ({:.2}, {:.2})",
-              destination.x, destination.z, selection_state.selected_squads.len(),
-              unified_facing.x, unified_facing.z);
+        // Check if we're in preparation phase - instant teleport
+        let is_prep_phase = scenario_state.as_ref()
+            .zip(wave_manager.as_ref())
+            .map(|(ss, wm)| ss.active && wm.wave_state == WaveState::Preparation)
+            .unwrap_or(false);
+
+        if is_prep_phase {
+            info!("Prep phase: Teleporting {} squads to ({:.1}, {:.1})",
+                  selection_state.selected_squads.len(), destination.x, destination.z);
+        } else {
+            info!("Move command to ({:.1}, {:.1}) for {} squads, orientation: ({:.2}, {:.2})",
+                  destination.x, destination.z, selection_state.selected_squads.len(),
+                  unified_facing.x, unified_facing.z);
+        }
 
         // Execute the move command
         execute_move_command(
@@ -115,6 +130,7 @@ pub fn move_command_system(
             destination,
             unified_facing,
             hm,
+            is_prep_phase,
         );
 
         // Clear drag state
@@ -125,17 +141,19 @@ pub fn move_command_system(
 }
 
 /// Execute a group move - maintains relative formation positions
+/// If instant_teleport is true, units are teleported directly to their destination
 fn execute_group_move(
     commands: &mut Commands,
     squad_manager: &mut ResMut<SquadManager>,
     selection_state: &mut SelectionState,
-    droid_query: &mut Query<(Entity, &mut BattleDroid, &SquadMember, &FormationOffset, &Transform)>,
+    droid_query: &mut Query<(Entity, &mut BattleDroid, &SquadMember, &mut FormationOffset, &mut Transform)>,
     meshes: &mut ResMut<Assets<Mesh>>,
     materials: &mut ResMut<Assets<StandardMaterial>>,
     destination: Vec3,
     unified_facing: Vec3,
     group_id: u32,
     heightmap: Option<&TerrainHeightmap>,
+    instant_teleport: bool,
 ) {
     let Some(group) = selection_state.groups.get_mut(&group_id) else { return };
 
@@ -211,7 +229,7 @@ fn execute_group_move(
     }
 
     // Update individual unit targets using standard formation calculation
-    for (_entity, mut droid, squad_member, _formation_offset, _transform) in droid_query.iter_mut() {
+    for (_entity, mut droid, squad_member, mut formation_offset, mut transform) in droid_query.iter_mut() {
         if group.squad_ids.contains(&squad_member.squad_id) {
             if let Some(squad) = squad_manager.get_squad(squad_member.squad_id) {
                 // Calculate formation offset with new facing direction
@@ -222,10 +240,22 @@ fn execute_group_move(
                     squad.facing_direction,
                 );
 
-                // Set target position with formation offset, preserving the unit's spawn Y height
+                // Calculate target position with formation offset
                 let target_xz = squad.target_position + new_offset;
-                droid.target_position = Vec3::new(target_xz.x, droid.spawn_position.y, target_xz.z);
+                let target_y = heightmap
+                    .map(|hm| hm.sample_height(target_xz.x, target_xz.z) + 1.28)
+                    .unwrap_or(droid.spawn_position.y);
+                let target_pos = Vec3::new(target_xz.x, target_y, target_xz.z);
+
+                droid.target_position = target_pos;
                 droid.returning_to_spawn = false;
+
+                // Instant teleport during preparation phase
+                if instant_teleport {
+                    transform.translation = target_pos;
+                    droid.spawn_position = target_pos;
+                    formation_offset.target_world_position = target_pos;
+                }
             }
         }
     }
@@ -237,12 +267,13 @@ fn execute_move_command(
     commands: &mut Commands,
     squad_manager: &mut ResMut<SquadManager>,
     selection_state: &mut SelectionState,
-    droid_query: &mut Query<(Entity, &mut BattleDroid, &SquadMember, &FormationOffset, &Transform)>,
+    droid_query: &mut Query<(Entity, &mut BattleDroid, &SquadMember, &mut FormationOffset, &mut Transform)>,
     meshes: &mut ResMut<Assets<Mesh>>,
     materials: &mut ResMut<Assets<StandardMaterial>>,
     destination: Vec3,
     unified_facing: Vec3,
     heightmap: Option<&TerrainHeightmap>,
+    instant_teleport: bool,
 ) {
     // Check if this is a complete group move
     if let Some(group_id) = check_is_complete_group(selection_state, squad_manager) {
@@ -258,6 +289,7 @@ fn execute_move_command(
             unified_facing,
             group_id,
             heightmap,
+            instant_teleport,
         );
         return;
     }
@@ -343,7 +375,7 @@ fn execute_move_command(
     }
 
     // Update individual unit targets
-    for (_entity, mut droid, squad_member, _formation_offset, _transform) in droid_query.iter_mut() {
+    for (_entity, mut droid, squad_member, mut formation_offset, mut transform) in droid_query.iter_mut() {
         if selection_state.selected_squads.contains(&squad_member.squad_id) {
             if let Some(squad) = squad_manager.get_squad(squad_member.squad_id) {
                 // Calculate new formation offset with new facing direction
@@ -354,10 +386,22 @@ fn execute_move_command(
                     squad.facing_direction,
                 );
 
-                // Set target position with formation offset, preserving the unit's spawn Y height
+                // Calculate target position with formation offset
                 let target_xz = squad.target_position + new_offset;
-                droid.target_position = Vec3::new(target_xz.x, droid.spawn_position.y, target_xz.z);
+                let target_y = heightmap
+                    .map(|hm| hm.sample_height(target_xz.x, target_xz.z) + 1.28)
+                    .unwrap_or(droid.spawn_position.y);
+                let target_pos = Vec3::new(target_xz.x, target_y, target_xz.z);
+
+                droid.target_position = target_pos;
                 droid.returning_to_spawn = false;
+
+                // Instant teleport during preparation phase
+                if instant_teleport {
+                    transform.translation = target_pos;
+                    droid.spawn_position = target_pos;
+                    formation_offset.target_world_position = target_pos;
+                }
             }
         }
     }
