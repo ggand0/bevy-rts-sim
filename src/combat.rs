@@ -5,6 +5,41 @@ use crate::terrain::TerrainHeightmap;
 use bevy::render::mesh::{Indices, PrimitiveTopology};
 use bevy::asset::RenderAssetUsages;
 
+/// Ray-sphere intersection test
+/// Returns Some((distance, hit_point)) if ray intersects sphere, None otherwise
+fn ray_sphere_intersection(
+    ray_origin: Vec3,
+    ray_direction: Vec3,
+    sphere_center: Vec3,
+    sphere_radius: f32,
+) -> Option<(f32, Vec3)> {
+    let oc = ray_origin - sphere_center;
+    let a = ray_direction.dot(ray_direction);
+    let b = 2.0 * oc.dot(ray_direction);
+    let c = oc.dot(oc) - sphere_radius * sphere_radius;
+    let discriminant = b * b - 4.0 * a * c;
+
+    if discriminant < 0.0 {
+        return None;
+    }
+
+    // Find nearest intersection point (entry point into sphere)
+    let t = (-b - discriminant.sqrt()) / (2.0 * a);
+    if t > 0.0 {
+        let hit_point = ray_origin + ray_direction * t;
+        return Some((t, hit_point));
+    }
+
+    // Check far intersection (exit point, in case we're inside the sphere)
+    let t2 = (-b + discriminant.sqrt()) / (2.0 * a);
+    if t2 > 0.0 {
+        let hit_point = ray_origin + ray_direction * t2;
+        return Some((t2, hit_point));
+    }
+
+    None
+}
+
 /// Check if there's a clear line of sight between shooter and target
 /// Returns true if the path is clear (no terrain blocking)
 fn has_line_of_sight(
@@ -680,17 +715,19 @@ pub fn hitscan_fire_system(
     mut commands: Commands,
     laser_assets: Res<LaserAssets>,
     spatial_grid: Res<SpatialGrid>,
+    shield_config: Res<crate::shield::ShieldConfig>,
     mut squad_manager: ResMut<SquadManager>,
     mut combat_query: Query<
         (&GlobalTransform, &BattleDroid, &mut CombatUnit),
         (Without<crate::types::TurretRotatingAssembly>, Without<HitscanTracer>)
     >,
-    target_query: Query<&GlobalTransform, With<BattleDroid>>,
+    // all_droids_query combines target lookup + hitscan collision
+    all_droids_query: Query<(Entity, &GlobalTransform, &BattleDroid), Without<HitscanTracer>>,
     tower_target_query: Query<&GlobalTransform, With<UplinkTower>>,
     mut turret_query: Query<(&GlobalTransform, &mut Health), With<crate::types::TurretBase>>,
     mut tower_health_query: Query<&mut Health, (With<UplinkTower>, Without<crate::types::TurretBase>)>,
     turret_assembly_query: Query<&ChildOf, With<crate::types::TurretRotatingAssembly>>,
-    droid_query: Query<(Entity, &GlobalTransform, &BattleDroid), Without<HitscanTracer>>,
+    mut shield_query: Query<&mut crate::shield::Shield>,
     camera_query: Query<&Transform, (With<RtsCamera>, Without<HitscanTracer>)>,
     audio_assets: Res<AudioAssets>,
     heightmap: Option<Res<TerrainHeightmap>>,
@@ -713,8 +750,8 @@ pub fn hitscan_fire_system(
         if combat_unit.auto_fire_timer <= 0.0 && combat_unit.current_target.is_some() {
             if let Some(target_entity) = combat_unit.current_target {
                 // Try to get target position (unit, tower, or turret)
-                let target_pos_opt = target_query.get(target_entity)
-                    .map(|t| t.translation())
+                let target_pos_opt = all_droids_query.get(target_entity)
+                    .map(|(_, t, _)| t.translation())
                     .or_else(|_| tower_target_query.get(target_entity).map(|t| t.translation()))
                     .or_else(|_| turret_query.get(target_entity).map(|(t, _)| t.translation()))
                     .ok();
@@ -732,49 +769,91 @@ pub fn hitscan_fire_system(
                         continue;
                     }
 
-                    // === INSTANT HIT DETECTION (hitscan) ===
-                    // Raycast from firing position to target
-                    let hit_result = perform_hitscan(
-                        firing_pos,
-                        direction,
-                        droid.team,
-                        &spatial_grid,
-                        &droid_query,
-                        target_pos,
-                    );
+                    let current_time = time.elapsed_secs();
+                    let ray_length = firing_pos.distance(target_pos);
 
-                    let impact_pos = match hit_result {
-                        HitscanResult::HitUnit(hit_entity, hit_pos) => {
-                            // Despawn hit unit immediately
-                            if let Ok(mut entity_commands) = commands.get_entity(hit_entity) {
-                                entity_commands.despawn();
-                            }
-                            squad_manager.remove_unit_from_squad(hit_entity);
-                            hit_pos
+                    // === CHECK SHIELD INTERSECTION FIRST ===
+                    // Find closest enemy shield along the ray and damage it
+                    let mut shield_hit_pos: Option<Vec3> = None;
+
+                    for mut shield in shield_query.iter_mut() {
+                        // Skip friendly shields
+                        if shield.team == droid.team {
+                            continue;
                         }
-                        HitscanResult::HitTower(hit_pos) => {
-                            // Apply damage to buildings (turrets or towers)
-                            // Only enemy units (Team B) can damage Team A buildings
-                            if droid.team == Team::B {
-                                // Try turret base directly
-                                if let Ok((_, mut turret_health)) = turret_query.get_mut(target_entity) {
-                                    turret_health.damage(25.0);
+
+                        // Ray-sphere intersection test for shield
+                        if let Some((hit_dist, hit_pos)) = ray_sphere_intersection(
+                            firing_pos, direction, shield.center, shield.radius
+                        ) {
+                            // Only count if hit is between shooter and target
+                            if hit_dist > 0.0 && hit_dist < ray_length {
+                                // This shield blocks the shot - damage it
+                                let old_hp = shield.current_hp;
+                                shield.take_damage(
+                                    shield_config.laser_damage,
+                                    current_time,
+                                    shield_config.impact_flash_duration
+                                );
+                                info!("HITSCAN SHIELD HIT: hp {} -> {}, at {:?}", old_hp, shield.current_hp, hit_pos);
+                                // Add ripple effect occasionally
+                                if rand::random::<f32>() < 0.25 {
+                                    shield.add_ripple(hit_pos, current_time);
                                 }
-                                // Try tower if turret query failed
-                                else if let Ok(mut tower_health) = tower_health_query.get_mut(target_entity) {
-                                    tower_health.damage(25.0);
+                                shield_hit_pos = Some(hit_pos);
+                                break; // Only hit one shield
+                            }
+                        }
+                    }
+
+                    // If we hit a shield, the ray stops there
+                    let impact_pos = if let Some(hit_pos) = shield_hit_pos {
+                        hit_pos
+                    } else {
+                        // === INSTANT HIT DETECTION (hitscan) ===
+                        // No shield in the way - raycast from firing position to target
+                        let hit_result = perform_hitscan(
+                            firing_pos,
+                            direction,
+                            droid.team,
+                            &spatial_grid,
+                            &all_droids_query,
+                            target_pos,
+                        );
+
+                        match hit_result {
+                            HitscanResult::HitUnit(hit_entity, hit_pos) => {
+                                // Despawn hit unit immediately
+                                if let Ok(mut entity_commands) = commands.get_entity(hit_entity) {
+                                    entity_commands.despawn();
                                 }
-                                // Target may be turret assembly (child entity) - damage parent
-                                else if let Ok(child_of) = turret_assembly_query.get(target_entity) {
-                                    let parent_entity = child_of.parent();
-                                    if let Ok((_, mut turret_health)) = turret_query.get_mut(parent_entity) {
+                                squad_manager.remove_unit_from_squad(hit_entity);
+                                hit_pos
+                            }
+                            HitscanResult::HitTower(hit_pos) => {
+                                // Apply damage to buildings (turrets or towers)
+                                // Only enemy units (Team B) can damage Team A buildings
+                                if droid.team == Team::B {
+                                    // Try turret base directly
+                                    if let Ok((_, mut turret_health)) = turret_query.get_mut(target_entity) {
                                         turret_health.damage(25.0);
                                     }
+                                    // Try tower if turret query failed
+                                    else if let Ok(mut tower_health) = tower_health_query.get_mut(target_entity) {
+                                        tower_health.damage(25.0);
+                                    }
+                                    // Target may be turret assembly (child entity) - damage parent
+                                    else if let Ok(child_of) = turret_assembly_query.get(target_entity) {
+                                        let parent_entity = child_of.parent();
+                                        if let Ok((_, mut turret_health)) = turret_query.get_mut(parent_entity) {
+                                            turret_health.damage(25.0);
+                                        }
+                                    }
                                 }
+                                hit_pos
                             }
-                            hit_pos
+                            HitscanResult::Miss(end_pos) => end_pos,
                         }
-                        HitscanResult::Miss(end_pos) => end_pos,
                     };
 
                     // === SPAWN VISUAL TRACER ===
