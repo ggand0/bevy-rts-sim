@@ -337,7 +337,9 @@ pub struct ObjectiveTarget {
 
 // Turret components
 #[derive(Component)]
-pub struct TurretBase; // Marker for static turret base
+pub struct TurretBase {
+    pub team: Team, // Team ownership for targeting
+}
 
 #[derive(Component)]
 pub struct TurretRotatingAssembly {

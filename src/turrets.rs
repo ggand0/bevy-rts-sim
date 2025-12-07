@@ -97,7 +97,7 @@ fn spawn_mg_turret_internal(
         Mesh3d(base_mesh),
         MeshMaterial3d(base_material),
         Transform::from_translation(turret_world_pos),
-        TurretBase,
+        TurretBase { team: Team::A },
         BuildingCollider { radius: 3.0 }, // Smaller collision radius
         Health::new(MG_TURRET_HEALTH),
     )).id();
@@ -155,8 +155,8 @@ pub fn spawn_mg_turret(
     let z = 10.0;
     let terrain_height = heightmap.sample_height(x, z);
 
-    spawn_mg_turret_internal(&mut commands, &mut meshes, &mut materials, x, z, terrain_height);
-    info!("Spawned MG turret at position ({}, {}, {})", x, terrain_height, z);
+    let base_entity = spawn_mg_turret_internal(&mut commands, &mut meshes, &mut materials, x, z, terrain_height);
+    info!("Spawned MG turret BASE ENTITY {:?} at position ({}, {}, {})", base_entity, x, terrain_height, z);
 }
 
 /// Internal helper to spawn heavy turret at specified position
@@ -195,7 +195,7 @@ fn spawn_heavy_turret_internal(
         Mesh3d(base_mesh),
         MeshMaterial3d(base_material),
         Transform::from_translation(turret_world_pos),
-        TurretBase,
+        TurretBase { team: Team::A },
         BuildingCollider { radius: 4.0 }, // Collision radius for laser blocking
         Health::new(HEAVY_TURRET_HEALTH),
     )).id();

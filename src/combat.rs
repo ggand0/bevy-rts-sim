@@ -294,6 +294,7 @@ pub fn target_acquisition_system(
     time: Res<Time>,
     mut combat_query: Query<(Entity, &GlobalTransform, &BattleDroid, &mut CombatUnit)>,
     tower_query: Query<(Entity, &GlobalTransform, &UplinkTower), With<UplinkTower>>,
+    turret_query: Query<(Entity, &GlobalTransform, &TurretBase), With<TurretBase>>,
     heightmap: Option<Res<TerrainHeightmap>>,
 ) {
     let delta_time = time.delta_secs();
@@ -310,6 +311,12 @@ pub fn target_acquisition_system(
     let all_towers: Vec<(Entity, Vec3, Team)> = tower_query
         .iter()
         .map(|(entity, transform, tower)| (entity, transform.translation(), tower.team))
+        .collect();
+
+    // Collect all turret data
+    let all_turrets: Vec<(Entity, Vec3, Team)> = turret_query
+        .iter()
+        .map(|(entity, transform, turret)| (entity, transform.translation(), turret.team))
         .collect();
 
     for (entity, transform, droid, mut combat_unit) in combat_query.iter_mut() {
@@ -349,7 +356,32 @@ pub fn target_acquisition_system(
                 }
             }
 
-            // If no enemy units in range, check towers as fallback
+            // If no enemy units in range, check turrets (high threat buildings)
+            if closest_enemy.is_none() {
+                let mut turrets_in_range: Vec<(Entity, Vec3, f32)> = all_turrets.iter()
+                    .filter(|(_, _, turret_team)| *turret_team != droid.team)
+                    .filter_map(|&(turret_entity, turret_position, _)| {
+                        let distance = shooter_pos.distance(turret_position);
+                        if distance <= TARGETING_RANGE {
+                            Some((turret_entity, turret_position, distance))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+
+                turrets_in_range.sort_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal));
+
+                // Find the closest turret with clear line of sight
+                for (turret_entity, turret_position, _distance) in turrets_in_range {
+                    if has_line_of_sight(shooter_pos, turret_position, hm) {
+                        closest_enemy = Some(turret_entity);
+                        break;
+                    }
+                }
+            }
+
+            // If no turrets in range, check towers as last fallback
             if closest_enemy.is_none() {
                 let mut towers_in_range: Vec<(Entity, Vec3, f32)> = all_towers.iter()
                     .filter(|(_, _, tower_team)| *tower_team != droid.team)
@@ -654,7 +686,10 @@ pub fn hitscan_fire_system(
         (Without<crate::types::TurretRotatingAssembly>, Without<HitscanTracer>)
     >,
     target_query: Query<&GlobalTransform, With<BattleDroid>>,
-    tower_target_query: Query<(&GlobalTransform, Option<&mut Health>), With<UplinkTower>>,
+    tower_target_query: Query<&GlobalTransform, With<UplinkTower>>,
+    mut turret_query: Query<(&GlobalTransform, &mut Health), With<crate::types::TurretBase>>,
+    mut tower_health_query: Query<&mut Health, (With<UplinkTower>, Without<crate::types::TurretBase>)>,
+    turret_assembly_query: Query<&ChildOf, With<crate::types::TurretRotatingAssembly>>,
     droid_query: Query<(Entity, &GlobalTransform, &BattleDroid), Without<HitscanTracer>>,
     camera_query: Query<&Transform, (With<RtsCamera>, Without<HitscanTracer>)>,
     audio_assets: Res<AudioAssets>,
@@ -677,10 +712,11 @@ pub fn hitscan_fire_system(
 
         if combat_unit.auto_fire_timer <= 0.0 && combat_unit.current_target.is_some() {
             if let Some(target_entity) = combat_unit.current_target {
-                // Try to get target position (unit or tower)
+                // Try to get target position (unit, tower, or turret)
                 let target_pos_opt = target_query.get(target_entity)
                     .map(|t| t.translation())
-                    .or_else(|_| tower_target_query.get(target_entity).map(|(t, _)| t.translation()))
+                    .or_else(|_| tower_target_query.get(target_entity).map(|t| t.translation()))
+                    .or_else(|_| turret_query.get(target_entity).map(|(t, _)| t.translation()))
                     .ok();
 
                 if let Some(target_pos) = target_pos_opt {
@@ -717,8 +753,25 @@ pub fn hitscan_fire_system(
                             hit_pos
                         }
                         HitscanResult::HitTower(hit_pos) => {
-                            // Tower damage is handled separately by tower systems
-                            // For now just use impact position
+                            // Apply damage to buildings (turrets or towers)
+                            // Only enemy units (Team B) can damage Team A buildings
+                            if droid.team == Team::B {
+                                // Try turret base directly
+                                if let Ok((_, mut turret_health)) = turret_query.get_mut(target_entity) {
+                                    turret_health.damage(25.0);
+                                }
+                                // Try tower if turret query failed
+                                else if let Ok(mut tower_health) = tower_health_query.get_mut(target_entity) {
+                                    tower_health.damage(25.0);
+                                }
+                                // Target may be turret assembly (child entity) - damage parent
+                                else if let Ok(child_of) = turret_assembly_query.get(target_entity) {
+                                    let parent_entity = child_of.parent();
+                                    if let Ok((_, mut turret_health)) = turret_query.get_mut(parent_entity) {
+                                        turret_health.damage(25.0);
+                                    }
+                                }
+                            }
                             hit_pos
                         }
                         HitscanResult::Miss(end_pos) => end_pos,
