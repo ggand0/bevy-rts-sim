@@ -574,6 +574,7 @@ fn terrain_map_switching(
                 MapPreset::FirebaseDelta => {
                     // Start async loading of PNG heightmap
                     let heightmap_handle: Handle<Image> = asset_server.load("heightmap/rts_heightmap0.png");
+                    //let heightmap_handle: Handle<Image> = asset_server.load("heightmap/wgen_x0_y0.png");
                     config.pending_heightmap = Some(heightmap_handle);
                     config.pending_map = Some(MapPreset::FirebaseDelta);
                     info!("Loading Firebase Delta heightmap...");

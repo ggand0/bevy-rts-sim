@@ -16,14 +16,14 @@ use crate::selection::screen_to_ground_with_heightmap;
 /// Total number of waves in the scenario
 pub const TOTAL_WAVES: u32 = 3;
 
-/// Delay between waves in seconds
-pub const INTER_WAVE_DELAY: f32 = 15.0;
+/// Delay between wave spawn starts (waves overlap, so this is shorter)
+pub const INTER_WAVE_DELAY: f32 = 8.0;
 
 /// Units spawned per second during wave spawning
 pub const SPAWN_RATE: f32 = 10.0;
 
-/// Wave sizes for 3 waves (escalating difficulty)
-pub const WAVE_SIZES: [u32; 3] = [100, 150, 200];
+/// Wave sizes for 3 waves (largest first, then reinforcement waves)
+pub const WAVE_SIZES: [u32; 3] = [200, 200, 300];
 
 /// Initial garrison size (number of friendly units)
 pub const INITIAL_GARRISON_SIZE: u32 = 300; // 6 squads of 50
@@ -73,12 +73,8 @@ pub enum WaveState {
     Idle,
     /// Preparation phase - player places turrets before waves start
     Preparation,
-    /// Spawning enemies for current wave
-    Spawning,
-    /// All enemies spawned, combat ongoing
-    Fighting,
-    /// Wave cleared, waiting for next wave
-    Cooldown,
+    /// Active combat - waves spawn continuously, overlapping
+    Combat,
     /// All waves completed (victory)
     Complete,
 }
@@ -105,9 +101,9 @@ pub struct WaveManager {
     pub total_waves: u32,
     /// Current state of wave progression
     pub wave_state: WaveState,
-    /// Timer for inter-wave cooldown
-    pub inter_wave_timer: Timer,
-    /// Number of enemies remaining in current wave
+    /// Timer until next wave starts spawning (runs during combat)
+    pub next_wave_timer: Timer,
+    /// Number of enemies remaining across all waves
     pub enemies_remaining: u32,
     /// Number of enemies spawned so far in current wave
     pub enemies_spawned: u32,
@@ -121,6 +117,8 @@ pub struct WaveManager {
     pub place_mg_turret: bool,
     /// Stack of placed turret entities for undo (most recent last)
     pub placed_turrets: Vec<Entity>,
+    /// Whether we're actively spawning the current wave
+    pub spawning_active: bool,
 }
 
 impl Default for WaveManager {
@@ -129,7 +127,7 @@ impl Default for WaveManager {
             current_wave: 0,
             total_waves: TOTAL_WAVES,
             wave_state: WaveState::Idle,
-            inter_wave_timer: Timer::from_seconds(INTER_WAVE_DELAY, TimerMode::Once),
+            next_wave_timer: Timer::from_seconds(INTER_WAVE_DELAY, TimerMode::Once),
             enemies_remaining: 0,
             enemies_spawned: 0,
             wave_target: 0,
@@ -137,6 +135,7 @@ impl Default for WaveManager {
             turrets_remaining: TURRET_BUDGET,
             place_mg_turret: true, // Default to MG turret
             placed_turrets: Vec::new(),
+            spawning_active: false,
         }
     }
 }
@@ -184,6 +183,10 @@ pub struct ScenarioUI;
 /// Marker for preparation phase instructions UI
 #[derive(Component)]
 pub struct PreparationInstructionsUI;
+
+/// Marker for spawn point visual markers
+#[derive(Component)]
+pub struct SpawnPointMarker;
 
 // ============================================================================
 // PLUGIN
@@ -313,6 +316,9 @@ fn scenario_initialization_system(
             }
             info!("Spawned {} garrison squads", num_garrison_squads);
 
+            // Spawn spawn point markers
+            spawn_spawn_point_markers(&mut commands, &mut meshes, &mut materials, &heightmap);
+
             // Spawn scenario UI
             spawn_scenario_ui(&mut commands);
 
@@ -404,7 +410,66 @@ fn spawn_scenario_ui(commands: &mut Commands) {
     ));
 }
 
+/// Spawn visual markers at enemy spawn points
+fn spawn_spawn_point_markers(
+    commands: &mut Commands,
+    meshes: &mut ResMut<Assets<Mesh>>,
+    materials: &mut ResMut<Assets<StandardMaterial>>,
+    heightmap: &TerrainHeightmap,
+) {
+    // Create a simple pole/beacon mesh for spawn points
+    let pole_mesh = meshes.add(Cylinder::new(0.5, 15.0));
+    let beacon_mesh = meshes.add(Sphere::new(2.0));
+
+    // Red material for enemy spawn points
+    let pole_material = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.8, 0.2, 0.2),
+        emissive: bevy::color::LinearRgba::new(1.0, 0.3, 0.3, 1.0),
+        ..default()
+    });
+    let beacon_material = materials.add(StandardMaterial {
+        base_color: Color::srgb(1.0, 0.3, 0.3),
+        emissive: bevy::color::LinearRgba::new(2.0, 0.5, 0.5, 1.0),
+        unlit: true,
+        ..default()
+    });
+
+    let spawn_points = [
+        (NORTH_SPAWN, "North Spawn"),
+        (EAST_SPAWN, "East Spawn"),
+    ];
+
+    for (spawn_pos, name) in spawn_points {
+        let y = heightmap.sample_height(spawn_pos.x, spawn_pos.z);
+        let marker_pos = Vec3::new(spawn_pos.x, y + 7.5, spawn_pos.z); // Pole center
+        let beacon_pos = Vec3::new(spawn_pos.x, y + 16.0, spawn_pos.z); // Beacon on top
+
+        // Spawn pole
+        commands.spawn((
+            Mesh3d(pole_mesh.clone()),
+            MeshMaterial3d(pole_material.clone()),
+            Transform::from_translation(marker_pos),
+            SpawnPointMarker,
+            ScenarioUnit,
+            Name::new(format!("{} Pole", name)),
+        ));
+
+        // Spawn glowing beacon on top
+        commands.spawn((
+            Mesh3d(beacon_mesh.clone()),
+            MeshMaterial3d(beacon_material.clone()),
+            Transform::from_translation(beacon_pos),
+            SpawnPointMarker,
+            ScenarioUnit,
+            Name::new(format!("{} Beacon", name)),
+        ));
+    }
+
+    info!("Spawned spawn point markers at North and East");
+}
+
 /// Wave state machine - handles transitions between wave states
+/// Waves now overlap: next wave starts spawning while previous wave enemies are still fighting
 fn wave_state_machine_system(
     mut wave_manager: ResMut<WaveManager>,
     scenario_state: Res<ScenarioState>,
@@ -423,7 +488,8 @@ fn wave_state_machine_system(
             // Player is placing turrets. SPACE key starts wave 1.
             if keys.just_pressed(KeyCode::Space) {
                 wave_manager.current_wave = 1;
-                wave_manager.wave_state = WaveState::Spawning;
+                wave_manager.wave_state = WaveState::Combat;
+                wave_manager.spawning_active = true;
                 wave_manager.enemies_spawned = 0;
                 wave_manager.wave_target = WAVE_SIZES[0];
                 wave_manager.enemies_remaining = wave_manager.wave_target;
@@ -436,41 +502,35 @@ fn wave_state_machine_system(
                 info!("Turret type: {}", turret_type);
             }
         }
-        WaveState::Spawning => {
-            // Handled by wave_spawner_system
-            // Transition to Fighting when all enemies spawned
-            if wave_manager.enemies_spawned >= wave_manager.wave_target {
-                wave_manager.wave_state = WaveState::Fighting;
-                info!("Wave {} fully spawned, {} enemies in combat",
-                    wave_manager.current_wave, wave_manager.enemies_remaining);
+        WaveState::Combat => {
+            // Victory: all waves done spawning AND all enemies dead
+            let all_waves_spawned = wave_manager.current_wave >= wave_manager.total_waves
+                                    && !wave_manager.spawning_active;
+
+            if all_waves_spawned && wave_manager.enemies_remaining == 0 {
+                wave_manager.wave_state = WaveState::Complete;
+                info!("All waves completed! Victory!");
+                return;
             }
-        }
-        WaveState::Fighting => {
-            // Transition to Cooldown when all enemies dead
-            if wave_manager.enemies_remaining == 0 {
-                if wave_manager.current_wave >= wave_manager.total_waves {
-                    wave_manager.wave_state = WaveState::Complete;
-                    info!("All waves completed! Victory!");
-                } else {
-                    wave_manager.wave_state = WaveState::Cooldown;
-                    wave_manager.inter_wave_timer.reset();
-                    info!("Wave {} cleared! Next wave in {:.0}s",
-                        wave_manager.current_wave, INTER_WAVE_DELAY);
+
+            // When current wave finishes spawning, start timer for next wave
+            if !wave_manager.spawning_active
+               && wave_manager.current_wave < wave_manager.total_waves
+            {
+                wave_manager.next_wave_timer.tick(time.delta());
+
+                if wave_manager.next_wave_timer.just_finished() {
+                    // Start next wave (enemies ADD to remaining, waves overlap)
+                    wave_manager.current_wave += 1;
+                    wave_manager.enemies_spawned = 0;
+                    let wave_idx = (wave_manager.current_wave - 1) as usize;
+                    wave_manager.wave_target = WAVE_SIZES.get(wave_idx).copied().unwrap_or(200);
+                    wave_manager.enemies_remaining += wave_manager.wave_target;
+                    wave_manager.spawning_active = true;
+                    wave_manager.next_wave_timer.reset();
+                    info!("Wave {} starting! Target: {} enemies, total remaining: {}",
+                        wave_manager.current_wave, wave_manager.wave_target, wave_manager.enemies_remaining);
                 }
-            }
-        }
-        WaveState::Cooldown => {
-            // Wait for timer, then start next wave
-            wave_manager.inter_wave_timer.tick(time.delta());
-            if wave_manager.inter_wave_timer.finished() {
-                wave_manager.current_wave += 1;
-                wave_manager.wave_state = WaveState::Spawning;
-                wave_manager.enemies_spawned = 0;
-                let wave_idx = (wave_manager.current_wave - 1) as usize;
-                wave_manager.wave_target = WAVE_SIZES.get(wave_idx).copied().unwrap_or(1000);
-                wave_manager.enemies_remaining = wave_manager.wave_target;
-                info!("Wave {} starting! Target: {} enemies",
-                    wave_manager.current_wave, wave_manager.wave_target);
             }
         }
         WaveState::Complete => {
@@ -491,7 +551,12 @@ fn wave_spawner_system(
     heightmap: Res<TerrainHeightmap>,
     bunker_query: Query<&Transform, With<CommandBunker>>,
 ) {
-    if !scenario_state.active || wave_manager.wave_state != WaveState::Spawning {
+    if !scenario_state.active || wave_manager.wave_state != WaveState::Combat {
+        return;
+    }
+
+    // Only spawn if actively spawning this wave
+    if !wave_manager.spawning_active {
         return;
     }
 
@@ -513,17 +578,19 @@ fn wave_spawner_system(
         }
 
         // Determine spawn location based on wave number and progress
-        let base_spawn_pos = if wave_manager.current_wave <= 5 {
-            // Waves 1-5: North spawn only
-            NORTH_SPAWN
-        } else {
-            // Waves 6-10: alternate between north and east
-            let squad_num = wave_manager.enemies_spawned / squad_size;
-            if squad_num % 2 == 0 {
-                NORTH_SPAWN
-            } else {
+        let squad_num = wave_manager.enemies_spawned / squad_size;
+        let is_final_wave = wave_manager.current_wave == wave_manager.total_waves;
+
+        let base_spawn_pos = if is_final_wave {
+            // Final wave: first 2 squads from east (flanking), rest from north
+            if squad_num < 2 {
                 EAST_SPAWN
+            } else {
+                NORTH_SPAWN
             }
+        } else {
+            // Other waves: north spawn only
+            NORTH_SPAWN
         };
 
         // Add some spread to spawn position so squads don't stack
@@ -586,6 +653,19 @@ fn wave_spawner_system(
                 wave_manager.current_wave,
                 wave_manager.enemies_spawned, wave_manager.wave_target);
         }
+
+        // When done spawning this wave, deactivate spawning and start next wave timer
+        if wave_manager.enemies_spawned >= wave_manager.wave_target {
+            wave_manager.spawning_active = false;
+            wave_manager.next_wave_timer.reset();
+            if wave_manager.current_wave < wave_manager.total_waves {
+                info!("Wave {} fully spawned, next wave in {:.0}s",
+                    wave_manager.current_wave, INTER_WAVE_DELAY);
+            } else {
+                info!("Wave {} fully spawned (final wave!)",
+                    wave_manager.current_wave);
+            }
+        }
     }
 }
 
@@ -600,8 +680,8 @@ fn enemy_death_tracking_system(
         return;
     }
 
-    // Only track during active combat (Spawning or Fighting states)
-    if wave_manager.wave_state != WaveState::Spawning && wave_manager.wave_state != WaveState::Fighting {
+    // Only track during active combat
+    if wave_manager.wave_state != WaveState::Combat {
         return;
     }
 
@@ -777,13 +857,17 @@ fn update_preparation_ui(
                 ));
                 *color = TextColor(Color::srgb(0.3, 1.0, 0.3)); // Green
             }
-            WaveState::Spawning | WaveState::Fighting => {
-                *text = Text::new("COMBAT - Defend the bunker!");
+            WaveState::Combat => {
+                let status_text = if wave_manager.spawning_active {
+                    format!("COMBAT - Wave {} spawning...", wave_manager.current_wave)
+                } else if wave_manager.current_wave < wave_manager.total_waves {
+                    let remaining = INTER_WAVE_DELAY - wave_manager.next_wave_timer.elapsed_secs();
+                    format!("COMBAT - Next wave in {:.0}s", remaining.max(0.0))
+                } else {
+                    "COMBAT - Final wave!".to_string()
+                };
+                *text = Text::new(status_text);
                 *color = TextColor(Color::srgb(1.0, 0.5, 0.3)); // Orange
-            }
-            WaveState::Cooldown => {
-                *text = Text::new("Wave cleared! Next wave incoming...");
-                *color = TextColor(Color::srgb(0.3, 0.8, 1.0)); // Cyan
             }
             WaveState::Complete => {
                 *text = Text::new("VICTORY! All waves cleared!");
