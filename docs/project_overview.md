@@ -452,6 +452,25 @@ lto = true
 codegen-units = 1
 ```
 
+### Running the Binary Directly (Without Cargo)
+
+When running the compiled binary directly (instead of `cargo run`), you need to set several environment variables because the project uses dynamic linking for faster development builds:
+
+```bash
+# From the project root directory:
+BEVY_ASSET_ROOT=$(pwd) \
+LD_LIBRARY_PATH=./target/opt-dev/deps:~/.rustup/toolchains/stable-x86_64-unknown-linux-gnu/lib/rustlib/x86_64-unknown-linux-gnu/lib \
+VK_LOADER_DEBUG=error VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/radeon_icd.x86_64.json \
+./target/opt-dev/bevy-mass-render
+```
+
+**Why these are needed:**
+- `BEVY_ASSET_ROOT`: Tells Bevy where to find the `assets/` folder (dynamic linking changes the default lookup path)
+- `LD_LIBRARY_PATH`: Points to Bevy's dynamic library and Rust's stdlib (required for dynamic linking)
+- `VK_*`: AMD GPU Vulkan workarounds
+
+**Note:** For release/shipping builds, disable `dynamic_linking` in `Cargo.toml` to produce a standalone binary that doesn't require these environment variables.
+
 ---
 
 ## Code Style & Conventions
