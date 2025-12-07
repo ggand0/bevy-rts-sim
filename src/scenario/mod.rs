@@ -6,6 +6,7 @@ mod ui;
 mod placement;
 
 use bevy::prelude::*;
+use bevy::pbr::NotShadowCaster;
 use crate::terrain::{MapPreset, MapSwitchEvent, TerrainHeightmap, handle_map_switch_units};
 use crate::types::*;
 use crate::setup::{spawn_single_squad, create_team_materials, create_droid_mesh};
@@ -462,6 +463,7 @@ fn spawn_spawn_point_markers(
             Transform::from_translation(marker_pos),
             SpawnPointMarker,
             ScenarioUnit,
+            NotShadowCaster,
             Name::new(format!("{} Pole", name)),
         ));
 
@@ -472,6 +474,7 @@ fn spawn_spawn_point_markers(
             Transform::from_translation(beacon_pos),
             SpawnPointMarker,
             ScenarioUnit,
+            NotShadowCaster,
             Name::new(format!("{} Beacon", name)),
         ));
     }
@@ -488,6 +491,7 @@ fn spawn_spawn_point_markers(
             Transform::from_translation(marker_pos),
             SpawnPointMarker,
             ScenarioUnit,
+            NotShadowCaster,
             Name::new("South Spawn Pole"),
         ));
 
@@ -497,6 +501,7 @@ fn spawn_spawn_point_markers(
             Transform::from_translation(beacon_pos),
             SpawnPointMarker,
             ScenarioUnit,
+            NotShadowCaster,
             Name::new("South Spawn Beacon"),
         ));
     }
