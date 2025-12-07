@@ -161,6 +161,7 @@ pub struct LaserAssets {
     pub team_b_material: Handle<StandardMaterial>,
     pub laser_mesh: Handle<Mesh>,
     pub mg_laser_mesh: Handle<Mesh>,  // Shorter bolts for MG turret
+    pub hitscan_tracer_mesh: Handle<Mesh>,  // Tracer bolt for hitscan weapons
 }
 
 // Spatial grid for collision optimization
@@ -354,6 +355,29 @@ pub struct BuildingCollider {
 pub enum FiringMode {
     Burst,      // Fires fixed number of shots then cooldown
     Continuous, // Continuously fires and switches targets ("mowing down")
+}
+
+/// Weapon types for future extensibility (kinetic, anti-armor, etc.)
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+#[allow(dead_code)]
+pub enum WeaponType {
+    #[default]
+    PulsedLaser,   // Infantry default - hitscan with visual tracer
+    // Future weapon types:
+    // Kinetic,    // Armor penetration bonus
+    // AntiArmor,  // High damage vs heavy units
+    // HeavyLaser, // Slow projectile (turrets)
+}
+
+/// Visual tracer for hitscan weapons - damage is instant, this is cosmetic only
+#[derive(Component)]
+pub struct HitscanTracer {
+    pub start_pos: Vec3,
+    pub end_pos: Vec3,
+    pub progress: f32,      // 0.0 = at start, 1.0 = at end
+    pub speed: f32,         // Units per second
+    #[allow(dead_code)]     // For future use (team-specific visuals)
+    pub team: Team,
 }
 
 #[derive(Component)]

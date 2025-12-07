@@ -114,11 +114,15 @@ pub fn setup_laser_assets(
     // MG turret uses shorter bolts (60% length)
     let mg_laser_mesh = meshes.add(Rectangle::new(LASER_WIDTH, LASER_LENGTH * 0.6));
 
+    // Hitscan tracer mesh (slightly larger for visibility)
+    let hitscan_tracer_mesh = meshes.add(Rectangle::new(HITSCAN_TRACER_WIDTH, HITSCAN_TRACER_LENGTH));
+
     commands.insert_resource(LaserAssets {
         team_a_material,
         team_b_material,
         laser_mesh,
         mg_laser_mesh,
+        hitscan_tracer_mesh,
     });
 }
 
@@ -375,11 +379,12 @@ pub fn target_acquisition_system(
     }
 }
 
+/// Turret projectile fire system - turrets still use traditional projectiles
+/// Infantry firing is now handled by hitscan_fire_system
 pub fn auto_fire_system(
     time: Res<Time>,
     mut commands: Commands,
     laser_assets: Res<LaserAssets>,
-    mut combat_query: Query<(&GlobalTransform, &BattleDroid, &mut CombatUnit), Without<crate::types::TurretRotatingAssembly>>,
     mut turret_query: Query<(&GlobalTransform, &Transform, &BattleDroid, &mut CombatUnit, &mut crate::types::TurretRotatingAssembly, Option<&mut crate::types::MgTurret>)>,
     target_query: Query<&GlobalTransform, With<BattleDroid>>,
     tower_target_query: Query<&GlobalTransform, With<UplinkTower>>,
@@ -397,78 +402,11 @@ pub fn auto_fire_system(
         .unwrap_or(Vec3::new(0.0, 100.0, 100.0)); // Fallback position
     
     // Count shots fired this frame for audio throttling
+    // NOTE: Infantry firing is now handled by hitscan_fire_system
     let mut shots_fired = 0;
     let mut mg_shots_fired = 0; // Separate counter for MG (prioritized)
     const MAX_AUDIO_PER_FRAME: usize = 5; // Limit concurrent audio to prevent spam
     const MAX_MG_AUDIO_PER_FRAME: usize = 3; // Prioritized limit for MG turret
-    
-    for (droid_transform, droid, mut combat_unit) in combat_query.iter_mut() {
-        // Update auto fire timer
-        combat_unit.auto_fire_timer -= delta_time;
-        
-        if combat_unit.auto_fire_timer <= 0.0 && combat_unit.current_target.is_some() {
-            if let Some(target_entity) = combat_unit.current_target {
-                // Try to get target as either a unit or a tower
-                let target_transform = target_query.get(target_entity)
-                    .or_else(|_| tower_target_query.get(target_entity));
-                
-                if let Ok(target_transform) = target_transform {
-                    // Reset timer
-                    combat_unit.auto_fire_timer = AUTO_FIRE_INTERVAL;
-
-                    // Use cached laser material based on team
-                    let laser_material = match droid.team {
-                        Team::A => laser_assets.team_a_material.clone(),
-                        Team::B => laser_assets.team_b_material.clone(),
-                    };
-
-                    let laser_mesh = laser_assets.laser_mesh.clone();
-
-                    // Calculate firing position and direction toward target
-                    // Use GlobalTransform to get world position (handles parent-child hierarchies like turrets)
-                    let firing_pos = droid_transform.translation() + Vec3::new(0.0, 0.8, 0.0);
-                    // Aim at center of collision sphere (ground level, where collision detection happens)
-                    let target_pos = target_transform.translation();
-                    let direction = (target_pos - firing_pos).normalize();
-                    let velocity = direction * LASER_SPEED;
-                    
-                    // Calculate proper initial orientation
-                    let laser_rotation = calculate_laser_orientation(velocity, firing_pos, camera_position);
-                    let laser_transform = Transform::from_translation(firing_pos)
-                        .with_rotation(laser_rotation);
-                    
-                    // Spawn targeted laser
-                    commands.spawn((
-                        Mesh3d(laser_mesh),
-                        MeshMaterial3d(laser_material),
-                        laser_transform,
-                        LaserProjectile {
-                            velocity,
-                            lifetime: LASER_LIFETIME,
-                            team: droid.team,
-                        },
-                    ));
-                    
-                    // Play random laser sound with proximity-based volume (throttled to prevent audio spam)
-                    shots_fired += 1;
-                    if shots_fired <= MAX_AUDIO_PER_FRAME {
-                        let mut rng = rand::thread_rng();
-                        let sound = audio_assets.get_random_laser_sound(&mut rng);
-
-                        // Calculate proximity-based volume
-                        let unit_pos = droid_transform.translation();
-                        let distance = unit_pos.distance(camera_position);
-                        let volume = proximity_volume(distance, 0.3);
-
-                        commands.spawn((
-                            AudioPlayer::new(sound),
-                            PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::Linear(volume)),
-                        ));
-                    }
-                }
-            }
-        }
-    }
 
     // Handle turret firing with barrel positions
     // Standard turret barrel positions
@@ -699,6 +637,248 @@ pub fn auto_fire_system(
                     }
                 }
             }
+        }
+    }
+}
+
+/// Hitscan fire system for infantry - instant damage with visual tracer
+/// Damage is calculated immediately via raycast, tracer is purely cosmetic
+pub fn hitscan_fire_system(
+    time: Res<Time>,
+    mut commands: Commands,
+    laser_assets: Res<LaserAssets>,
+    spatial_grid: Res<SpatialGrid>,
+    mut squad_manager: ResMut<SquadManager>,
+    mut combat_query: Query<
+        (&GlobalTransform, &BattleDroid, &mut CombatUnit),
+        (Without<crate::types::TurretRotatingAssembly>, Without<HitscanTracer>)
+    >,
+    target_query: Query<&GlobalTransform, With<BattleDroid>>,
+    tower_target_query: Query<(&GlobalTransform, Option<&mut Health>), With<UplinkTower>>,
+    droid_query: Query<(Entity, &GlobalTransform, &BattleDroid), Without<HitscanTracer>>,
+    camera_query: Query<&Transform, (With<RtsCamera>, Without<HitscanTracer>)>,
+    audio_assets: Res<AudioAssets>,
+    heightmap: Option<Res<TerrainHeightmap>>,
+) {
+    let delta_time = time.delta_secs();
+
+    // Get camera position for tracer orientation
+    let camera_position = camera_query.single()
+        .map(|cam_transform| cam_transform.translation)
+        .unwrap_or(Vec3::new(0.0, 100.0, 100.0));
+
+    // Audio throttling
+    let mut shots_fired = 0;
+    const MAX_AUDIO_PER_FRAME: usize = 5;
+
+    for (droid_transform, droid, mut combat_unit) in combat_query.iter_mut() {
+        // Update auto fire timer
+        combat_unit.auto_fire_timer -= delta_time;
+
+        if combat_unit.auto_fire_timer <= 0.0 && combat_unit.current_target.is_some() {
+            if let Some(target_entity) = combat_unit.current_target {
+                // Try to get target position (unit or tower)
+                let target_pos_opt = target_query.get(target_entity)
+                    .map(|t| t.translation())
+                    .or_else(|_| tower_target_query.get(target_entity).map(|(t, _)| t.translation()))
+                    .ok();
+
+                if let Some(target_pos) = target_pos_opt {
+                    // Reset timer
+                    combat_unit.auto_fire_timer = AUTO_FIRE_INTERVAL;
+
+                    let firing_pos = droid_transform.translation() + Vec3::new(0.0, 0.8, 0.0);
+                    let direction = (target_pos - firing_pos).normalize();
+
+                    // Check line of sight
+                    if !has_line_of_sight(firing_pos, target_pos, heightmap.as_deref()) {
+                        combat_unit.current_target = None;
+                        continue;
+                    }
+
+                    // === INSTANT HIT DETECTION (hitscan) ===
+                    // Raycast from firing position to target
+                    let hit_result = perform_hitscan(
+                        firing_pos,
+                        direction,
+                        droid.team,
+                        &spatial_grid,
+                        &droid_query,
+                        target_pos,
+                    );
+
+                    let impact_pos = match hit_result {
+                        HitscanResult::HitUnit(hit_entity, hit_pos) => {
+                            // Despawn hit unit immediately
+                            if let Ok(mut entity_commands) = commands.get_entity(hit_entity) {
+                                entity_commands.despawn();
+                            }
+                            squad_manager.remove_unit_from_squad(hit_entity);
+                            hit_pos
+                        }
+                        HitscanResult::HitTower(hit_pos) => {
+                            // Tower damage is handled separately by tower systems
+                            // For now just use impact position
+                            hit_pos
+                        }
+                        HitscanResult::Miss(end_pos) => end_pos,
+                    };
+
+                    // === SPAWN VISUAL TRACER ===
+                    let laser_material = match droid.team {
+                        Team::A => laser_assets.team_a_material.clone(),
+                        Team::B => laser_assets.team_b_material.clone(),
+                    };
+
+                    // Calculate initial orientation for the tracer
+                    let velocity = direction * HITSCAN_TRACER_SPEED;
+                    let tracer_rotation = calculate_laser_orientation(velocity, firing_pos, camera_position);
+
+                    commands.spawn((
+                        Mesh3d(laser_assets.hitscan_tracer_mesh.clone()),
+                        MeshMaterial3d(laser_material),
+                        Transform::from_translation(firing_pos).with_rotation(tracer_rotation),
+                        HitscanTracer {
+                            start_pos: firing_pos,
+                            end_pos: impact_pos,
+                            progress: 0.0,
+                            speed: HITSCAN_TRACER_SPEED,
+                            team: droid.team,
+                        },
+                    ));
+
+                    // Play sound with proximity-based volume
+                    shots_fired += 1;
+                    if shots_fired <= MAX_AUDIO_PER_FRAME {
+                        let mut rng = rand::thread_rng();
+                        let sound = audio_assets.get_random_laser_sound(&mut rng);
+                        let distance = droid_transform.translation().distance(camera_position);
+                        let volume = proximity_volume(distance, 0.3);
+
+                        commands.spawn((
+                            AudioPlayer::new(sound),
+                            PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::Linear(volume)),
+                        ));
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Result of a hitscan raycast
+#[allow(dead_code)]
+enum HitscanResult {
+    HitUnit(Entity, Vec3),  // Hit a unit, returns entity and position
+    HitTower(Vec3),         // Hit a tower, returns position
+    Miss(Vec3),             // Missed, returns end position (target pos)
+}
+
+/// Perform instant raycast hit detection
+fn perform_hitscan(
+    start: Vec3,
+    direction: Vec3,
+    shooter_team: Team,
+    spatial_grid: &SpatialGrid,
+    droid_query: &Query<(Entity, &GlobalTransform, &BattleDroid), Without<HitscanTracer>>,
+    target_pos: Vec3,
+) -> HitscanResult {
+    let ray_length = start.distance(target_pos);
+
+    // Check all units along the ray path using spatial grid
+    // Sample points along the ray and check nearby units
+    let num_samples = (ray_length / GRID_CELL_SIZE).ceil() as usize + 1;
+
+    let mut closest_hit: Option<(Entity, Vec3, f32)> = None;
+
+    for i in 0..=num_samples {
+        let t = i as f32 / num_samples as f32;
+        let sample_pos = start.lerp(target_pos, t);
+
+        // Get nearby droids at this sample point
+        let nearby = spatial_grid.get_nearby_droids(sample_pos);
+
+        for &entity in &nearby {
+            if let Ok((_, droid_transform, droid)) = droid_query.get(entity) {
+                // Skip friendly fire
+                if droid.team == shooter_team {
+                    continue;
+                }
+
+                let droid_pos = droid_transform.translation();
+
+                // Ray-sphere intersection test
+                // Find closest point on ray to sphere center
+                let to_droid = droid_pos - start;
+                let projection = to_droid.dot(direction);
+
+                // Skip if behind the shooter
+                if projection < 0.0 {
+                    continue;
+                }
+
+                // Skip if beyond target
+                if projection > ray_length {
+                    continue;
+                }
+
+                let closest_point_on_ray = start + direction * projection;
+                let distance_to_ray = closest_point_on_ray.distance(droid_pos);
+
+                // Check if ray passes through unit's collision sphere
+                if distance_to_ray <= COLLISION_RADIUS {
+                    // Calculate actual hit point (entry point of sphere)
+                    let hit_dist = projection - (COLLISION_RADIUS * COLLISION_RADIUS - distance_to_ray * distance_to_ray).sqrt();
+
+                    if closest_hit.is_none() || hit_dist < closest_hit.unwrap().2 {
+                        let hit_pos = start + direction * hit_dist;
+                        closest_hit = Some((entity, hit_pos, hit_dist));
+                    }
+                }
+            }
+        }
+    }
+
+    if let Some((entity, hit_pos, _)) = closest_hit {
+        HitscanResult::HitUnit(entity, hit_pos)
+    } else {
+        // Check if we hit the intended target (could be a tower)
+        HitscanResult::HitTower(target_pos)
+    }
+}
+
+/// Update hitscan tracers - move them along their path and despawn when done
+pub fn update_hitscan_tracers(
+    time: Res<Time>,
+    mut commands: Commands,
+    mut tracer_query: Query<(Entity, &mut Transform, &mut HitscanTracer)>,
+    camera_query: Query<&Transform, (With<RtsCamera>, Without<HitscanTracer>)>,
+) {
+    let delta_time = time.delta_secs();
+    let camera_position = camera_query.single()
+        .map(|t| t.translation)
+        .unwrap_or(Vec3::new(0.0, 100.0, 100.0));
+
+    for (entity, mut transform, mut tracer) in tracer_query.iter_mut() {
+        // Calculate total distance
+        let total_distance = tracer.start_pos.distance(tracer.end_pos);
+
+        // Update progress based on speed
+        let progress_delta = (tracer.speed * delta_time) / total_distance.max(0.001);
+        tracer.progress += progress_delta;
+
+        if tracer.progress >= 1.0 {
+            // Tracer reached end - despawn
+            commands.entity(entity).despawn();
+        } else {
+            // Update position along path
+            let current_pos = tracer.start_pos.lerp(tracer.end_pos, tracer.progress);
+            transform.translation = current_pos;
+
+            // Update rotation to face camera while aligned with travel direction
+            let direction = (tracer.end_pos - tracer.start_pos).normalize();
+            let velocity = direction * tracer.speed;
+            transform.rotation = calculate_laser_orientation(velocity, current_pos, camera_position);
         }
     }
 }
