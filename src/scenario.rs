@@ -50,6 +50,12 @@ pub const NORTH_SPAWN: Vec3 = Vec3::new(0.0, 0.0, -200.0);
 /// East spawn point (enemies come from here in waves 6-10)
 pub const EAST_SPAWN: Vec3 = Vec3::new(200.0, 0.0, 0.0);
 
+/// South spawn point (player reinforcements arrive here between assaults)
+pub const SOUTH_SPAWN: Vec3 = Vec3::new(0.0, 0.0, 200.0);
+
+/// Number of reinforcement squads spawned after each strategic wave
+pub const REINFORCEMENT_SQUADS: u32 = 2;
+
 /// Turret positions around the hilltop (relative to map center)
 /// Note: These are no longer used since turrets are player-placed, kept for reference
 #[allow(dead_code)]
@@ -143,6 +149,10 @@ pub struct WaveManager {
     pub place_mg_turret: bool,
     /// Stack of placed turret entities for undo (most recent last)
     pub placed_turrets: Vec<Entity>,
+
+    // === Reinforcements ===
+    /// Whether reinforcements have been spawned for the current strategic cooldown
+    pub reinforcements_spawned: bool,
 }
 
 impl Default for WaveManager {
@@ -172,6 +182,9 @@ impl Default for WaveManager {
             turrets_remaining: TURRET_BUDGET,
             place_mg_turret: true,
             placed_turrets: Vec::new(),
+
+            // Reinforcements
+            reinforcements_spawned: false,
         }
     }
 }
@@ -240,6 +253,7 @@ impl Plugin for ScenarioPlugin {
                 turret_placement_system,
                 wave_state_machine_system,
                 wave_spawner_system,
+                reinforcement_spawner_system,
                 wave_enemy_move_order_system, // Process move orders for newly spawned enemies
                 enemy_death_tracking_system,
                 update_wave_counter_ui,
@@ -446,7 +460,7 @@ fn spawn_scenario_ui(commands: &mut Commands) {
     ));
 }
 
-/// Spawn visual markers at enemy spawn points
+/// Spawn visual markers at spawn points
 fn spawn_spawn_point_markers(
     commands: &mut Commands,
     meshes: &mut ResMut<Assets<Mesh>>,
@@ -458,24 +472,38 @@ fn spawn_spawn_point_markers(
     let beacon_mesh = meshes.add(Sphere::new(2.0));
 
     // Red material for enemy spawn points
-    let pole_material = materials.add(StandardMaterial {
+    let enemy_pole_material = materials.add(StandardMaterial {
         base_color: Color::srgb(0.8, 0.2, 0.2),
         emissive: bevy::color::LinearRgba::new(1.0, 0.3, 0.3, 1.0),
         ..default()
     });
-    let beacon_material = materials.add(StandardMaterial {
+    let enemy_beacon_material = materials.add(StandardMaterial {
         base_color: Color::srgb(1.0, 0.3, 0.3),
         emissive: bevy::color::LinearRgba::new(2.0, 0.5, 0.5, 1.0),
         unlit: true,
         ..default()
     });
 
-    let spawn_points = [
+    // Blue material for friendly reinforcement spawn point
+    let friendly_pole_material = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.2, 0.4, 0.8),
+        emissive: bevy::color::LinearRgba::new(0.3, 0.5, 1.0, 1.0),
+        ..default()
+    });
+    let friendly_beacon_material = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.3, 0.5, 1.0),
+        emissive: bevy::color::LinearRgba::new(0.5, 0.7, 2.0, 1.0),
+        unlit: true,
+        ..default()
+    });
+
+    // Enemy spawn points (red)
+    let enemy_spawn_points = [
         (NORTH_SPAWN, "North Spawn"),
         (EAST_SPAWN, "East Spawn"),
     ];
 
-    for (spawn_pos, name) in spawn_points {
+    for (spawn_pos, name) in enemy_spawn_points {
         let y = heightmap.sample_height(spawn_pos.x, spawn_pos.z);
         let marker_pos = Vec3::new(spawn_pos.x, y + 7.5, spawn_pos.z); // Pole center
         let beacon_pos = Vec3::new(spawn_pos.x, y + 16.0, spawn_pos.z); // Beacon on top
@@ -483,7 +511,7 @@ fn spawn_spawn_point_markers(
         // Spawn pole
         commands.spawn((
             Mesh3d(pole_mesh.clone()),
-            MeshMaterial3d(pole_material.clone()),
+            MeshMaterial3d(enemy_pole_material.clone()),
             Transform::from_translation(marker_pos),
             SpawnPointMarker,
             ScenarioUnit,
@@ -493,7 +521,7 @@ fn spawn_spawn_point_markers(
         // Spawn glowing beacon on top
         commands.spawn((
             Mesh3d(beacon_mesh.clone()),
-            MeshMaterial3d(beacon_material.clone()),
+            MeshMaterial3d(enemy_beacon_material.clone()),
             Transform::from_translation(beacon_pos),
             SpawnPointMarker,
             ScenarioUnit,
@@ -501,7 +529,32 @@ fn spawn_spawn_point_markers(
         ));
     }
 
-    info!("Spawned spawn point markers at North and East");
+    // Friendly reinforcement spawn point (blue)
+    {
+        let y = heightmap.sample_height(SOUTH_SPAWN.x, SOUTH_SPAWN.z);
+        let marker_pos = Vec3::new(SOUTH_SPAWN.x, y + 7.5, SOUTH_SPAWN.z);
+        let beacon_pos = Vec3::new(SOUTH_SPAWN.x, y + 16.0, SOUTH_SPAWN.z);
+
+        commands.spawn((
+            Mesh3d(pole_mesh.clone()),
+            MeshMaterial3d(friendly_pole_material),
+            Transform::from_translation(marker_pos),
+            SpawnPointMarker,
+            ScenarioUnit,
+            Name::new("South Spawn Pole"),
+        ));
+
+        commands.spawn((
+            Mesh3d(beacon_mesh.clone()),
+            MeshMaterial3d(friendly_beacon_material),
+            Transform::from_translation(beacon_pos),
+            SpawnPointMarker,
+            ScenarioUnit,
+            Name::new("South Spawn Beacon"),
+        ));
+    }
+
+    info!("Spawned spawn point markers at North, East (enemy) and South (reinforcements)");
 }
 
 /// Wave state machine - handles transitions between wave states
@@ -548,7 +601,8 @@ fn wave_state_machine_system(
                     // Start cooldown before next strategic wave
                     wave_manager.wave_state = WaveState::StrategicCooldown;
                     wave_manager.strategic_cooldown_timer.reset();
-                    info!("Strategic Wave {} cleared! Next assault in {:.0}s",
+                    wave_manager.reinforcements_spawned = false; // Allow reinforcements to spawn
+                    info!("Strategic Wave {} cleared! Next assault in {:.0}s - Reinforcements incoming!",
                         wave_manager.strategic_wave, STRATEGIC_WAVE_DELAY);
                 }
                 return;
@@ -731,6 +785,60 @@ fn wave_spawner_system(
             }
         }
     }
+}
+
+/// Spawn player reinforcements during strategic cooldown
+fn reinforcement_spawner_system(
+    mut wave_manager: ResMut<WaveManager>,
+    scenario_state: Res<ScenarioState>,
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut squad_manager: ResMut<SquadManager>,
+    heightmap: Res<TerrainHeightmap>,
+) {
+    // Only spawn during strategic cooldown and if not already spawned
+    if !scenario_state.active
+        || wave_manager.wave_state != WaveState::StrategicCooldown
+        || wave_manager.reinforcements_spawned
+    {
+        return;
+    }
+
+    // Mark as spawned so we don't spawn again this cooldown
+    wave_manager.reinforcements_spawned = true;
+
+    // Create materials and mesh for friendly units
+    let droid_mesh = create_droid_mesh(&mut meshes);
+    let unit_materials = create_team_materials(&mut materials, Team::A);
+
+    // Get spawn position height
+    let spawn_y = heightmap.sample_height(SOUTH_SPAWN.x, SOUTH_SPAWN.z);
+    let base_spawn_pos = Vec3::new(SOUTH_SPAWN.x, spawn_y, SOUTH_SPAWN.z);
+
+    // Facing direction (toward the bunker/north)
+    let facing = Vec3::new(0.0, 0.0, -1.0);
+
+    for i in 0..REINFORCEMENT_SQUADS {
+        // Spread squads slightly apart
+        let offset = Vec3::new((i as f32 - 0.5) * 20.0, 0.0, 0.0);
+        let spawn_pos = base_spawn_pos + offset;
+
+        spawn_single_squad(
+            &mut commands,
+            &mut squad_manager,
+            &droid_mesh,
+            &unit_materials,
+            &mut materials,
+            Team::A,
+            spawn_pos,
+            facing,
+            &heightmap,
+        );
+    }
+
+    info!("Reinforcements arrived! {} squads spawned at south spawn point",
+        REINFORCEMENT_SQUADS);
 }
 
 /// Track enemy deaths and update wave manager
