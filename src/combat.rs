@@ -832,22 +832,19 @@ pub fn hitscan_fire_system(
                             }
                             HitscanResult::HitTower(hit_pos) => {
                                 // Apply damage to buildings (turrets or towers)
-                                // Only enemy units (Team B) can damage Team A buildings
-                                if droid.team == Team::B {
-                                    // Try turret base directly
-                                    if let Ok((_, mut turret_health)) = turret_query.get_mut(target_entity) {
+                                // Try turret base directly
+                                if let Ok((_, mut turret_health)) = turret_query.get_mut(target_entity) {
+                                    turret_health.damage(25.0);
+                                }
+                                // Try tower if turret query failed
+                                else if let Ok(mut tower_health) = tower_health_query.get_mut(target_entity) {
+                                    tower_health.damage(25.0);
+                                }
+                                // Target may be turret assembly (child entity) - damage parent
+                                else if let Ok(child_of) = turret_assembly_query.get(target_entity) {
+                                    let parent_entity = child_of.parent();
+                                    if let Ok((_, mut turret_health)) = turret_query.get_mut(parent_entity) {
                                         turret_health.damage(25.0);
-                                    }
-                                    // Try tower if turret query failed
-                                    else if let Ok(mut tower_health) = tower_health_query.get_mut(target_entity) {
-                                        tower_health.damage(25.0);
-                                    }
-                                    // Target may be turret assembly (child entity) - damage parent
-                                    else if let Ok(child_of) = turret_assembly_query.get(target_entity) {
-                                        let parent_entity = child_of.parent();
-                                        if let Ok((_, mut turret_health)) = turret_query.get_mut(parent_entity) {
-                                            turret_health.damage(25.0);
-                                        }
                                     }
                                 }
                                 hit_pos
