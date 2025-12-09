@@ -40,6 +40,7 @@ pub const AUTO_FIRE_INTERVAL: f32 = 2.0;
 pub const HITSCAN_TRACER_SPEED: f32 = 400.0;  // Visual tracer speed (faster than projectiles for snappy feel)
 pub const HITSCAN_TRACER_LENGTH: f32 = 4.0;   // Length of the tracer bolt visual
 pub const HITSCAN_TRACER_WIDTH: f32 = 0.25;   // Slightly wider than projectiles for visibility
+pub const HITSCAN_DAMAGE: f32 = 25.0;         // Damage per hitscan hit (buildings)
 
 // Spatial partitioning settings
 pub const GRID_CELL_SIZE: f32 = 10.0; // Size of each grid cell

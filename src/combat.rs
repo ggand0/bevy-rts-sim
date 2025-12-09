@@ -2,43 +2,9 @@ use bevy::prelude::*;
 use crate::types::*;
 use crate::constants::*;
 use crate::terrain::TerrainHeightmap;
+use crate::math_utils::ray_sphere_intersection;
 use bevy::render::mesh::{Indices, PrimitiveTopology};
 use bevy::asset::RenderAssetUsages;
-
-/// Ray-sphere intersection test
-/// Returns Some((distance, hit_point)) if ray intersects sphere, None otherwise
-fn ray_sphere_intersection(
-    ray_origin: Vec3,
-    ray_direction: Vec3,
-    sphere_center: Vec3,
-    sphere_radius: f32,
-) -> Option<(f32, Vec3)> {
-    let oc = ray_origin - sphere_center;
-    let a = ray_direction.dot(ray_direction);
-    let b = 2.0 * oc.dot(ray_direction);
-    let c = oc.dot(oc) - sphere_radius * sphere_radius;
-    let discriminant = b * b - 4.0 * a * c;
-
-    if discriminant < 0.0 {
-        return None;
-    }
-
-    // Find nearest intersection point (entry point into sphere)
-    let t = (-b - discriminant.sqrt()) / (2.0 * a);
-    if t > 0.0 {
-        let hit_point = ray_origin + ray_direction * t;
-        return Some((t, hit_point));
-    }
-
-    // Check far intersection (exit point, in case we're inside the sphere)
-    let t2 = (-b + discriminant.sqrt()) / (2.0 * a);
-    if t2 > 0.0 {
-        let hit_point = ray_origin + ray_direction * t2;
-        return Some((t2, hit_point));
-    }
-
-    None
-}
 
 /// Check if there's a clear line of sight between shooter and target
 /// Returns true if the path is clear (no terrain blocking)
@@ -795,7 +761,7 @@ pub fn hitscan_fire_system(
                                     current_time,
                                     shield_config.impact_flash_duration
                                 );
-                                info!("HITSCAN SHIELD HIT: hp {} -> {}, at {:?}", old_hp, shield.current_hp, hit_pos);
+                                trace!("Hitscan shield hit: hp {} -> {}", old_hp, shield.current_hp);
                                 // Add ripple effect occasionally
                                 if rand::random::<f32>() < 0.25 {
                                     shield.add_ripple(hit_pos, current_time);
@@ -823,10 +789,8 @@ pub fn hitscan_fire_system(
 
                         match hit_result {
                             HitscanResult::HitUnit(hit_entity, hit_pos) => {
-                                // Despawn hit unit immediately
-                                if let Ok(mut entity_commands) = commands.get_entity(hit_entity) {
-                                    entity_commands.despawn();
-                                }
+                                // Despawn hit unit (try_despawn to avoid double-despawn warnings)
+                                commands.entity(hit_entity).try_despawn();
                                 squad_manager.remove_unit_from_squad(hit_entity);
                                 hit_pos
                             }
@@ -834,17 +798,17 @@ pub fn hitscan_fire_system(
                                 // Apply damage to buildings (turrets or towers)
                                 // Try turret base directly
                                 if let Ok((_, mut turret_health)) = turret_query.get_mut(target_entity) {
-                                    turret_health.damage(25.0);
+                                    turret_health.damage(HITSCAN_DAMAGE);
                                 }
                                 // Try tower if turret query failed
                                 else if let Ok(mut tower_health) = tower_health_query.get_mut(target_entity) {
-                                    tower_health.damage(25.0);
+                                    tower_health.damage(HITSCAN_DAMAGE);
                                 }
                                 // Target may be turret assembly (child entity) - damage parent
                                 else if let Ok(child_of) = turret_assembly_query.get(target_entity) {
                                     let parent_entity = child_of.parent();
                                     if let Ok((_, mut turret_health)) = turret_query.get_mut(parent_entity) {
-                                        turret_health.damage(25.0);
+                                        turret_health.damage(HITSCAN_DAMAGE);
                                     }
                                 }
                                 hit_pos
@@ -1098,11 +1062,9 @@ pub fn collision_detection_system(
         }
     }
     
-    // Despawn all marked entities
+    // Despawn all marked entities (try_despawn to avoid double-despawn warnings with hitscan)
     for entity in entities_to_despawn {
-        if let Ok(mut entity_commands) = commands.get_entity(entity) {
-            entity_commands.despawn();
-        }
+        commands.entity(entity).try_despawn();
     }
 }
 
