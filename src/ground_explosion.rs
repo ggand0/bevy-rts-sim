@@ -10,6 +10,32 @@ use rand::Rng;
 
 use crate::wfx_materials::AdditiveMaterial;
 
+// ===== HELPER FUNCTIONS =====
+
+/// Convert HSV to RGB (all values 0.0-1.0)
+/// Used for UE5-style color variation on particles
+fn hsv_to_rgb(h: f32, s: f32, v: f32) -> (f32, f32, f32) {
+    if s <= 0.0 {
+        return (v, v, v);
+    }
+
+    let h = (h % 1.0) * 6.0;
+    let i = h.floor() as i32;
+    let f = h - i as f32;
+    let p = v * (1.0 - s);
+    let q = v * (1.0 - s * f);
+    let t = v * (1.0 - s * (1.0 - f));
+
+    match i % 6 {
+        0 => (v, t, p),
+        1 => (q, v, p),
+        2 => (p, v, t),
+        3 => (p, q, v),
+        4 => (t, p, v),
+        _ => (v, p, q),
+    }
+}
+
 // ===== FLIPBOOK MATERIAL =====
 
 /// Custom material for flipbook sprite sheets with non-square grid support
@@ -352,7 +378,9 @@ pub fn spawn_single_emitter(
 }
 
 /// Main fireball - 8x8 flipbook (64 frames), 1s duration, bottom pivot, velocity aligned
+/// UE5 spec says 9x9 but actual texture is 8x8 (2048/256=8)
 /// UE5: 7-13 particles, cone velocity 90°, size 2500-2600 (~25m), speed 450-650
+/// Spawn delay: 0.05s, HSV color variation, sprite rotation 0-360°
 pub fn spawn_main_fireball(
     commands: &mut Commands,
     assets: &GroundExplosionAssets,
@@ -364,17 +392,23 @@ pub fn spawn_main_fireball(
     // UE5: RandomRangeInt 7-13 particles
     let count = rng.gen_range(7..=13);
     let lifetime = 1.0;
-    let frame_duration = lifetime / 64.0;
+    let total_frames = 64; // 8x8 grid (texture is 2048x2048, 256px per frame)
+    let frame_duration = lifetime / total_frames as f32;
 
     for i in 0..count {
         // UE5: Uniform Sprite Size 2500-2600 (in cm) -> ~25-26m, scale down for Bevy
         let size = rng.gen_range(20.0..26.0) * scale;
 
-        // UE5: SphereLocation radius 50 -> spawn offset
+        // UE5: SphereLocation radius 50 units -> 0.5m scaled
+        // Spawn within sphere (not just XZ plane)
+        let sphere_radius = 0.5 * scale;
+        let spawn_theta = rng.gen_range(0.0..std::f32::consts::TAU);
+        let spawn_phi = rng.gen_range(0.0..std::f32::consts::PI);
+        let spawn_r = rng.gen_range(0.0..sphere_radius);
         let spawn_offset = Vec3::new(
-            rng.gen_range(-0.5..0.5) * scale,
-            0.0,
-            rng.gen_range(-0.5..0.5) * scale,
+            spawn_r * spawn_phi.sin() * spawn_theta.cos(),
+            spawn_r * spawn_phi.cos().abs() * 0.5, // Bias toward ground
+            spawn_r * spawn_phi.sin() * spawn_theta.sin(),
         );
 
         // UE5: AddVelocityInCone - 90° cone pointing up (Z=1), speed 450-650
@@ -389,31 +423,48 @@ pub fn spawn_main_fireball(
             phi.sin() * theta.sin() * speed,
         );
 
+        // UE5: HSV color variation
+        // Hue shift: ±0.1 (±10%), Saturation: 0.8-1.0, Value: 0.8-1.0
+        let hue_shift = rng.gen_range(-0.1..0.1);
+        let saturation = rng.gen_range(0.8..1.0);
+        let value = rng.gen_range(0.8..1.0);
+        let (r, g, b) = hsv_to_rgb(0.08 + hue_shift, saturation, value); // Base hue ~0.08 (orange)
+
+        // UE5: Alpha Scale Range 0.8-1.0
+        let alpha = rng.gen_range(0.8..1.0);
+
+        // UE5: Sprite Rotation Angle 0-360°
+        let rotation_angle = rng.gen_range(0.0..std::f32::consts::TAU);
+
         let material = materials.add(FlipbookMaterial {
-            frame_data: Vec4::new(0.0, 0.0, 8.0, 8.0),
-            color_data: Vec4::new(1.0, 1.0, 1.0, rng.gen_range(0.8..1.0)), // Alpha variation
+            frame_data: Vec4::new(0.0, 0.0, 8.0, 8.0), // 8x8 grid
+            color_data: Vec4::new(r, g, b, alpha),
             sprite_texture: assets.main_texture.clone(),
         });
+
+        // UE5: Spawn delay 0.05s - start with negative elapsed time
+        let spawn_delay = 0.05;
 
         commands.spawn((
             Mesh3d(assets.bottom_pivot_quad.clone()),
             MeshMaterial3d(material),
             Transform::from_translation(position + spawn_offset).with_scale(Vec3::splat(size)),
-            Visibility::Visible,
+            Visibility::Hidden, // Start hidden until spawn delay passes
             NotShadowCaster,
             NotShadowReceiver,
             FlipbookSprite {
                 columns: 8,
                 rows: 8,
-                total_frames: 64,
+                total_frames,
                 frame_duration,
-                elapsed: 0.0,
+                elapsed: -spawn_delay, // Negative elapsed = spawn delay
                 lifetime: 0.0,
-                max_lifetime: lifetime, // All fireballs same duration - animation synced
-                base_alpha: 1.0,
-                loop_animation: false,  // Play once
+                max_lifetime: lifetime,
+                base_alpha: alpha,
+                loop_animation: false,
             },
             VelocityAligned { velocity, gravity: 0.0 },
+            SpriteRotation { angle: rotation_angle },
             BottomPivot,
             GroundExplosionChild,
             Name::new(format!("GE_MainFireball_{}", i)),
@@ -423,6 +474,7 @@ pub fn spawn_main_fireball(
 
 /// Secondary fireball - 8x8 flipbook (64 frames), 1s duration
 /// UE5: 5-10 particles, cone velocity 90°, size 2500-2600, speed 450-650
+/// Spawn delay: 0.05s, HSV color variation, sprite rotation 0-360°
 pub fn spawn_secondary_fireball(
     commands: &mut Commands,
     assets: &GroundExplosionAssets,
@@ -434,17 +486,23 @@ pub fn spawn_secondary_fireball(
     // UE5: RandomRangeInt 5-10 particles
     let count = rng.gen_range(5..=10);
     let lifetime = 1.0;
-    let frame_duration = lifetime / 64.0;
+    let total_frames = 64; // 8x8 grid (different texture than main)
+    let frame_duration = lifetime / total_frames as f32;
 
     for i in 0..count {
         // UE5: Uniform Sprite Size 2500-2600
         let size = rng.gen_range(20.0..26.0) * scale;
 
-        // Spawn offset from sphere radius 50
+        // UE5: SphereLocation radius 50 units -> 0.5m scaled
+        // Spawn within sphere (not just XZ plane)
+        let sphere_radius = 0.5 * scale;
+        let spawn_theta = rng.gen_range(0.0..std::f32::consts::TAU);
+        let spawn_phi = rng.gen_range(0.0..std::f32::consts::PI);
+        let spawn_r = rng.gen_range(0.0..sphere_radius);
         let spawn_offset = Vec3::new(
-            rng.gen_range(-0.5..0.5) * scale,
-            0.0,
-            rng.gen_range(-0.5..0.5) * scale,
+            spawn_r * spawn_phi.sin() * spawn_theta.cos(),
+            spawn_r * spawn_phi.cos().abs() * 0.5, // Bias toward ground
+            spawn_r * spawn_phi.sin() * spawn_theta.sin(),
         );
 
         // UE5: AddVelocityInCone - 90° cone, speed 450-650
@@ -458,31 +516,48 @@ pub fn spawn_secondary_fireball(
             phi.sin() * theta.sin() * speed,
         );
 
+        // UE5: HSV color variation
+        // Hue shift: ±0.1 (±10%), Saturation: 0.8-1.0, Value: 0.8-1.0
+        let hue_shift = rng.gen_range(-0.1..0.1);
+        let saturation = rng.gen_range(0.8..1.0);
+        let value = rng.gen_range(0.8..1.0);
+        let (r, g, b) = hsv_to_rgb(0.08 + hue_shift, saturation, value); // Base hue ~0.08 (orange)
+
+        // UE5: Alpha Scale Range 0.8-1.0
+        let alpha = rng.gen_range(0.8..1.0);
+
+        // UE5: Sprite Rotation Angle 0-360°
+        let rotation_angle = rng.gen_range(0.0..std::f32::consts::TAU);
+
         let material = materials.add(FlipbookMaterial {
             frame_data: Vec4::new(0.0, 0.0, 8.0, 8.0),
-            color_data: Vec4::new(1.0, 1.0, 1.0, rng.gen_range(0.8..1.0)),
+            color_data: Vec4::new(r, g, b, alpha),
             sprite_texture: assets.secondary_texture.clone(),
         });
+
+        // UE5: Spawn delay 0.05s - start with negative elapsed time
+        let spawn_delay = 0.05;
 
         commands.spawn((
             Mesh3d(assets.bottom_pivot_quad.clone()),
             MeshMaterial3d(material),
             Transform::from_translation(position + spawn_offset).with_scale(Vec3::splat(size)),
-            Visibility::Visible,
+            Visibility::Hidden, // Start hidden until spawn delay passes
             NotShadowCaster,
             NotShadowReceiver,
             FlipbookSprite {
                 columns: 8,
                 rows: 8,
-                total_frames: 64,
+                total_frames,
                 frame_duration,
-                elapsed: 0.0,
+                elapsed: -spawn_delay, // Negative elapsed = spawn delay
                 lifetime: 0.0,
-                max_lifetime: lifetime, // All fireballs same duration - animation synced
-                base_alpha: 1.0,
-                loop_animation: false,  // Play once
+                max_lifetime: lifetime,
+                base_alpha: alpha,
+                loop_animation: false,
             },
             VelocityAligned { velocity, gravity: 0.0 },
+            SpriteRotation { angle: rotation_angle },
             BottomPivot,
             GroundExplosionChild,
             Name::new(format!("GE_SecondaryFireball_{}", i)),
@@ -1061,10 +1136,12 @@ pub fn spawn_velocity_dirt(
 // ===== ANIMATION SYSTEMS =====
 
 /// Update flipbook sprite animations and lifetime
+/// Handles spawn delay via negative elapsed time - particles start hidden and become visible
 pub fn animate_flipbook_sprites(
     mut query: Query<(
         &mut FlipbookSprite,
         &MeshMaterial3d<FlipbookMaterial>,
+        &mut Visibility,
         Option<&Name>,
         Option<&SmokeScaleOverLife>,  // Detect smoke for linear alpha fade
     )>,
@@ -1073,8 +1150,21 @@ pub fn animate_flipbook_sprites(
 ) {
     let dt = time.delta_secs();
 
-    for (mut sprite, material_handle, name, is_smoke) in query.iter_mut() {
+    for (mut sprite, material_handle, mut visibility, name, is_smoke) in query.iter_mut() {
         sprite.elapsed += dt;
+
+        // Handle spawn delay: negative elapsed means particle is waiting to spawn
+        if sprite.elapsed < 0.0 {
+            *visibility = Visibility::Hidden;
+            continue;
+        }
+
+        // Make visible once spawn delay is over
+        if *visibility == Visibility::Hidden {
+            *visibility = Visibility::Visible;
+        }
+
+        // Only count lifetime after spawn delay
         sprite.lifetime += dt;
 
         // Calculate current frame - respect loop_animation flag
@@ -1116,11 +1206,14 @@ pub fn animate_flipbook_sprites(
 }
 
 /// Update velocity-aligned billboards
+/// Also handles SpriteRotation for velocity-aligned particles
 pub fn update_velocity_aligned_billboards(
     mut query: Query<(
         &mut Transform,
         &mut VelocityAligned,
         Option<&BottomPivot>,
+        Option<&SpriteRotation>,
+        Option<&FlipbookSprite>,
     )>,
     camera_query: Query<&GlobalTransform, With<Camera>>,
     time: Res<Time>,
@@ -1133,7 +1226,14 @@ pub fn update_velocity_aligned_billboards(
         .map(|t| t.translation())
         .unwrap_or(Vec3::ZERO);
 
-    for (mut transform, mut vel_aligned, bottom_pivot) in query.iter_mut() {
+    for (mut transform, mut vel_aligned, bottom_pivot, sprite_rotation, flipbook) in query.iter_mut() {
+        // Skip particles still in spawn delay
+        if let Some(fb) = flipbook {
+            if fb.elapsed < 0.0 {
+                continue;
+            }
+        }
+
         // Apply gravity
         vel_aligned.velocity.y -= vel_aligned.gravity * dt;
 
@@ -1143,7 +1243,7 @@ pub fn update_velocity_aligned_billboards(
         // Calculate rotation to align with velocity
         let velocity_dir = vel_aligned.velocity.normalize_or_zero();
 
-        if velocity_dir.length_squared() > 0.001 {
+        let base_rotation = if velocity_dir.length_squared() > 0.001 {
             // For velocity-aligned sprites, the up-axis points along velocity
             // and the sprite faces the camera
             let up = velocity_dir;
@@ -1155,13 +1255,9 @@ pub fn update_velocity_aligned_billboards(
             if forward.length_squared() > 0.001 {
                 let right = up.cross(forward).normalize();
                 let corrected_forward = right.cross(up);
-
-                // For bottom-pivot, we want the quad to extend upward from origin
-                if bottom_pivot.is_some() {
-                    transform.rotation = Quat::from_mat3(&Mat3::from_cols(right, up, corrected_forward));
-                } else {
-                    transform.rotation = Quat::from_mat3(&Mat3::from_cols(right, up, corrected_forward));
-                }
+                Some(Quat::from_mat3(&Mat3::from_cols(right, up, corrected_forward)))
+            } else {
+                None
             }
         } else {
             // Fallback to camera-facing when velocity is near zero
@@ -1171,8 +1267,23 @@ pub fn update_velocity_aligned_billboards(
                 let right = Vec3::Y.cross(forward).normalize_or_zero();
                 if right.length_squared() > 0.001 {
                     let up = forward.cross(right);
-                    transform.rotation = Quat::from_mat3(&Mat3::from_cols(right, up, forward));
+                    Some(Quat::from_mat3(&Mat3::from_cols(right, up, forward)))
+                } else {
+                    None
                 }
+            } else {
+                None
+            }
+        };
+
+        // Apply base rotation with optional sprite rotation
+        if let Some(base_rot) = base_rotation {
+            if let Some(sprite_rot) = sprite_rotation {
+                // Apply sprite rotation around the velocity axis (local Y for velocity-aligned)
+                let local_rotation = Quat::from_rotation_y(sprite_rot.angle);
+                transform.rotation = base_rot * local_rotation;
+            } else {
+                transform.rotation = base_rot;
             }
         }
     }
