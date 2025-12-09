@@ -633,16 +633,18 @@ pub fn debug_hanabi_entities(
         let name_str = name.as_str();
         if name_str.contains("DeathFlash") || name_str.contains("MassExplosion")
             || name_str.contains("ExplosionDebris") || name_str.contains("ExplosionSparks") || name_str.contains("ExplosionSmoke") {
-            info!(
-                "🔍 HANABI {:?} '{}': pos={:?} Vis={:?} InheritedVis={:?} ViewVis={:?} Compiled={}",
-                entity,
-                name_str,
-                transform.translation,
-                vis.map(|v| format!("{:?}", v)),
-                inherited_vis.map(|_| "Some"),
-                view_vis.map(|_| "Some"),
-                compiled.is_some()
-            );
+            // Uncomment for debugging hanabi particle visibility issues
+            // info!(
+            //     "🔍 HANABI {:?} '{}': pos={:?} Vis={:?} InheritedVis={:?} ViewVis={:?} Compiled={}",
+            //     entity,
+            //     name_str,
+            //     transform.translation,
+            //     vis.map(|v| format!("{:?}", v)),
+            //     inherited_vis.map(|_| "Some"),
+            //     view_vis.map(|_| "Some"),
+            //     compiled.is_some()
+            // );
+            let _ = (entity, name_str, transform, vis, inherited_vis, view_vis, compiled); // suppress warnings
         }
     }
 }
@@ -658,20 +660,22 @@ fn cleanup_finished_particle_effects(
     let current_time = time.elapsed_secs_f64();
     let entity_count = query.iter().count();
 
-    let mut despawned = 0;
+    // let mut despawned = 0;
     for (entity, lifetime) in query.iter() {
         let elapsed = (current_time - lifetime.spawn_time) as f32;
 
         if elapsed >= lifetime.duration {
             commands.entity(entity).despawn();
-            despawned += 1;
+            // despawned += 1;
         }
     }
 
-    let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
-    let frame_time_ms = time.delta_secs() * 1000.0;
-    if entity_count > 0 {
-        info!("📊 HANABI STATS: {} entities, {} despawned, {:.2}ms CPU, {:.2}ms frame_time ({:.0} FPS)",
-              entity_count, despawned, elapsed_ms, frame_time_ms, 1000.0 / frame_time_ms);
-    }
+    // Uncomment for debugging hanabi performance
+    // let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
+    // let frame_time_ms = time.delta_secs() * 1000.0;
+    // if entity_count > 0 {
+    //     info!("📊 HANABI STATS: {} entities, {} despawned, {:.2}ms CPU, {:.2}ms frame_time ({:.0} FPS)",
+    //           entity_count, despawned, elapsed_ms, frame_time_ms, 1000.0 / frame_time_ms);
+    // }
+    let _ = (start, entity_count); // suppress warnings
 }
