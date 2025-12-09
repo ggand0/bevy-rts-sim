@@ -20,6 +20,7 @@ mod terrain_decor;
 mod shield;
 mod decals;
 mod scenario;
+mod ground_explosion;
 use explosion_shader::ExplosionShaderPlugin;
 use particles::ParticleEffectsPlugin;
 use terrain::TerrainPlugin;
@@ -58,7 +59,7 @@ fn main() {
         .insert_resource(GameState::default())
         .insert_resource(ExplosionDebugMode::default())
         .insert_resource(selection::SelectionState::default())
-        .add_systems(Startup, (setup::setup_scene, spawn_uplink_towers, spawn_debug_mode_ui, setup_laser_assets))
+        .add_systems(Startup, (setup::setup_scene, spawn_uplink_towers, spawn_debug_mode_ui, setup_laser_assets, ground_explosion::setup_ground_explosion_assets))
         // Army spawning runs after terrain is ready (terrain spawns in TerrainPlugin's Startup)
         .add_systems(Startup, setup::spawn_army_with_squads.after(terrain::spawn_initial_terrain))
         // Turret spawning runs after terrain is ready
@@ -149,6 +150,7 @@ fn main() {
             update_debug_mode_ui,
             debug_explosion_hotkey_system,
             debug_warfx_test_system,
+            objective::debug_ground_explosion_system,
             objective::debug_spawn_shield_system,
             // Tower and shield health bars
             objective::spawn_tower_health_bars,
@@ -163,6 +165,14 @@ fn main() {
             wfx_spawn::animate_explosion_billboards,
             wfx_spawn::animate_smoke_only_billboards,
             wfx_spawn::animate_glow_sparkles,
+        ))
+        .add_systems(Update, (
+            // Ground explosion animations (UE5 Niagara-style)
+            ground_explosion::animate_flipbook_sprites,
+            ground_explosion::update_velocity_aligned_billboards,
+            ground_explosion::update_camera_facing_billboards,
+            ground_explosion::animate_additive_sprites,
+            ground_explosion::cleanup_ground_explosions,
         ))
         .run();
 }
