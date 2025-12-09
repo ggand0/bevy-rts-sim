@@ -4,7 +4,7 @@
 use bevy::prelude::*;
 use bevy::pbr::{Material, MaterialPipeline, MaterialPipelineKey, NotShadowCaster, NotShadowReceiver};
 use bevy::render::mesh::{Indices, MeshVertexBufferLayoutRef, PrimitiveTopology};
-use bevy::render::render_resource::{AsBindGroup, RenderPipelineDescriptor, ShaderRef, SpecializedMeshPipelineError};
+use bevy::render::render_resource::{AsBindGroup, BlendState, RenderPipelineDescriptor, ShaderRef, SpecializedMeshPipelineError};
 use bevy::asset::RenderAssetUsages;
 use rand::Rng;
 
@@ -40,6 +40,12 @@ impl Material for FlipbookMaterial {
         _key: MaterialPipelineKey<Self>,
     ) -> Result<(), SpecializedMeshPipelineError> {
         descriptor.primitive.cull_mode = None;
+        // Enable proper alpha blending
+        if let Some(ref mut fragment) = descriptor.fragment {
+            for target in fragment.targets.iter_mut().flatten() {
+                target.blend = Some(BlendState::ALPHA_BLENDING);
+            }
+        }
         Ok(())
     }
 }
@@ -122,6 +128,7 @@ pub struct GroundExplosionAssets {
     pub dirt_texture: Handle<Image>,
     pub flare_texture: Handle<Image>,
     pub impact_texture: Handle<Image>,
+    pub glow_circle_texture: Handle<Image>, // WFX glow circle - works with additive shader
     // Shared meshes
     pub centered_quad: Handle<Mesh>,
     pub bottom_pivot_quad: Handle<Mesh>,
@@ -222,6 +229,7 @@ pub fn setup_ground_explosion_assets(
         dirt_texture: asset_server.load("textures/premium/ground_explosion/dirt.png"),
         flare_texture: asset_server.load("textures/premium/ground_explosion/flare.png"),
         impact_texture: asset_server.load("textures/premium/ground_explosion/impact.png"),
+        glow_circle_texture: asset_server.load("textures/wfx/WFX_T_GlowCircle A8.png"),
         centered_quad: meshes.add(create_centered_quad(1.0)),
         bottom_pivot_quad: meshes.add(create_bottom_pivot_quad(1.0)),
     };
@@ -267,7 +275,7 @@ pub fn spawn_ground_explosion(
     spawn_flash_sparks(commands, assets, additive_materials, position, scale, &mut rng);
 
     // Impact ground flash
-    spawn_impact_flash(commands, assets, additive_materials, position, scale);
+    spawn_impact_flash(commands, assets, flipbook_materials, additive_materials, position, scale);
 
     // Dirt debris (single texture, camera facing)
     spawn_dirt_debris(commands, assets, flipbook_materials, position, scale, &mut rng);
@@ -299,7 +307,7 @@ pub fn spawn_single_emitter(
         EmitterType::Dust => spawn_dust_ring(commands, assets, flipbook_materials, position, scale, &mut rng),
         EmitterType::Spark => spawn_sparks(commands, assets, additive_materials, position, scale, &mut rng),
         EmitterType::FlashSpark => spawn_flash_sparks(commands, assets, additive_materials, position, scale, &mut rng),
-        EmitterType::Impact => spawn_impact_flash(commands, assets, additive_materials, position, scale),
+        EmitterType::Impact => spawn_impact_flash(commands, assets, flipbook_materials, additive_materials, position, scale),
         EmitterType::Dirt => spawn_dirt_debris(commands, assets, flipbook_materials, position, scale, &mut rng),
     }
 }
@@ -564,7 +572,9 @@ pub fn spawn_wisps(
 }
 
 /// Dust ring - 4x1 flipbook (4 frames), velocity aligned
-/// UE5: AddVelocityInCone 35° upward, speed 500-1000, size 300-500 cm
+/// UE5: 2-3 particles, AddVelocityInCone 35° upward, speed 500-1000, size 300-500 cm
+/// Short lifetime (0.1-0.5s), animation plays once fast
+/// Billboards are almost vertical (velocity-aligned pointing up) - barely see the face
 pub fn spawn_dust_ring(
     commands: &mut Commands,
     assets: &GroundExplosionAssets,
@@ -573,23 +583,26 @@ pub fn spawn_dust_ring(
     scale: f32,
     rng: &mut impl Rng,
 ) {
-    let count = 12;  // More particles for ring effect
-    let lifetime = 1.0;
-    let frame_duration = lifetime / 4.0;
+    // UE5: UniformRangedInt 2-3 particles
+    let count = rng.gen_range(2..=3);
+    // UE5: RandomRangeFloat 0.1-0.5 for lifetime - animation plays once fast
+    let lifetime = rng.gen_range(0.1..0.5);
+    let frame_duration = lifetime / 4.0;  // 4 frames over short lifetime
 
     for i in 0..count {
-        let angle = (i as f32 / count as f32) * std::f32::consts::TAU;
+        let angle = rng.gen_range(0.0..std::f32::consts::TAU);
         // UE5: Size 300-500 cm -> 3-5m
         let size = rng.gen_range(3.0..5.0) * scale;
 
         // UE5: AddVelocityInCone - 35° cone pointing up, speed 500-1000
+        // Almost vertical velocity so billboards are nearly edge-on to camera
         let cone_angle = 35.0_f32.to_radians();
         let phi = rng.gen_range(0.0..cone_angle);  // 0-35° from vertical
         let speed = rng.gen_range(5.0..10.0) * scale;  // 500-1000 cm/s
 
         let velocity = Vec3::new(
             phi.sin() * angle.cos() * speed,
-            phi.cos() * speed,  // Mostly upward
+            phi.cos() * speed,  // Mostly upward - makes billboard almost vertical
             phi.sin() * angle.sin() * speed,
         );
 
@@ -601,7 +614,7 @@ pub fn spawn_dust_ring(
 
         let material = materials.add(FlipbookMaterial {
             frame_data: Vec4::new(0.0, 0.0, 4.0, 1.0), // col, row, columns (4), rows (1)
-            color_data: Vec4::new(0.85, 0.75, 0.65, 0.7), // Sandy brown
+            color_data: Vec4::new(0.0, 0.0, 0.0, 1.0), // Black dust
             sprite_texture: assets.dust_texture.clone(),
         });
 
@@ -620,9 +633,9 @@ pub fn spawn_dust_ring(
                 elapsed: 0.0,
                 lifetime: 0.0,
                 max_lifetime: lifetime,
-                base_alpha: 0.7,
+                base_alpha: 0.8,
             },
-            VelocityAligned { velocity, gravity: 3.0 },
+            VelocityAligned { velocity, gravity: 0.0 },  // No gravity - fast upward motion
             BottomPivot,
             GroundExplosionChild,
             Name::new(format!("GE_Dust_{}", i)),
@@ -741,36 +754,67 @@ pub fn spawn_flash_sparks(
     }
 }
 
-/// Impact flash - heavily tilted billboard flash at explosion origin
-/// UE5: VelocityAligned, tilted ~70° from horizontal (almost vertical but angled)
-/// Split-second flash with glowing appearance
+/// Impact flash - tilted ground flash with impact texture + glow circle
+/// UE5: Ground-facing billboard tilted from vertical
 pub fn spawn_impact_flash(
     commands: &mut Commands,
     assets: &GroundExplosionAssets,
-    materials: &mut ResMut<Assets<AdditiveMaterial>>,
+    flipbook_materials: &mut ResMut<Assets<FlipbookMaterial>>,
+    additive_materials: &mut ResMut<Assets<AdditiveMaterial>>,
     position: Vec3,
     scale: f32,
 ) {
-    let size = 12.0 * scale;  // Flash size
-    let lifetime = 0.15;  // Split-second flash
+    let lifetime = 0.3;
 
-    // Use flare texture for glowing soft edges (impact texture is flame-shaped)
-    let material = materials.add(AdditiveMaterial {
-        tint_color: Vec4::new(1.0, 0.85, 0.5, 1.0),  // Warm orange-yellow glow
+    // Glow circle - additive soft glow, camera-facing
+    let glow_size = 15.0 * scale;
+    let glow_material = additive_materials.add(AdditiveMaterial {
+        tint_color: Vec4::new(1.0, 0.8, 0.5, 0.5), // Orange tint
         soft_particles_fade: Vec4::new(1.0, 0.0, 0.0, 0.0),
-        particle_texture: assets.flare_texture.clone(),
+        particle_texture: assets.glow_circle_texture.clone(),
     });
-
-    // Heavily tilted - about 70° from horizontal (20° from vertical)
-    // This makes the top almost face the camera while bottom is near ground
-    let tilt_angle = 70.0_f32.to_radians();  // Tilt from horizontal
 
     commands.spawn((
         Mesh3d(assets.centered_quad.clone()),
-        MeshMaterial3d(material),
-        Transform::from_translation(position + Vec3::Y * 0.5 * scale)
-            .with_rotation(Quat::from_rotation_x(-tilt_angle))
-            .with_scale(Vec3::splat(size)),
+        MeshMaterial3d(glow_material),
+        Transform::from_translation(position + Vec3::Y * 0.5)
+            .with_scale(Vec3::splat(glow_size)),
+        Visibility::Visible,
+        NotShadowCaster,
+        NotShadowReceiver,
+        FlipbookSprite {
+            columns: 1,
+            rows: 1,
+            total_frames: 1,
+            frame_duration: lifetime,
+            elapsed: 0.0,
+            lifetime: 0.0,
+            max_lifetime: lifetime,
+            base_alpha: 0.5,
+        },
+        CameraFacing,
+        GroundExplosionChild,
+        Name::new("GE_GlowCircle"),
+    ));
+
+    // Impact texture - tilted ground-facing billboard
+    let impact_size = 12.0 * scale;
+    let impact_material = flipbook_materials.add(FlipbookMaterial {
+        frame_data: Vec4::new(0.0, 0.0, 1.0, 1.0),
+        color_data: Vec4::new(1.0, 1.0, 1.0, 1.0),
+        sprite_texture: assets.impact_texture.clone(),
+    });
+
+    // Tilt 45° from vertical
+    let tilt_angle = 45.0_f32.to_radians();
+    let tilt_rotation = Quat::from_rotation_x(tilt_angle);
+
+    commands.spawn((
+        Mesh3d(assets.centered_quad.clone()),
+        MeshMaterial3d(impact_material),
+        Transform::from_translation(position + Vec3::Y * 0.2 * scale)
+            .with_rotation(tilt_rotation)
+            .with_scale(Vec3::splat(impact_size)),
         Visibility::Visible,
         NotShadowCaster,
         NotShadowReceiver,
@@ -1046,24 +1090,32 @@ pub fn cleanup_ground_explosions(
     }
 }
 
-/// Update additive material alpha for sparks
+/// Update additive material alpha for sparks and glow effects
 pub fn animate_additive_sprites(
-    query: Query<(
-        &FlipbookSprite,
+    mut query: Query<(
+        &mut FlipbookSprite,
         &MeshMaterial3d<AdditiveMaterial>,
     ), With<GroundExplosionChild>>,
     mut materials: ResMut<Assets<AdditiveMaterial>>,
+    time: Res<Time>,
 ) {
-    for (sprite, material_handle) in query.iter() {
+    let dt = time.delta_secs();
+
+    for (mut sprite, material_handle) in query.iter_mut() {
+        // Update lifetime
+        sprite.lifetime += dt;
+
+        // Fade out in last 30% of lifetime
         let progress = sprite.lifetime / sprite.max_lifetime;
-        let alpha = if progress > 0.7 {
+        let fade = if progress > 0.7 {
             1.0 - (progress - 0.7) * 3.33
         } else {
             1.0
         };
 
         if let Some(material) = materials.get_mut(&material_handle.0) {
-            material.tint_color.w = alpha.max(0.0);
+            // Apply base_alpha multiplied by fade
+            material.tint_color.w = (sprite.base_alpha * fade).max(0.0);
         }
     }
 }
