@@ -1,5 +1,6 @@
 mod constants;
 mod types;
+mod math_utils;
 mod combat;
 mod formation;
 mod movement;
@@ -114,13 +115,16 @@ fn main() {
         .add_systems(Update, (
             // Combat systems
             target_acquisition_system,
-            auto_fire_system,
+            hitscan_fire_system,      // Infantry use hitscan (instant damage + visual tracer)
+            auto_fire_system,         // Turrets still use projectiles
             volley_fire_system,
             update_projectiles,
+            update_hitscan_tracers,   // Update visual tracers
         ))
         .add_systems(Update, (
             // Shield collision detection runs BEFORE unit collision
             shield::shield_collision_system,
+            shield::shield_destruction_check_system, // Handles hitscan shield destruction
             shield::shield_regeneration_system,
             shield::shield_impact_flash_system,
             shield::shield_health_visual_system,
@@ -145,6 +149,7 @@ fn main() {
             update_debug_mode_ui,
             debug_explosion_hotkey_system,
             debug_warfx_test_system,
+            objective::debug_spawn_shield_system,
             // Tower and shield health bars
             objective::spawn_tower_health_bars,
             objective::update_tower_health_bars,

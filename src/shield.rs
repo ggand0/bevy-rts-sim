@@ -443,6 +443,31 @@ pub fn shield_collision_system(
     }
 }
 
+/// Checks for shields with 0 HP (from hitscan damage) and despawns them
+/// This handles shield destruction for damage applied outside shield_collision_system
+pub fn shield_destruction_check_system(
+    mut commands: Commands,
+    config: Res<ShieldConfig>,
+    query: Query<(Entity, &Shield)>,
+) {
+    for (shield_entity, shield) in query.iter() {
+        if shield.is_destroyed() {
+            info!("Shield {:?} destroyed (hitscan)!", shield.team);
+
+            // Spawn destroyed shield marker for respawn
+            commands.spawn(DestroyedShield {
+                team: shield.team,
+                position: shield.center,
+                radius: shield.radius,
+                team_color: shield.team.shield_color(),
+                respawn_timer: config.respawn_delay,
+            });
+
+            commands.entity(shield_entity).despawn();
+        }
+    }
+}
+
 /// Regenerates shield HP over time after damage
 pub fn shield_regeneration_system(
     time: Res<Time>,

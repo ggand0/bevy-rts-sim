@@ -27,6 +27,9 @@ impl Plugin for TerrainPlugin {
                 terrain_map_switching,
                 handle_pending_heightmap,
                 handle_map_switch_units,
+                // spawn_debug_map_entities must run AFTER handle_map_switch_units
+                // because handle_map_switch_units clears the squad_manager
+                spawn_debug_map_entities.after(handle_map_switch_units),
             ));
     }
 }
@@ -44,6 +47,8 @@ pub enum MapPreset {
     Flat,
     RollingHills,
     FirebaseDelta,
+    /// Small debug map for testing (~100x100 units)
+    Debug,
 }
 
 /// Terrain configuration resource
@@ -480,6 +485,8 @@ fn terrain_map_switching(
         Some(MapPreset::RollingHills)
     } else if keys.just_pressed(KeyCode::Digit3) {
         Some(MapPreset::FirebaseDelta)
+    } else if keys.just_pressed(KeyCode::Digit4) {
+        Some(MapPreset::Debug)
     } else {
         None
     };
@@ -580,6 +587,30 @@ fn terrain_map_switching(
                     info!("Loading Firebase Delta heightmap...");
                     // Don't send map switch event yet - wait for async load
                     return;
+                }
+                MapPreset::Debug => {
+                    // Small debug map (~200x200) for testing
+                    const DEBUG_MAP_SIZE: f32 = 200.0;
+                    commands.insert_resource(TerrainHeightmap::flat(DEBUG_MAP_SIZE, -1.0));
+
+                    let ground_texture = create_ground_texture(&mut images);
+
+                    commands.spawn((
+                        Mesh3d(meshes.add(Rectangle::new(DEBUG_MAP_SIZE, DEBUG_MAP_SIZE))),
+                        MeshMaterial3d(materials.add(StandardMaterial {
+                            base_color_texture: Some(ground_texture),
+                            perceptual_roughness: 0.8,
+                            metallic: 0.0,
+                            ..default()
+                        })),
+                        Transform::from_xyz(0.0, -1.0, 0.0)
+                            .with_rotation(Quat::from_rotation_x(-PI / 2.0)),
+                        TerrainMarker,
+                        FlatGroundMarker,
+                        Name::new("DebugGround"),
+                    ));
+
+                    info!("Switched to debug map ({}x{})", DEBUG_MAP_SIZE, DEBUG_MAP_SIZE);
                 }
             }
 
@@ -705,8 +736,8 @@ pub fn handle_map_switch_units(
         game_state.winner = None;
         info!("Game state reset");
 
-        // For FirebaseDelta, despawn all default units and towers instead of repositioning
-        if event.new_map == MapPreset::FirebaseDelta {
+        // For FirebaseDelta and Debug maps, despawn all default units and towers
+        if event.new_map == MapPreset::FirebaseDelta || event.new_map == MapPreset::Debug {
             // Collect entities to despawn first (can't despawn while iterating with mutable query)
             let droid_entities: Vec<Entity> = droid_query.iter().map(|(e, _, _, _)| e).collect();
             let despawned_units = droid_entities.len();
@@ -718,21 +749,21 @@ pub fn handle_map_switch_units(
             squad_manager.squads.clear();
             squad_manager.next_squad_id = 0;
 
-            // Despawn all non-CommandBunker towers (scenario spawns its own)
+            // Despawn all non-CommandBunker towers (scenario/debug spawns its own)
             let mut despawned_towers = 0;
             for (entity, _tower) in tower_query.iter() {
                 commands.entity(entity).despawn();
                 despawned_towers += 1;
             }
 
-            // Despawn all shields (scenario can spawn its own if needed)
+            // Despawn all shields (scenario/debug can spawn its own if needed)
             let mut despawned_shields = 0;
             for entity in shield_query.iter() {
                 commands.entity(entity).despawn();
                 despawned_shields += 1;
             }
 
-            info!("FirebaseDelta: Despawned {} units, {} towers, {} shields", despawned_units, despawned_towers, despawned_shields);
+            info!("{:?}: Despawned {} units, {} towers, {} shields", event.new_map, despawned_units, despawned_towers, despawned_shields);
             continue;
         }
 
@@ -774,5 +805,96 @@ pub fn handle_map_switch_units(
         }
 
         info!("Units and towers repositioned, game state reset");
+    }
+}
+
+/// System to spawn debug map entities (Team B tower + shield, 2 Team A squads)
+pub fn spawn_debug_map_entities(
+    mut commands: Commands,
+    mut map_switch_events: EventReader<MapSwitchEvent>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut shield_materials: ResMut<Assets<crate::shield::ShieldMaterial>>,
+    shield_config: Res<crate::shield::ShieldConfig>,
+    heightmap: Res<TerrainHeightmap>,
+    mut squad_manager: ResMut<SquadManager>,
+) {
+    for event in map_switch_events.read() {
+        if event.new_map != MapPreset::Debug {
+            continue;
+        }
+
+        info!("Spawning debug map entities...");
+
+        // Create tower mesh
+        let tower_mesh = crate::procedural_meshes::create_uplink_tower_mesh(&mut meshes);
+
+        // Team B tower material (defending team - red/orange)
+        let team_b_tower_material = materials.add(StandardMaterial {
+            base_color: Color::srgb(0.9, 0.3, 0.2),
+            emissive: Color::srgb(0.6, 0.2, 0.1).into(),
+            metallic: 0.8,
+            perceptual_roughness: 0.2,
+            ..default()
+        });
+
+        // Spawn Team B tower at center (this is the target for Team A to attack)
+        let tower_pos = Vec3::new(0.0, 0.0, 0.0);
+        commands.spawn((
+            Mesh3d(tower_mesh),
+            MeshMaterial3d(team_b_tower_material),
+            Transform::from_translation(tower_pos)
+                .with_scale(Vec3::splat(1.0)),
+            UplinkTower {
+                team: Team::B,
+                destruction_radius: crate::constants::TOWER_DESTRUCTION_RADIUS,
+            },
+            crate::types::ObjectiveTarget {
+                team: Team::B,
+                is_primary: true,
+            },
+            Health::new(crate::constants::TOWER_MAX_HEALTH),
+            BuildingCollider { radius: 5.0 },
+        ));
+
+        // Spawn shield for Team B tower
+        crate::shield::spawn_shield(
+            &mut commands,
+            &mut meshes,
+            &mut shield_materials,
+            tower_pos,
+            30.0, // Smaller shield radius for debug map
+            Team::B.shield_color(),
+            Team::B,
+            &shield_config,
+        );
+
+        // Create droid mesh for squads
+        let droid_mesh = crate::setup::create_droid_mesh(&mut meshes);
+
+        // Create unit materials for Team A (attackers)
+        let team_a_materials = crate::setup::create_team_materials(&mut materials, Team::A);
+
+        // Spawn 2 Team A squads (attackers) on the left side, facing the tower
+        let team_a_positions = [
+            (Vec3::new(-50.0, 0.0, -10.0), Vec3::new(1.0, 0.0, 0.0)),  // Left-front
+            (Vec3::new(-50.0, 0.0, 10.0), Vec3::new(1.0, 0.0, 0.0)),   // Left-back
+        ];
+
+        for (pos, facing) in team_a_positions.iter() {
+            crate::setup::spawn_single_squad(
+                &mut commands,
+                &mut squad_manager,
+                &droid_mesh,
+                &team_a_materials,
+                &mut materials,
+                Team::A,
+                *pos,
+                *facing,
+                &heightmap,
+            );
+        }
+
+        info!("Debug map: Spawned 1 Team B tower + shield, 2 Team A squads");
     }
 }

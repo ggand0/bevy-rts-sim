@@ -306,7 +306,7 @@ pub fn update_debug_mode_ui(
             let mg_status = if debug_mode.mg_turret_enabled { "ON" } else { "OFF" };
             let heavy_status = if debug_mode.heavy_turret_enabled { "ON" } else { "OFF" };
             **text = format!(
-                "[0] DEBUG: 1-6=explosions 7=turret WFX | C=collision | S=destroy shield | M=MG turret ({}) | H=Heavy turret ({})",
+                "[0] DEBUG: 1-7=explosions 8=spawn shield | C=collision | S=destroy shield | M=MG turret ({}) | H=Heavy turret ({})",
                 mg_status, heavy_status
             );
         } else {
@@ -494,6 +494,74 @@ pub fn debug_warfx_test_system(
         );
 
         info!("💥 War FX TURRET explosion spawned at center (0, 10, 0) with scale {}", scale);
+    }
+}
+
+/// Debug system to spawn test tower + shield (8 key)
+pub fn debug_spawn_shield_system(
+    keyboard_input: Res<ButtonInput<KeyCode>>,
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut shield_materials: ResMut<Assets<ShieldMaterial>>,
+    mut standard_materials: ResMut<Assets<StandardMaterial>>,
+    debug_mode: Res<ExplosionDebugMode>,
+    shield_config: Res<ShieldConfig>,
+) {
+    // Only work when debug mode is active
+    if !debug_mode.explosion_mode {
+        return;
+    }
+
+    // 8 key: Spawn test tower + shield at center
+    if keyboard_input.just_pressed(KeyCode::Digit8) {
+        info!("🛡️ DEBUG: Spawning test tower + shield at center...");
+
+        let position = Vec3::new(0.0, 0.0, 0.0);
+        let shield_radius = 30.0;
+        let team = Team::A; // Team A so Team B droids will shoot at it
+
+        // Create tower mesh (same as spawn_uplink_towers)
+        let tower_mesh = create_uplink_tower_mesh(&mut meshes);
+
+        // Team A tower material (cyan/blue sci-fi glow)
+        let tower_material = standard_materials.add(StandardMaterial {
+            base_color: Color::srgb(0.2, 0.6, 0.9),
+            emissive: Color::srgb(0.1, 0.3, 0.5).into(),
+            metallic: 0.8,
+            perceptual_roughness: 0.2,
+            ..default()
+        });
+
+        // Spawn the tower
+        commands.spawn((
+            Mesh3d(tower_mesh),
+            MeshMaterial3d(tower_material),
+            Transform::from_translation(position),
+            UplinkTower {
+                team,
+                destruction_radius: crate::constants::TOWER_DESTRUCTION_RADIUS,
+            },
+            ObjectiveTarget {
+                team,
+                is_primary: false, // Debug tower is not primary objective
+            },
+            Health::new(crate::constants::TOWER_MAX_HEALTH),
+            crate::types::BuildingCollider { radius: 5.0 },
+        ));
+
+        // Spawn shield around the tower
+        spawn_shield(
+            &mut commands,
+            &mut meshes,
+            &mut shield_materials,
+            position,
+            shield_radius,
+            team.shield_color(),
+            team,
+            &shield_config,
+        );
+
+        info!("🛡️ Test tower + shield spawned at center (0, 0, 0) with shield radius {}", shield_radius);
     }
 }
 
@@ -707,8 +775,23 @@ pub fn update_tower_health_bars(
     // Update shield health bars
     for (bar_entity, shield_bar, mut bar_transform, material_handle) in shield_bar_query.iter_mut() {
         if let Some((tower_transform, _, _)) = towers.get(&shield_bar.tower_entity) {
-            // Find shield for this team
-            let shield_fraction = if let Some(shield) = shield_query.iter().find(|s| s.team == shield_bar.team) {
+            // Find shield for this team - use the shield closest to this tower
+            // (handles multiple shields of same team)
+            let tower_pos = tower_transform.translation;
+            let shield_fraction = if let Some(shield) = shield_query.iter()
+                .filter(|s| s.team == shield_bar.team)
+                .min_by(|a, b| {
+                    let dist_a = a.center.distance_squared(tower_pos);
+                    let dist_b = b.center.distance_squared(tower_pos);
+                    dist_a.partial_cmp(&dist_b).unwrap_or(std::cmp::Ordering::Equal)
+                })
+            {
+                // Debug: log shield HP updates occasionally
+                if shield.current_hp < shield.max_hp && (shield.current_hp as i32) % 500 == 0 {
+                    info!("SHIELD BAR UPDATE: team {:?}, hp {}/{}, fraction {}, tower {:?}, shield {:?}",
+                        shield_bar.team, shield.current_hp, shield.max_hp, shield.current_hp / shield.max_hp,
+                        tower_pos, shield.center);
+                }
                 shield.current_hp / shield.max_hp
             } else if destroyed_shield_query.iter().any(|d| d.team == shield_bar.team) {
                 // Shield destroyed - show empty bar

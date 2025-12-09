@@ -7,7 +7,7 @@ use bevy::render::render_resource::{
 };
 use bevy::render::alpha::AlphaMode;
 use crate::types::*;
-use crate::terrain::{TerrainHeightmap, MapSwitchEvent};
+use crate::terrain::{TerrainHeightmap, MapSwitchEvent, MapPreset};
 use crate::procedural_meshes::*;
 
 /// MG turret health points
@@ -97,7 +97,7 @@ fn spawn_mg_turret_internal(
         Mesh3d(base_mesh),
         MeshMaterial3d(base_material),
         Transform::from_translation(turret_world_pos),
-        TurretBase,
+        TurretBase { team: Team::A },
         BuildingCollider { radius: 3.0 }, // Smaller collision radius
         Health::new(MG_TURRET_HEALTH),
     )).id();
@@ -155,8 +155,8 @@ pub fn spawn_mg_turret(
     let z = 10.0;
     let terrain_height = heightmap.sample_height(x, z);
 
-    spawn_mg_turret_internal(&mut commands, &mut meshes, &mut materials, x, z, terrain_height);
-    info!("Spawned MG turret at position ({}, {}, {})", x, terrain_height, z);
+    let base_entity = spawn_mg_turret_internal(&mut commands, &mut meshes, &mut materials, x, z, terrain_height);
+    info!("Spawned MG turret BASE ENTITY {:?} at position ({}, {}, {})", base_entity, x, terrain_height, z);
 }
 
 /// Internal helper to spawn heavy turret at specified position
@@ -195,7 +195,7 @@ fn spawn_heavy_turret_internal(
         Mesh3d(base_mesh),
         MeshMaterial3d(base_material),
         Transform::from_translation(turret_world_pos),
-        TurretBase,
+        TurretBase { team: Team::A },
         BuildingCollider { radius: 4.0 }, // Collision radius for laser blocking
         Health::new(HEAVY_TURRET_HEALTH),
     )).id();
@@ -260,13 +260,19 @@ pub fn respawn_turrets_on_map_switch(
     turret_base_query: Query<Entity, With<TurretBase>>,
 ) {
     // Only process if there's a map switch event
-    if map_switch_events.read().next().is_none() {
+    let Some(event) = map_switch_events.read().next() else {
         return;
-    }
+    };
 
     // Despawn all existing turrets (both base and assembly entities)
     for base_entity in turret_base_query.iter() {
         commands.entity(base_entity).despawn();
+    }
+
+    // Don't respawn turrets for Debug or FirebaseDelta maps (they have their own spawning)
+    if event.new_map == MapPreset::Debug || event.new_map == MapPreset::FirebaseDelta {
+        info!("Skipping turret respawn for {:?} map", event.new_map);
+        return;
     }
 
     info!("Respawning turrets for new terrain");
