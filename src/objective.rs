@@ -502,7 +502,7 @@ pub fn debug_ground_explosion_system(
     keyboard_input: Res<ButtonInput<KeyCode>>,
     mut commands: Commands,
     ground_assets: Option<Res<crate::ground_explosion::GroundExplosionAssets>>,
-    mut explosion_materials: ResMut<Assets<crate::explosion_shader::ExplosionMaterial>>,
+    mut flipbook_materials: ResMut<Assets<crate::ground_explosion::FlipbookMaterial>>,
     mut additive_materials: ResMut<Assets<crate::wfx_materials::AdditiveMaterial>>,
     debug_mode: Res<ExplosionDebugMode>,
 ) {
@@ -526,7 +526,7 @@ pub fn debug_ground_explosion_system(
         crate::ground_explosion::spawn_ground_explosion(
             &mut commands,
             &assets,
-            &mut explosion_materials,
+            &mut flipbook_materials,
             &mut additive_materials,
             position,
             scale,

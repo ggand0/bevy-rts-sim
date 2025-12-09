@@ -52,6 +52,7 @@ fn main() {
         .add_plugins(MaterialPlugin::<SmokeScrollMaterial>::default())
         .add_plugins(MaterialPlugin::<AdditiveMaterial>::default())
         .add_plugins(MaterialPlugin::<SmokeOnlyMaterial>::default())
+        .add_plugins(MaterialPlugin::<ground_explosion::FlipbookMaterial>::default())
         .add_plugins(MaterialPlugin::<turrets::HealthBarMaterial>::default())
         .add_plugins(MaterialPlugin::<objective::ShieldBarMaterial>::default())
         .insert_resource(SpatialGrid::new())
@@ -59,6 +60,7 @@ fn main() {
         .insert_resource(GameState::default())
         .insert_resource(ExplosionDebugMode::default())
         .insert_resource(selection::SelectionState::default())
+        .insert_resource(ground_explosion::GroundExplosionDebugMenu::default())
         .add_systems(Startup, (setup::setup_scene, spawn_uplink_towers, spawn_debug_mode_ui, setup_laser_assets, ground_explosion::setup_ground_explosion_assets))
         // Army spawning runs after terrain is ready (terrain spawns in TerrainPlugin's Startup)
         .add_systems(Startup, setup::spawn_army_with_squads.after(terrain::spawn_initial_terrain))
@@ -173,6 +175,7 @@ fn main() {
             ground_explosion::update_camera_facing_billboards,
             ground_explosion::animate_additive_sprites,
             ground_explosion::cleanup_ground_explosions,
+            ground_explosion::ground_explosion_debug_menu_system,
         ))
         .run();
 }

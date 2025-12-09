@@ -2,13 +2,47 @@
 // Ported from NS_Explosion_Sand_5
 
 use bevy::prelude::*;
-use bevy::pbr::{NotShadowCaster, NotShadowReceiver};
-use bevy::render::mesh::{Indices, PrimitiveTopology};
+use bevy::pbr::{Material, MaterialPipeline, MaterialPipelineKey, NotShadowCaster, NotShadowReceiver};
+use bevy::render::mesh::{Indices, MeshVertexBufferLayoutRef, PrimitiveTopology};
+use bevy::render::render_resource::{AsBindGroup, RenderPipelineDescriptor, ShaderRef, SpecializedMeshPipelineError};
 use bevy::asset::RenderAssetUsages;
 use rand::Rng;
 
-use crate::explosion_shader::ExplosionMaterial;
 use crate::wfx_materials::AdditiveMaterial;
+
+// ===== FLIPBOOK MATERIAL =====
+
+/// Custom material for flipbook sprite sheets with non-square grid support
+#[derive(Asset, TypePath, AsBindGroup, Debug, Clone)]
+pub struct FlipbookMaterial {
+    #[uniform(0)]
+    pub frame_data: Vec4, // x: frame_col, y: frame_row, z: columns, w: rows
+    #[uniform(1)]
+    pub color_data: Vec4, // RGB: tint color, A: alpha
+    #[texture(2, dimension = "2d")]
+    #[sampler(3)]
+    pub sprite_texture: Handle<Image>,
+}
+
+impl Material for FlipbookMaterial {
+    fn fragment_shader() -> ShaderRef {
+        "shaders/flipbook.wgsl".into()
+    }
+
+    fn alpha_mode(&self) -> AlphaMode {
+        AlphaMode::Blend
+    }
+
+    fn specialize(
+        _pipeline: &MaterialPipeline<Self>,
+        descriptor: &mut RenderPipelineDescriptor,
+        _layout: &MeshVertexBufferLayoutRef,
+        _key: MaterialPipelineKey<Self>,
+    ) -> Result<(), SpecializedMeshPipelineError> {
+        descriptor.primitive.cull_mode = None;
+        Ok(())
+    }
+}
 
 // ===== COMPONENTS =====
 
@@ -22,6 +56,7 @@ pub struct FlipbookSprite {
     pub elapsed: f32,
     pub lifetime: f32,
     pub max_lifetime: f32,
+    pub base_alpha: f32, // Original alpha for fade calculations
 }
 
 /// Velocity-aligned billboard - sprite up-axis follows velocity direction
@@ -50,12 +85,35 @@ pub struct GroundExplosion {
 #[derive(Component)]
 pub struct GroundExplosionChild;
 
+// ===== DEBUG MENU =====
+
+/// Debug menu state for ground explosion emitter testing
+#[derive(Resource, Default)]
+pub struct GroundExplosionDebugMenu {
+    pub active: bool,
+}
+
+/// Emitter types for individual testing
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EmitterType {
+    MainFireball,      // 1
+    SecondaryFireball, // 2
+    Smoke,             // 3
+    Wisp,              // 4
+    Dust,              // 5
+    Spark,             // 6
+    FlashSpark,        // 7
+    Impact,            // 8
+    Dirt,              // 9
+    // VelocityDirt not mapped - only 9 keys
+}
+
 // ===== PRELOADED ASSETS =====
 
 #[derive(Resource)]
 pub struct GroundExplosionAssets {
     // Flipbook textures
-    pub main_texture: Handle<Image>,        // 9x9 (81 frames)
+    pub main_texture: Handle<Image>,        // 8x8 (64 frames)
     pub secondary_texture: Handle<Image>,   // 8x8 (64 frames)
     pub smoke_texture: Handle<Image>,       // 8x8 (64 frames)
     pub wisp_texture: Handle<Image>,        // 8x8 (64 frames)
@@ -75,11 +133,12 @@ pub struct GroundExplosionAssets {
 fn create_centered_quad(size: f32) -> Mesh {
     let half = size / 2.0;
 
+    // Vertices in counter-clockwise order (facing +Z)
     let vertices = vec![
-        [-half, -half, 0.0],
-        [ half, -half, 0.0],
-        [ half,  half, 0.0],
-        [-half,  half, 0.0],
+        [-half, -half, 0.0],  // bottom-left  (vertex 0)
+        [ half, -half, 0.0],  // bottom-right (vertex 1)
+        [ half,  half, 0.0],  // top-right    (vertex 2)
+        [-half,  half, 0.0],  // top-left     (vertex 3)
     ];
 
     let normals = vec![
@@ -89,11 +148,13 @@ fn create_centered_quad(size: f32) -> Mesh {
         [0.0, 0.0, 1.0],
     ];
 
+    // Bevy UV convention: [0,0] is TOP-LEFT, [1,1] is BOTTOM-RIGHT
+    // This matches DirectX/Vulkan/Metal/WebGPU and image file formats
     let uvs = vec![
-        [0.0, 1.0],
-        [1.0, 1.0],
-        [1.0, 0.0],
-        [0.0, 0.0],
+        [0.0, 1.0],  // bottom-left  -> UV bottom-left
+        [1.0, 1.0],  // bottom-right -> UV bottom-right
+        [1.0, 0.0],  // top-right    -> UV top-right
+        [0.0, 0.0],  // top-left     -> UV top-left
     ];
 
     let indices = Indices::U32(vec![0, 1, 2, 0, 2, 3]);
@@ -111,10 +172,10 @@ fn create_bottom_pivot_quad(size: f32) -> Mesh {
 
     // Vertices offset so origin is at bottom-center
     let vertices = vec![
-        [-half, 0.0, 0.0],      // bottom-left
-        [ half, 0.0, 0.0],      // bottom-right
-        [ half, size, 0.0],     // top-right
-        [-half, size, 0.0],     // top-left
+        [-half, 0.0, 0.0],      // bottom-left  (vertex 0)
+        [ half, 0.0, 0.0],      // bottom-right (vertex 1)
+        [ half, size, 0.0],     // top-right    (vertex 2)
+        [-half, size, 0.0],     // top-left     (vertex 3)
     ];
 
     let normals = vec![
@@ -124,11 +185,12 @@ fn create_bottom_pivot_quad(size: f32) -> Mesh {
         [0.0, 0.0, 1.0],
     ];
 
+    // Bevy UV convention: [0,0] is TOP-LEFT, [1,1] is BOTTOM-RIGHT
     let uvs = vec![
-        [0.0, 1.0],
-        [1.0, 1.0],
-        [1.0, 0.0],
-        [0.0, 0.0],
+        [0.0, 1.0],  // bottom-left  -> UV bottom-left
+        [1.0, 1.0],  // bottom-right -> UV bottom-right
+        [1.0, 0.0],  // top-right    -> UV top-right
+        [0.0, 0.0],  // top-left     -> UV top-left
     ];
 
     let indices = Indices::U32(vec![0, 1, 2, 0, 2, 3]);
@@ -174,7 +236,7 @@ pub fn setup_ground_explosion_assets(
 pub fn spawn_ground_explosion(
     commands: &mut Commands,
     assets: &GroundExplosionAssets,
-    explosion_materials: &mut ResMut<Assets<ExplosionMaterial>>,
+    flipbook_materials: &mut ResMut<Assets<FlipbookMaterial>>,
     additive_materials: &mut ResMut<Assets<AdditiveMaterial>>,
     position: Vec3,
     scale: f32,
@@ -184,19 +246,19 @@ pub fn spawn_ground_explosion(
     let mut rng = rand::thread_rng();
 
     // Main fireball (9x9 flipbook, velocity aligned, bottom pivot)
-    spawn_main_fireball(commands, assets, explosion_materials, position, scale, &mut rng);
+    spawn_main_fireball(commands, assets, flipbook_materials, position, scale, &mut rng);
 
     // Secondary fireball (8x8 flipbook, velocity aligned, bottom pivot)
-    spawn_secondary_fireball(commands, assets, explosion_materials, position, scale, &mut rng);
+    spawn_secondary_fireball(commands, assets, flipbook_materials, position, scale, &mut rng);
 
     // Smoke cloud (8x8 flipbook, camera facing)
-    spawn_smoke_cloud(commands, assets, explosion_materials, position, scale, &mut rng);
+    spawn_smoke_cloud(commands, assets, flipbook_materials, position, scale, &mut rng);
 
     // Wisp smoke puffs (8x8 flipbook, camera facing, short duration)
-    spawn_wisps(commands, assets, explosion_materials, position, scale, &mut rng);
+    spawn_wisps(commands, assets, flipbook_materials, position, scale, &mut rng);
 
     // Dust ring (4x1 flipbook, velocity aligned)
-    spawn_dust_ring(commands, assets, explosion_materials, position, scale, &mut rng);
+    spawn_dust_ring(commands, assets, flipbook_materials, position, scale, &mut rng);
 
     // Sparks with gravity (single texture, velocity aligned)
     spawn_sparks(commands, assets, additive_materials, position, scale, &mut rng);
@@ -205,31 +267,55 @@ pub fn spawn_ground_explosion(
     spawn_flash_sparks(commands, assets, additive_materials, position, scale, &mut rng);
 
     // Impact ground flash
-    spawn_impact_flash(commands, assets, additive_materials, position, scale);
+    spawn_impact_flash(commands, assets, flipbook_materials, position, scale);
 
     // Dirt debris (single texture, camera facing)
-    spawn_dirt_debris(commands, assets, explosion_materials, position, scale, &mut rng);
+    spawn_dirt_debris(commands, assets, flipbook_materials, position, scale, &mut rng);
 
     // Velocity-stretched dirt (single texture, velocity aligned)
-    spawn_velocity_dirt(commands, assets, explosion_materials, position, scale, &mut rng);
+    spawn_velocity_dirt(commands, assets, flipbook_materials, position, scale, &mut rng);
 
     info!("✅ Ground explosion spawned with 10 emitters");
 }
 
 // ===== EMITTER SPAWN FUNCTIONS =====
 
-/// Main fireball - 9x9 flipbook (81 frames), 1s duration, bottom pivot, velocity aligned
-fn spawn_main_fireball(
+/// Spawn a single emitter by type (for debug testing)
+pub fn spawn_single_emitter(
     commands: &mut Commands,
     assets: &GroundExplosionAssets,
-    materials: &mut ResMut<Assets<ExplosionMaterial>>,
+    flipbook_materials: &mut ResMut<Assets<FlipbookMaterial>>,
+    additive_materials: &mut ResMut<Assets<AdditiveMaterial>>,
+    emitter_type: EmitterType,
+    position: Vec3,
+    scale: f32,
+) {
+    let mut rng = rand::thread_rng();
+    match emitter_type {
+        EmitterType::MainFireball => spawn_main_fireball(commands, assets, flipbook_materials, position, scale, &mut rng),
+        EmitterType::SecondaryFireball => spawn_secondary_fireball(commands, assets, flipbook_materials, position, scale, &mut rng),
+        EmitterType::Smoke => spawn_smoke_cloud(commands, assets, flipbook_materials, position, scale, &mut rng),
+        EmitterType::Wisp => spawn_wisps(commands, assets, flipbook_materials, position, scale, &mut rng),
+        EmitterType::Dust => spawn_dust_ring(commands, assets, flipbook_materials, position, scale, &mut rng),
+        EmitterType::Spark => spawn_sparks(commands, assets, additive_materials, position, scale, &mut rng),
+        EmitterType::FlashSpark => spawn_flash_sparks(commands, assets, additive_materials, position, scale, &mut rng),
+        EmitterType::Impact => spawn_impact_flash(commands, assets, flipbook_materials, position, scale),
+        EmitterType::Dirt => spawn_dirt_debris(commands, assets, flipbook_materials, position, scale, &mut rng),
+    }
+}
+
+/// Main fireball - 8x8 flipbook (64 frames), 1s duration, bottom pivot, velocity aligned
+pub fn spawn_main_fireball(
+    commands: &mut Commands,
+    assets: &GroundExplosionAssets,
+    materials: &mut ResMut<Assets<FlipbookMaterial>>,
     position: Vec3,
     scale: f32,
     rng: &mut impl Rng,
 ) {
-    let size = 10.0 * scale;
+    let size = 15.0 * scale;  // 1.5x size
     let lifetime = 1.0;
-    let frame_duration = lifetime / 81.0;
+    let frame_duration = lifetime / 64.0;  // 64 frames for 8x8 grid
 
     // Initial upward velocity for velocity alignment
     let velocity = Vec3::new(
@@ -238,9 +324,9 @@ fn spawn_main_fireball(
         rng.gen_range(-0.5..0.5),
     ) * scale;
 
-    let material = materials.add(ExplosionMaterial {
-        frame_data: Vec4::new(0.0, 0.0, 9.0, 1.0),
-        color_data: Vec4::new(1.0, 1.0, 1.0, 2.0),
+    let material = materials.add(FlipbookMaterial {
+        frame_data: Vec4::new(0.0, 0.0, 8.0, 8.0), // col, row, columns, rows - 8x8 grid
+        color_data: Vec4::new(1.0, 1.0, 1.0, 1.0), // RGB tint, alpha
         sprite_texture: assets.main_texture.clone(),
     });
 
@@ -252,13 +338,14 @@ fn spawn_main_fireball(
         NotShadowCaster,
         NotShadowReceiver,
         FlipbookSprite {
-            columns: 9,
-            rows: 9,
-            total_frames: 81,
+            columns: 8,
+            rows: 8,
+            total_frames: 64,
             frame_duration,
             elapsed: 0.0,
             lifetime: 0.0,
             max_lifetime: lifetime,
+            base_alpha: 1.0,
         },
         VelocityAligned { velocity, gravity: 0.0 },
         BottomPivot,
@@ -268,15 +355,15 @@ fn spawn_main_fireball(
 }
 
 /// Secondary fireball - 8x8 flipbook (64 frames), 1s duration
-fn spawn_secondary_fireball(
+pub fn spawn_secondary_fireball(
     commands: &mut Commands,
     assets: &GroundExplosionAssets,
-    materials: &mut ResMut<Assets<ExplosionMaterial>>,
+    materials: &mut ResMut<Assets<FlipbookMaterial>>,
     position: Vec3,
     scale: f32,
     rng: &mut impl Rng,
 ) {
-    let size = 8.0 * scale;
+    let size = 12.0 * scale;  // 1.5x size
     let lifetime = 1.0;
     let frame_duration = lifetime / 64.0;
 
@@ -293,9 +380,9 @@ fn spawn_secondary_fireball(
         rng.gen_range(-0.5..0.5),
     ) * scale;
 
-    let material = materials.add(ExplosionMaterial {
-        frame_data: Vec4::new(0.0, 0.0, 8.0, 1.0),
-        color_data: Vec4::new(1.0, 1.0, 1.0, 2.0),
+    let material = materials.add(FlipbookMaterial {
+        frame_data: Vec4::new(0.0, 0.0, 8.0, 8.0), // col, row, columns, rows
+        color_data: Vec4::new(1.0, 1.0, 1.0, 1.0), // RGB tint, alpha
         sprite_texture: assets.secondary_texture.clone(),
     });
 
@@ -314,6 +401,7 @@ fn spawn_secondary_fireball(
             elapsed: 0.0,
             lifetime: 0.0,
             max_lifetime: lifetime,
+            base_alpha: 1.0,
         },
         VelocityAligned { velocity, gravity: 0.0 },
         BottomPivot,
@@ -323,10 +411,10 @@ fn spawn_secondary_fireball(
 }
 
 /// Smoke cloud - 8x8 flipbook (64 frames), 1s duration, camera facing
-fn spawn_smoke_cloud(
+pub fn spawn_smoke_cloud(
     commands: &mut Commands,
     assets: &GroundExplosionAssets,
-    materials: &mut ResMut<Assets<ExplosionMaterial>>,
+    materials: &mut ResMut<Assets<FlipbookMaterial>>,
     position: Vec3,
     scale: f32,
     rng: &mut impl Rng,
@@ -337,7 +425,7 @@ fn spawn_smoke_cloud(
     let frame_duration = lifetime / 64.0;
 
     for i in 0..count {
-        let size = rng.gen_range(6.0..10.0) * scale;
+        let size = rng.gen_range(9.0..15.0) * scale;  // 1.5x size
         let offset = Vec3::new(
             rng.gen_range(-2.0..2.0) * scale,
             rng.gen_range(1.0..3.0) * scale,
@@ -347,14 +435,14 @@ fn spawn_smoke_cloud(
         // Random start frame for variety
         let start_frame = rng.gen_range(0..10);
 
-        let material = materials.add(ExplosionMaterial {
+        let material = materials.add(FlipbookMaterial {
             frame_data: Vec4::new(
                 (start_frame % 8) as f32,
                 (start_frame / 8) as f32,
                 8.0,
-                0.8, // Slightly transparent smoke
+                8.0, // columns, rows
             ),
-            color_data: Vec4::new(0.7, 0.7, 0.7, 1.0), // Gray smoke
+            color_data: Vec4::new(0.7, 0.7, 0.7, 0.8), // Gray smoke, slightly transparent
             sprite_texture: assets.smoke_texture.clone(),
         });
 
@@ -373,6 +461,7 @@ fn spawn_smoke_cloud(
                 elapsed: start_frame as f32 * frame_duration,
                 lifetime: 0.0,
                 max_lifetime: lifetime + rng.gen_range(0.0..0.5),
+                base_alpha: 0.8,
             },
             CameraFacing,
             GroundExplosionChild,
@@ -382,10 +471,10 @@ fn spawn_smoke_cloud(
 }
 
 /// Wisp smoke puffs - 8x8 flipbook, 0.5s duration, fast small puffs
-fn spawn_wisps(
+pub fn spawn_wisps(
     commands: &mut Commands,
     assets: &GroundExplosionAssets,
-    materials: &mut ResMut<Assets<ExplosionMaterial>>,
+    materials: &mut ResMut<Assets<FlipbookMaterial>>,
     position: Vec3,
     scale: f32,
     rng: &mut impl Rng,
@@ -395,16 +484,16 @@ fn spawn_wisps(
     let frame_duration = lifetime / 64.0;
 
     for i in 0..count {
-        let size = rng.gen_range(1.5..3.0) * scale;
+        let size = rng.gen_range(2.25..4.5) * scale;  // 1.5x size
         let offset = Vec3::new(
             rng.gen_range(-3.0..3.0) * scale,
             rng.gen_range(0.5..2.0) * scale,
             rng.gen_range(-3.0..3.0) * scale,
         );
 
-        let material = materials.add(ExplosionMaterial {
-            frame_data: Vec4::new(0.0, 0.0, 8.0, 0.7),
-            color_data: Vec4::new(0.8, 0.8, 0.8, 1.0),
+        let material = materials.add(FlipbookMaterial {
+            frame_data: Vec4::new(0.0, 0.0, 8.0, 8.0), // col, row, columns, rows
+            color_data: Vec4::new(0.8, 0.8, 0.8, 0.7), // alpha in color_data.w
             sprite_texture: assets.wisp_texture.clone(),
         });
 
@@ -423,6 +512,7 @@ fn spawn_wisps(
                 elapsed: 0.0,
                 lifetime: 0.0,
                 max_lifetime: lifetime,
+                base_alpha: 0.7,
             },
             CameraFacing,
             GroundExplosionChild,
@@ -432,10 +522,10 @@ fn spawn_wisps(
 }
 
 /// Dust ring - 4x1 flipbook (4 frames), velocity aligned horizontal spray
-fn spawn_dust_ring(
+pub fn spawn_dust_ring(
     commands: &mut Commands,
     assets: &GroundExplosionAssets,
-    materials: &mut ResMut<Assets<ExplosionMaterial>>,
+    materials: &mut ResMut<Assets<FlipbookMaterial>>,
     position: Vec3,
     scale: f32,
     rng: &mut impl Rng,
@@ -446,7 +536,7 @@ fn spawn_dust_ring(
 
     for i in 0..count {
         let angle = (i as f32 / count as f32) * std::f32::consts::TAU;
-        let size = rng.gen_range(2.0..4.0) * scale;
+        let size = rng.gen_range(3.0..6.0) * scale;  // 1.5x size
 
         // Radial outward velocity
         let velocity = Vec3::new(
@@ -461,9 +551,9 @@ fn spawn_dust_ring(
             angle.sin() * scale,
         );
 
-        let material = materials.add(ExplosionMaterial {
-            frame_data: Vec4::new(0.0, 0.0, 4.0, 0.6),
-            color_data: Vec4::new(0.8, 0.7, 0.6, 1.0), // Sandy brown
+        let material = materials.add(FlipbookMaterial {
+            frame_data: Vec4::new(0.0, 0.0, 4.0, 1.0), // col, row, columns (4), rows (1)
+            color_data: Vec4::new(0.8, 0.7, 0.6, 0.6), // Sandy brown, alpha
             sprite_texture: assets.dust_texture.clone(),
         });
 
@@ -482,6 +572,7 @@ fn spawn_dust_ring(
                 elapsed: 0.0,
                 lifetime: 0.0,
                 max_lifetime: lifetime,
+                base_alpha: 0.6,
             },
             VelocityAligned { velocity, gravity: 2.0 },
             GroundExplosionChild,
@@ -491,7 +582,7 @@ fn spawn_dust_ring(
 }
 
 /// Sparks - single texture embers with gravity, velocity aligned
-fn spawn_sparks(
+pub fn spawn_sparks(
     commands: &mut Commands,
     assets: &GroundExplosionAssets,
     materials: &mut ResMut<Assets<AdditiveMaterial>>,
@@ -503,7 +594,7 @@ fn spawn_sparks(
     let lifetime = 2.0;
 
     for i in 0..count {
-        let size = rng.gen_range(0.1..0.3) * scale;
+        let size = rng.gen_range(0.15..0.45) * scale;  // 1.5x size
 
         // Random outward velocity with upward bias
         let theta: f32 = rng.gen_range(0.0..std::f32::consts::TAU);
@@ -537,6 +628,7 @@ fn spawn_sparks(
                 elapsed: 0.0,
                 lifetime: 0.0,
                 max_lifetime: lifetime,
+                base_alpha: 1.0,
             },
             VelocityAligned { velocity, gravity: 8.0 },
             GroundExplosionChild,
@@ -546,7 +638,7 @@ fn spawn_sparks(
 }
 
 /// Flash sparks - bright quick sparks, 1s duration
-fn spawn_flash_sparks(
+pub fn spawn_flash_sparks(
     commands: &mut Commands,
     assets: &GroundExplosionAssets,
     materials: &mut ResMut<Assets<AdditiveMaterial>>,
@@ -558,7 +650,7 @@ fn spawn_flash_sparks(
     let lifetime = 1.0;
 
     for i in 0..count {
-        let size = rng.gen_range(0.15..0.4) * scale;
+        let size = rng.gen_range(0.225..0.6) * scale;  // 1.5x size
 
         let theta: f32 = rng.gen_range(0.0..std::f32::consts::TAU);
         let phi: f32 = rng.gen_range(0.3..1.0);
@@ -591,6 +683,7 @@ fn spawn_flash_sparks(
                 elapsed: 0.0,
                 lifetime: 0.0,
                 max_lifetime: lifetime,
+                base_alpha: 1.0,
             },
             VelocityAligned { velocity, gravity: 5.0 },
             GroundExplosionChild,
@@ -600,27 +693,28 @@ fn spawn_flash_sparks(
 }
 
 /// Impact flash - ground glow at explosion origin
-fn spawn_impact_flash(
+/// Uses FlipbookMaterial with alpha blending for proper texture alpha support
+pub fn spawn_impact_flash(
     commands: &mut Commands,
     assets: &GroundExplosionAssets,
-    materials: &mut ResMut<Assets<AdditiveMaterial>>,
+    materials: &mut ResMut<Assets<FlipbookMaterial>>,
     position: Vec3,
     scale: f32,
 ) {
-    let size = 8.0 * scale;
-    let lifetime = 0.5;
+    let size = 15.0 * scale;  // 1.5x size
+    let lifetime = 0.3;  // Quick flash
 
-    let material = materials.add(AdditiveMaterial {
-        tint_color: Vec4::new(1.0, 0.9, 0.7, 1.0),
-        soft_particles_fade: Vec4::new(1.0, 0.0, 0.0, 0.0),
-        particle_texture: assets.impact_texture.clone(),
+    let material = materials.add(FlipbookMaterial {
+        frame_data: Vec4::new(0.0, 0.0, 1.0, 1.0),  // Single frame
+        color_data: Vec4::new(1.0, 0.9, 0.7, 1.0),  // Warm yellow-orange tint
+        sprite_texture: assets.impact_texture.clone(),
     });
 
-    // Position slightly above ground, facing up
+    // Position slightly above ground, facing up (laying flat on the ground)
     commands.spawn((
         Mesh3d(assets.centered_quad.clone()),
         MeshMaterial3d(material),
-        Transform::from_translation(position + Vec3::Y * 0.1)
+        Transform::from_translation(position + Vec3::Y * 0.15)
             .with_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2))
             .with_scale(Vec3::splat(size)),
         Visibility::Visible,
@@ -634,6 +728,7 @@ fn spawn_impact_flash(
             elapsed: 0.0,
             lifetime: 0.0,
             max_lifetime: lifetime,
+            base_alpha: 1.0,
         },
         GroundExplosionChild,
         Name::new("GE_ImpactFlash"),
@@ -641,10 +736,10 @@ fn spawn_impact_flash(
 }
 
 /// Dirt debris - billboard dirt chunks, camera facing
-fn spawn_dirt_debris(
+pub fn spawn_dirt_debris(
     commands: &mut Commands,
     assets: &GroundExplosionAssets,
-    materials: &mut ResMut<Assets<ExplosionMaterial>>,
+    materials: &mut ResMut<Assets<FlipbookMaterial>>,
     position: Vec3,
     scale: f32,
     rng: &mut impl Rng,
@@ -653,7 +748,7 @@ fn spawn_dirt_debris(
     let lifetime = 1.0;
 
     for i in 0..count {
-        let size = rng.gen_range(0.3..0.8) * scale;
+        let size = rng.gen_range(0.45..1.2) * scale;  // 1.5x size
 
         let theta = rng.gen_range(0.0..std::f32::consts::TAU);
         let speed = rng.gen_range(4.0..8.0) * scale;
@@ -664,7 +759,7 @@ fn spawn_dirt_debris(
             theta.sin() * speed,
         );
 
-        let material = materials.add(ExplosionMaterial {
+        let material = materials.add(FlipbookMaterial {
             frame_data: Vec4::new(0.0, 0.0, 1.0, 1.0),
             color_data: Vec4::new(0.6, 0.5, 0.4, 1.0), // Brown dirt
             sprite_texture: assets.dirt_texture.clone(),
@@ -685,6 +780,7 @@ fn spawn_dirt_debris(
                 elapsed: 0.0,
                 lifetime: 0.0,
                 max_lifetime: lifetime,
+                base_alpha: 1.0,
             },
             CameraFacing,
             VelocityAligned { velocity, gravity: 12.0 },
@@ -695,10 +791,10 @@ fn spawn_dirt_debris(
 }
 
 /// Velocity-stretched dirt - debris that stretches along velocity
-fn spawn_velocity_dirt(
+pub fn spawn_velocity_dirt(
     commands: &mut Commands,
     assets: &GroundExplosionAssets,
-    materials: &mut ResMut<Assets<ExplosionMaterial>>,
+    materials: &mut ResMut<Assets<FlipbookMaterial>>,
     position: Vec3,
     scale: f32,
     rng: &mut impl Rng,
@@ -707,7 +803,7 @@ fn spawn_velocity_dirt(
     let lifetime = 1.0;
 
     for i in 0..count {
-        let size = rng.gen_range(0.4..0.9) * scale;
+        let size = rng.gen_range(0.6..1.35) * scale;  // 1.5x size
 
         let theta = rng.gen_range(0.0..std::f32::consts::TAU);
         let speed = rng.gen_range(6.0..12.0) * scale;
@@ -718,7 +814,7 @@ fn spawn_velocity_dirt(
             theta.sin() * speed,
         );
 
-        let material = materials.add(ExplosionMaterial {
+        let material = materials.add(FlipbookMaterial {
             frame_data: Vec4::new(0.0, 0.0, 1.0, 1.0),
             color_data: Vec4::new(0.5, 0.4, 0.3, 1.0),
             sprite_texture: assets.dirt_texture.clone(),
@@ -739,6 +835,7 @@ fn spawn_velocity_dirt(
                 elapsed: 0.0,
                 lifetime: 0.0,
                 max_lifetime: lifetime,
+                base_alpha: 1.0,
             },
             VelocityAligned { velocity, gravity: 10.0 },
             GroundExplosionChild,
@@ -753,14 +850,15 @@ fn spawn_velocity_dirt(
 pub fn animate_flipbook_sprites(
     mut query: Query<(
         &mut FlipbookSprite,
-        &MeshMaterial3d<ExplosionMaterial>,
+        &MeshMaterial3d<FlipbookMaterial>,
+        Option<&Name>,
     )>,
-    mut materials: ResMut<Assets<ExplosionMaterial>>,
+    mut materials: ResMut<Assets<FlipbookMaterial>>,
     time: Res<Time>,
 ) {
     let dt = time.delta_secs();
 
-    for (mut sprite, material_handle) in query.iter_mut() {
+    for (mut sprite, material_handle, name) in query.iter_mut() {
         sprite.elapsed += dt;
         sprite.lifetime += dt;
 
@@ -768,6 +866,13 @@ pub fn animate_flipbook_sprites(
         let frame = ((sprite.elapsed / sprite.frame_duration) as u32) % sprite.total_frames;
         let col = frame % sprite.columns;
         let row = frame / sprite.columns;
+
+        // Debug: log frame progression for main fireball
+        if let Some(n) = name {
+            if n.as_str().contains("MainFireball") && frame % 10 == 0 {
+                trace!("🎞️ {} frame={} (col={}, row={}) elapsed={:.2}s", n, frame, col, row, sprite.elapsed);
+            }
+        }
 
         // Calculate alpha fade (fade out in last 20% of lifetime)
         let progress = sprite.lifetime / sprite.max_lifetime;
@@ -777,11 +882,12 @@ pub fn animate_flipbook_sprites(
             1.0
         };
 
-        // Update material
+        // Update material - frame_data.xy = current frame, color_data.w = alpha
         if let Some(material) = materials.get_mut(&material_handle.0) {
             material.frame_data.x = col as f32;
             material.frame_data.y = row as f32;
-            material.frame_data.w = alpha.max(0.0);
+            // Use base_alpha from component, multiply by fade factor
+            material.color_data.w = (sprite.base_alpha * alpha).max(0.0);
         }
     }
 }
@@ -905,5 +1011,106 @@ pub fn animate_additive_sprites(
         if let Some(material) = materials.get_mut(&material_handle.0) {
             material.tint_color.w = alpha.max(0.0);
         }
+    }
+}
+
+// ===== DEBUG MENU SYSTEM =====
+
+/// Debug menu system - P to toggle, 1-9 to spawn individual emitters
+pub fn ground_explosion_debug_menu_system(
+    keyboard_input: Res<ButtonInput<KeyCode>>,
+    mut debug_menu: ResMut<GroundExplosionDebugMenu>,
+    mut commands: Commands,
+    ground_assets: Option<Res<GroundExplosionAssets>>,
+    mut flipbook_materials: ResMut<Assets<FlipbookMaterial>>,
+    mut additive_materials: ResMut<Assets<AdditiveMaterial>>,
+) {
+    // P key toggles the debug menu
+    if keyboard_input.just_pressed(KeyCode::KeyP) {
+        debug_menu.active = !debug_menu.active;
+        if debug_menu.active {
+            info!("🔧 Ground Explosion Debug Menu ACTIVE");
+            info!("   F1: Main Fireball (8x8 flipbook)");
+            info!("   F2: Secondary Fireball (8x8 flipbook)");
+            info!("   F3: Smoke Cloud (8x8 flipbook)");
+            info!("   F4: Wisps (8x8 flipbook)");
+            info!("   F5: Dust Ring (4x1 flipbook)");
+            info!("   F6: Sparks (additive)");
+            info!("   F7: Flash Sparks (additive)");
+            info!("   F8: Impact Flash (additive)");
+            info!("   F9: Dirt Debris");
+            info!("   F10: FULL EXPLOSION (all emitters)");
+            info!("   P: Close menu");
+        } else {
+            info!("🔧 Ground Explosion Debug Menu CLOSED");
+        }
+        return;
+    }
+
+    // Only process F keys when menu is active
+    if !debug_menu.active {
+        return;
+    }
+
+    let Some(assets) = ground_assets else {
+        if keyboard_input.any_just_pressed([
+            KeyCode::F1, KeyCode::F2, KeyCode::F3,
+            KeyCode::F4, KeyCode::F5, KeyCode::F6,
+            KeyCode::F7, KeyCode::F8, KeyCode::F9,
+        ]) {
+            warn!("Ground explosion assets not loaded yet!");
+        }
+        return;
+    };
+
+    let position = Vec3::new(0.0, 0.0, 0.0);
+    let scale = 1.0;
+
+    let emitter = if keyboard_input.just_pressed(KeyCode::F1) {
+        Some((EmitterType::MainFireball, "Main Fireball"))
+    } else if keyboard_input.just_pressed(KeyCode::F2) {
+        Some((EmitterType::SecondaryFireball, "Secondary Fireball"))
+    } else if keyboard_input.just_pressed(KeyCode::F3) {
+        Some((EmitterType::Smoke, "Smoke Cloud"))
+    } else if keyboard_input.just_pressed(KeyCode::F4) {
+        Some((EmitterType::Wisp, "Wisps"))
+    } else if keyboard_input.just_pressed(KeyCode::F5) {
+        Some((EmitterType::Dust, "Dust Ring"))
+    } else if keyboard_input.just_pressed(KeyCode::F6) {
+        Some((EmitterType::Spark, "Sparks"))
+    } else if keyboard_input.just_pressed(KeyCode::F7) {
+        Some((EmitterType::FlashSpark, "Flash Sparks"))
+    } else if keyboard_input.just_pressed(KeyCode::F8) {
+        Some((EmitterType::Impact, "Impact Flash"))
+    } else if keyboard_input.just_pressed(KeyCode::F9) {
+        Some((EmitterType::Dirt, "Dirt Debris"))
+    } else {
+        None
+    };
+
+    if let Some((emitter_type, name)) = emitter {
+        spawn_single_emitter(
+            &mut commands,
+            &assets,
+            &mut flipbook_materials,
+            &mut additive_materials,
+            emitter_type,
+            position,
+            scale,
+        );
+        info!("🌋 Spawned: {} at (0, 0, 0)", name);
+    }
+
+    // F10 spawns the combined full explosion effect
+    if keyboard_input.just_pressed(KeyCode::F10) {
+        spawn_ground_explosion(
+            &mut commands,
+            &assets,
+            &mut flipbook_materials,
+            &mut additive_materials,
+            position,
+            1.5,  // Use 1.5x scale for combined effect
+        );
+        info!("🌋 Spawned: FULL GROUND EXPLOSION at (0, 0, 0)");
     }
 }
