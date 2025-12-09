@@ -267,7 +267,7 @@ pub fn spawn_ground_explosion(
     spawn_flash_sparks(commands, assets, additive_materials, position, scale, &mut rng);
 
     // Impact ground flash
-    spawn_impact_flash(commands, assets, flipbook_materials, position, scale);
+    spawn_impact_flash(commands, assets, additive_materials, position, scale);
 
     // Dirt debris (single texture, camera facing)
     spawn_dirt_debris(commands, assets, flipbook_materials, position, scale, &mut rng);
@@ -299,12 +299,13 @@ pub fn spawn_single_emitter(
         EmitterType::Dust => spawn_dust_ring(commands, assets, flipbook_materials, position, scale, &mut rng),
         EmitterType::Spark => spawn_sparks(commands, assets, additive_materials, position, scale, &mut rng),
         EmitterType::FlashSpark => spawn_flash_sparks(commands, assets, additive_materials, position, scale, &mut rng),
-        EmitterType::Impact => spawn_impact_flash(commands, assets, flipbook_materials, position, scale),
+        EmitterType::Impact => spawn_impact_flash(commands, assets, additive_materials, position, scale),
         EmitterType::Dirt => spawn_dirt_debris(commands, assets, flipbook_materials, position, scale, &mut rng),
     }
 }
 
 /// Main fireball - 8x8 flipbook (64 frames), 1s duration, bottom pivot, velocity aligned
+/// UE5: 7-13 particles, cone velocity 90°, size 2500-2600 (~25m), speed 450-650
 pub fn spawn_main_fireball(
     commands: &mut Commands,
     assets: &GroundExplosionAssets,
@@ -313,194 +314,44 @@ pub fn spawn_main_fireball(
     scale: f32,
     rng: &mut impl Rng,
 ) {
-    let size = 15.0 * scale;  // 1.5x size
-    let lifetime = 1.0;
-    let frame_duration = lifetime / 64.0;  // 64 frames for 8x8 grid
-
-    // Initial upward velocity for velocity alignment
-    let velocity = Vec3::new(
-        rng.gen_range(-0.5..0.5),
-        rng.gen_range(3.0..5.0),
-        rng.gen_range(-0.5..0.5),
-    ) * scale;
-
-    let material = materials.add(FlipbookMaterial {
-        frame_data: Vec4::new(0.0, 0.0, 8.0, 8.0), // col, row, columns, rows - 8x8 grid
-        color_data: Vec4::new(1.0, 1.0, 1.0, 1.0), // RGB tint, alpha
-        sprite_texture: assets.main_texture.clone(),
-    });
-
-    commands.spawn((
-        Mesh3d(assets.bottom_pivot_quad.clone()),
-        MeshMaterial3d(material),
-        Transform::from_translation(position).with_scale(Vec3::splat(size)),
-        Visibility::Visible,
-        NotShadowCaster,
-        NotShadowReceiver,
-        FlipbookSprite {
-            columns: 8,
-            rows: 8,
-            total_frames: 64,
-            frame_duration,
-            elapsed: 0.0,
-            lifetime: 0.0,
-            max_lifetime: lifetime,
-            base_alpha: 1.0,
-        },
-        VelocityAligned { velocity, gravity: 0.0 },
-        BottomPivot,
-        GroundExplosionChild,
-        Name::new("GE_MainFireball"),
-    ));
-}
-
-/// Secondary fireball - 8x8 flipbook (64 frames), 1s duration
-pub fn spawn_secondary_fireball(
-    commands: &mut Commands,
-    assets: &GroundExplosionAssets,
-    materials: &mut ResMut<Assets<FlipbookMaterial>>,
-    position: Vec3,
-    scale: f32,
-    rng: &mut impl Rng,
-) {
-    let size = 12.0 * scale;  // 1.5x size
-    let lifetime = 1.0;
-    let frame_duration = lifetime / 64.0;
-
-    // Offset slightly from main fireball
-    let offset = Vec3::new(
-        rng.gen_range(-1.0..1.0) * scale,
-        rng.gen_range(0.5..1.5) * scale,
-        rng.gen_range(-1.0..1.0) * scale,
-    );
-
-    let velocity = Vec3::new(
-        rng.gen_range(-0.5..0.5),
-        rng.gen_range(2.0..4.0),
-        rng.gen_range(-0.5..0.5),
-    ) * scale;
-
-    let material = materials.add(FlipbookMaterial {
-        frame_data: Vec4::new(0.0, 0.0, 8.0, 8.0), // col, row, columns, rows
-        color_data: Vec4::new(1.0, 1.0, 1.0, 1.0), // RGB tint, alpha
-        sprite_texture: assets.secondary_texture.clone(),
-    });
-
-    commands.spawn((
-        Mesh3d(assets.bottom_pivot_quad.clone()),
-        MeshMaterial3d(material),
-        Transform::from_translation(position + offset).with_scale(Vec3::splat(size)),
-        Visibility::Visible,
-        NotShadowCaster,
-        NotShadowReceiver,
-        FlipbookSprite {
-            columns: 8,
-            rows: 8,
-            total_frames: 64,
-            frame_duration,
-            elapsed: 0.0,
-            lifetime: 0.0,
-            max_lifetime: lifetime,
-            base_alpha: 1.0,
-        },
-        VelocityAligned { velocity, gravity: 0.0 },
-        BottomPivot,
-        GroundExplosionChild,
-        Name::new("GE_SecondaryFireball"),
-    ));
-}
-
-/// Smoke cloud - 8x8 flipbook (64 frames), 1s duration, camera facing
-pub fn spawn_smoke_cloud(
-    commands: &mut Commands,
-    assets: &GroundExplosionAssets,
-    materials: &mut ResMut<Assets<FlipbookMaterial>>,
-    position: Vec3,
-    scale: f32,
-    rng: &mut impl Rng,
-) {
-    // Spawn multiple smoke particles
-    let count = 3;
+    // UE5: RandomRangeInt 7-13 particles
+    let count = rng.gen_range(7..=13);
     let lifetime = 1.0;
     let frame_duration = lifetime / 64.0;
 
     for i in 0..count {
-        let size = rng.gen_range(9.0..15.0) * scale;  // 1.5x size
-        let offset = Vec3::new(
-            rng.gen_range(-2.0..2.0) * scale,
-            rng.gen_range(1.0..3.0) * scale,
-            rng.gen_range(-2.0..2.0) * scale,
+        // UE5: Uniform Sprite Size 2500-2600 (in cm) -> ~25-26m, scale down for Bevy
+        let size = rng.gen_range(20.0..26.0) * scale;
+
+        // UE5: SphereLocation radius 50 -> spawn offset
+        let spawn_offset = Vec3::new(
+            rng.gen_range(-0.5..0.5) * scale,
+            0.0,
+            rng.gen_range(-0.5..0.5) * scale,
         );
 
-        // Random start frame for variety
-        let start_frame = rng.gen_range(0..10);
+        // UE5: AddVelocityInCone - 90° cone pointing up (Z=1), speed 450-650
+        // Convert to hemisphere distribution
+        let theta = rng.gen_range(0.0..std::f32::consts::TAU);
+        let phi = rng.gen_range(0.0..std::f32::consts::FRAC_PI_2); // 0-90° from vertical
+        let speed = rng.gen_range(4.5..6.5) * scale; // UE5 450-650 cm/s -> 4.5-6.5 m/s
 
-        let material = materials.add(FlipbookMaterial {
-            frame_data: Vec4::new(
-                (start_frame % 8) as f32,
-                (start_frame / 8) as f32,
-                8.0,
-                8.0, // columns, rows
-            ),
-            color_data: Vec4::new(0.7, 0.7, 0.7, 0.8), // Gray smoke, slightly transparent
-            sprite_texture: assets.smoke_texture.clone(),
-        });
-
-        commands.spawn((
-            Mesh3d(assets.centered_quad.clone()),
-            MeshMaterial3d(material),
-            Transform::from_translation(position + offset).with_scale(Vec3::splat(size)),
-            Visibility::Visible,
-            NotShadowCaster,
-            NotShadowReceiver,
-            FlipbookSprite {
-                columns: 8,
-                rows: 8,
-                total_frames: 64,
-                frame_duration,
-                elapsed: start_frame as f32 * frame_duration,
-                lifetime: 0.0,
-                max_lifetime: lifetime + rng.gen_range(0.0..0.5),
-                base_alpha: 0.8,
-            },
-            CameraFacing,
-            GroundExplosionChild,
-            Name::new(format!("GE_Smoke_{}", i)),
-        ));
-    }
-}
-
-/// Wisp smoke puffs - 8x8 flipbook, 0.5s duration, fast small puffs
-pub fn spawn_wisps(
-    commands: &mut Commands,
-    assets: &GroundExplosionAssets,
-    materials: &mut ResMut<Assets<FlipbookMaterial>>,
-    position: Vec3,
-    scale: f32,
-    rng: &mut impl Rng,
-) {
-    let count = 5;
-    let lifetime = 0.5;
-    let frame_duration = lifetime / 64.0;
-
-    for i in 0..count {
-        let size = rng.gen_range(2.25..4.5) * scale;  // 1.5x size
-        let offset = Vec3::new(
-            rng.gen_range(-3.0..3.0) * scale,
-            rng.gen_range(0.5..2.0) * scale,
-            rng.gen_range(-3.0..3.0) * scale,
+        let velocity = Vec3::new(
+            phi.sin() * theta.cos() * speed,
+            phi.cos() * speed, // Mostly upward
+            phi.sin() * theta.sin() * speed,
         );
 
         let material = materials.add(FlipbookMaterial {
-            frame_data: Vec4::new(0.0, 0.0, 8.0, 8.0), // col, row, columns, rows
-            color_data: Vec4::new(0.8, 0.8, 0.8, 0.7), // alpha in color_data.w
-            sprite_texture: assets.wisp_texture.clone(),
+            frame_data: Vec4::new(0.0, 0.0, 8.0, 8.0),
+            color_data: Vec4::new(1.0, 1.0, 1.0, rng.gen_range(0.8..1.0)), // Alpha variation
+            sprite_texture: assets.main_texture.clone(),
         });
 
         commands.spawn((
-            Mesh3d(assets.centered_quad.clone()),
+            Mesh3d(assets.bottom_pivot_quad.clone()),
             MeshMaterial3d(material),
-            Transform::from_translation(position + offset).with_scale(Vec3::splat(size)),
+            Transform::from_translation(position + spawn_offset).with_scale(Vec3::splat(size)),
             Visibility::Visible,
             NotShadowCaster,
             NotShadowReceiver,
@@ -511,9 +362,200 @@ pub fn spawn_wisps(
                 frame_duration,
                 elapsed: 0.0,
                 lifetime: 0.0,
-                max_lifetime: lifetime,
-                base_alpha: 0.7,
+                max_lifetime: lifetime, // All fireballs same duration - animation synced
+                base_alpha: 1.0,
             },
+            VelocityAligned { velocity, gravity: 0.0 },
+            BottomPivot,
+            GroundExplosionChild,
+            Name::new(format!("GE_MainFireball_{}", i)),
+        ));
+    }
+}
+
+/// Secondary fireball - 8x8 flipbook (64 frames), 1s duration
+/// UE5: 5-10 particles, cone velocity 90°, size 2500-2600, speed 450-650
+pub fn spawn_secondary_fireball(
+    commands: &mut Commands,
+    assets: &GroundExplosionAssets,
+    materials: &mut ResMut<Assets<FlipbookMaterial>>,
+    position: Vec3,
+    scale: f32,
+    rng: &mut impl Rng,
+) {
+    // UE5: RandomRangeInt 5-10 particles
+    let count = rng.gen_range(5..=10);
+    let lifetime = 1.0;
+    let frame_duration = lifetime / 64.0;
+
+    for i in 0..count {
+        // UE5: Uniform Sprite Size 2500-2600
+        let size = rng.gen_range(20.0..26.0) * scale;
+
+        // Spawn offset from sphere radius 50
+        let spawn_offset = Vec3::new(
+            rng.gen_range(-0.5..0.5) * scale,
+            0.0,
+            rng.gen_range(-0.5..0.5) * scale,
+        );
+
+        // UE5: AddVelocityInCone - 90° cone, speed 450-650
+        let theta = rng.gen_range(0.0..std::f32::consts::TAU);
+        let phi = rng.gen_range(0.0..std::f32::consts::FRAC_PI_2);
+        let speed = rng.gen_range(4.5..6.5) * scale;
+
+        let velocity = Vec3::new(
+            phi.sin() * theta.cos() * speed,
+            phi.cos() * speed,
+            phi.sin() * theta.sin() * speed,
+        );
+
+        let material = materials.add(FlipbookMaterial {
+            frame_data: Vec4::new(0.0, 0.0, 8.0, 8.0),
+            color_data: Vec4::new(1.0, 1.0, 1.0, rng.gen_range(0.8..1.0)),
+            sprite_texture: assets.secondary_texture.clone(),
+        });
+
+        commands.spawn((
+            Mesh3d(assets.bottom_pivot_quad.clone()),
+            MeshMaterial3d(material),
+            Transform::from_translation(position + spawn_offset).with_scale(Vec3::splat(size)),
+            Visibility::Visible,
+            NotShadowCaster,
+            NotShadowReceiver,
+            FlipbookSprite {
+                columns: 8,
+                rows: 8,
+                total_frames: 64,
+                frame_duration,
+                elapsed: 0.0,
+                lifetime: 0.0,
+                max_lifetime: lifetime, // All fireballs same duration - animation synced
+                base_alpha: 1.0,
+            },
+            VelocityAligned { velocity, gravity: 0.0 },
+            BottomPivot,
+            GroundExplosionChild,
+            Name::new(format!("GE_SecondaryFireball_{}", i)),
+        ));
+    }
+}
+
+/// Smoke cloud - 8x8 flipbook (35 frames used), 1s duration, camera facing (Unaligned)
+/// UE5: 10-15 particles, stationary smoke puffs scattered on XY plane, just animate in place
+pub fn spawn_smoke_cloud(
+    commands: &mut Commands,
+    assets: &GroundExplosionAssets,
+    materials: &mut ResMut<Assets<FlipbookMaterial>>,
+    position: Vec3,
+    scale: f32,
+    rng: &mut impl Rng,
+) {
+    // UE5: UniformRangedInt 10-15 particles
+    let count = rng.gen_range(10..=15);
+    let lifetime = 1.0;
+    // UE5 only uses 35 frames of the 64
+    let frame_duration = lifetime / 35.0;
+
+    for i in 0..count {
+        // UE5: Size 50-100 cm - make them visible
+        let size = rng.gen_range(2.0..4.0) * scale;
+
+        // Scatter position on XY ground plane around impact
+        let scatter_radius = rng.gen_range(2.0..8.0) * scale;
+        let scatter_angle = rng.gen_range(0.0..std::f32::consts::TAU);
+        let spawn_offset = Vec3::new(
+            scatter_angle.cos() * scatter_radius,
+            0.2 * scale,  // Just above ground
+            scatter_angle.sin() * scatter_radius,
+        );
+
+        // Random start frame for variety
+        let start_frame = rng.gen_range(0..10);
+
+        // UE5: RandomRangeFloat 1-4 for lifetime variation
+        let lifetime_var: f32 = rng.gen_range(1.0..4.0);
+
+        let material = materials.add(FlipbookMaterial {
+            frame_data: Vec4::new(
+                (start_frame % 8) as f32,
+                (start_frame / 8) as f32,
+                8.0,
+                8.0,
+            ),
+            color_data: Vec4::new(0.7, 0.7, 0.7, 0.6),  // Gray smoke
+            sprite_texture: assets.smoke_texture.clone(),
+        });
+
+        commands.spawn((
+            Mesh3d(assets.centered_quad.clone()),
+            MeshMaterial3d(material),
+            Transform::from_translation(position + spawn_offset).with_scale(Vec3::splat(size)),
+            Visibility::Visible,
+            NotShadowCaster,
+            NotShadowReceiver,
+            FlipbookSprite {
+                columns: 8,
+                rows: 8,
+                total_frames: 35, // UE5 uses 35 frames
+                frame_duration,
+                elapsed: start_frame as f32 * frame_duration,
+                lifetime: 0.0,
+                max_lifetime: lifetime * lifetime_var.min(2.0), // Cap at 2s
+                base_alpha: 0.6,
+            },
+            // Stationary - no velocity, just animate in place
+            CameraFacing,
+            GroundExplosionChild,
+            Name::new(format!("GE_Smoke_{}", i)),
+        ));
+    }
+}
+
+/// Wisp - single large billboard that plays 64-frame animation once then fades
+/// UE5: Single fading smoke blob, size 80-180 cm, plays once
+pub fn spawn_wisps(
+    commands: &mut Commands,
+    assets: &GroundExplosionAssets,
+    materials: &mut ResMut<Assets<FlipbookMaterial>>,
+    position: Vec3,
+    scale: f32,
+    rng: &mut impl Rng,
+) {
+    // Single billboard wisp
+    let count = 1;
+    // Animation plays once over ~1 second then fades
+    let lifetime = 1.0;
+    let frame_duration = lifetime / 64.0;  // Play all 64 frames once
+
+    for i in 0..count {
+        // UE5: RandomRangeFloat002 80-180 for size - make it bigger
+        let size = rng.gen_range(6.0..10.0) * scale;  // Larger billboard
+
+        let material = materials.add(FlipbookMaterial {
+            frame_data: Vec4::new(0.0, 0.0, 8.0, 8.0),
+            color_data: Vec4::new(0.85, 0.85, 0.85, 0.8),  // Light gray, slightly transparent
+            sprite_texture: assets.wisp_texture.clone(),
+        });
+
+        commands.spawn((
+            Mesh3d(assets.centered_quad.clone()),
+            MeshMaterial3d(material),
+            Transform::from_translation(position + Vec3::Y * 1.0 * scale).with_scale(Vec3::splat(size)),
+            Visibility::Visible,
+            NotShadowCaster,
+            NotShadowReceiver,
+            FlipbookSprite {
+                columns: 8,
+                rows: 8,
+                total_frames: 64,
+                frame_duration,
+                elapsed: 0.0,
+                lifetime: 0.0,
+                max_lifetime: lifetime,  // Play once then fade
+                base_alpha: 0.8,
+            },
+            // Stationary, camera-facing
             CameraFacing,
             GroundExplosionChild,
             Name::new(format!("GE_Wisp_{}", i)),
@@ -521,7 +563,8 @@ pub fn spawn_wisps(
     }
 }
 
-/// Dust ring - 4x1 flipbook (4 frames), velocity aligned horizontal spray
+/// Dust ring - 4x1 flipbook (4 frames), velocity aligned
+/// UE5: AddVelocityInCone 35° upward, speed 500-1000, size 300-500 cm
 pub fn spawn_dust_ring(
     commands: &mut Commands,
     assets: &GroundExplosionAssets,
@@ -530,35 +573,40 @@ pub fn spawn_dust_ring(
     scale: f32,
     rng: &mut impl Rng,
 ) {
-    let count = 8;
+    let count = 12;  // More particles for ring effect
     let lifetime = 1.0;
     let frame_duration = lifetime / 4.0;
 
     for i in 0..count {
         let angle = (i as f32 / count as f32) * std::f32::consts::TAU;
-        let size = rng.gen_range(3.0..6.0) * scale;  // 1.5x size
+        // UE5: Size 300-500 cm -> 3-5m
+        let size = rng.gen_range(3.0..5.0) * scale;
 
-        // Radial outward velocity
+        // UE5: AddVelocityInCone - 35° cone pointing up, speed 500-1000
+        let cone_angle = 35.0_f32.to_radians();
+        let phi = rng.gen_range(0.0..cone_angle);  // 0-35° from vertical
+        let speed = rng.gen_range(5.0..10.0) * scale;  // 500-1000 cm/s
+
         let velocity = Vec3::new(
-            angle.cos() * rng.gen_range(3.0..6.0),
-            rng.gen_range(0.5..1.5),
-            angle.sin() * rng.gen_range(3.0..6.0),
-        ) * scale;
+            phi.sin() * angle.cos() * speed,
+            phi.cos() * speed,  // Mostly upward
+            phi.sin() * angle.sin() * speed,
+        );
 
         let offset = Vec3::new(
-            angle.cos() * scale,
-            0.2 * scale,
-            angle.sin() * scale,
+            angle.cos() * 0.5 * scale,
+            0.1 * scale,
+            angle.sin() * 0.5 * scale,
         );
 
         let material = materials.add(FlipbookMaterial {
             frame_data: Vec4::new(0.0, 0.0, 4.0, 1.0), // col, row, columns (4), rows (1)
-            color_data: Vec4::new(0.8, 0.7, 0.6, 0.6), // Sandy brown, alpha
+            color_data: Vec4::new(0.85, 0.75, 0.65, 0.7), // Sandy brown
             sprite_texture: assets.dust_texture.clone(),
         });
 
         commands.spawn((
-            Mesh3d(assets.centered_quad.clone()),
+            Mesh3d(assets.bottom_pivot_quad.clone()),
             MeshMaterial3d(material),
             Transform::from_translation(position + offset).with_scale(Vec3::splat(size)),
             Visibility::Visible,
@@ -572,9 +620,10 @@ pub fn spawn_dust_ring(
                 elapsed: 0.0,
                 lifetime: 0.0,
                 max_lifetime: lifetime,
-                base_alpha: 0.6,
+                base_alpha: 0.7,
             },
-            VelocityAligned { velocity, gravity: 2.0 },
+            VelocityAligned { velocity, gravity: 3.0 },
+            BottomPivot,
             GroundExplosionChild,
             Name::new(format!("GE_Dust_{}", i)),
         ));
@@ -692,30 +741,35 @@ pub fn spawn_flash_sparks(
     }
 }
 
-/// Impact flash - ground glow at explosion origin
-/// Uses FlipbookMaterial with alpha blending for proper texture alpha support
+/// Impact flash - heavily tilted billboard flash at explosion origin
+/// UE5: VelocityAligned, tilted ~70° from horizontal (almost vertical but angled)
+/// Split-second flash with glowing appearance
 pub fn spawn_impact_flash(
     commands: &mut Commands,
     assets: &GroundExplosionAssets,
-    materials: &mut ResMut<Assets<FlipbookMaterial>>,
+    materials: &mut ResMut<Assets<AdditiveMaterial>>,
     position: Vec3,
     scale: f32,
 ) {
-    let size = 15.0 * scale;  // 1.5x size
-    let lifetime = 0.3;  // Quick flash
+    let size = 12.0 * scale;  // Flash size
+    let lifetime = 0.15;  // Split-second flash
 
-    let material = materials.add(FlipbookMaterial {
-        frame_data: Vec4::new(0.0, 0.0, 1.0, 1.0),  // Single frame
-        color_data: Vec4::new(1.0, 0.9, 0.7, 1.0),  // Warm yellow-orange tint
-        sprite_texture: assets.impact_texture.clone(),
+    // Use flare texture for glowing soft edges (impact texture is flame-shaped)
+    let material = materials.add(AdditiveMaterial {
+        tint_color: Vec4::new(1.0, 0.85, 0.5, 1.0),  // Warm orange-yellow glow
+        soft_particles_fade: Vec4::new(1.0, 0.0, 0.0, 0.0),
+        particle_texture: assets.flare_texture.clone(),
     });
 
-    // Position slightly above ground, facing up (laying flat on the ground)
+    // Heavily tilted - about 70° from horizontal (20° from vertical)
+    // This makes the top almost face the camera while bottom is near ground
+    let tilt_angle = 70.0_f32.to_radians();  // Tilt from horizontal
+
     commands.spawn((
         Mesh3d(assets.centered_quad.clone()),
         MeshMaterial3d(material),
-        Transform::from_translation(position + Vec3::Y * 0.15)
-            .with_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2))
+        Transform::from_translation(position + Vec3::Y * 0.5 * scale)
+            .with_rotation(Quat::from_rotation_x(-tilt_angle))
             .with_scale(Vec3::splat(size)),
         Visibility::Visible,
         NotShadowCaster,
@@ -735,7 +789,7 @@ pub fn spawn_impact_flash(
     ));
 }
 
-/// Dirt debris - billboard dirt chunks, camera facing
+/// Dirt debris - billboard dirt chunks, velocity aligned (rotated to face travel direction)
 pub fn spawn_dirt_debris(
     commands: &mut Commands,
     assets: &GroundExplosionAssets,
@@ -766,9 +820,9 @@ pub fn spawn_dirt_debris(
         });
 
         commands.spawn((
-            Mesh3d(assets.centered_quad.clone()),
+            Mesh3d(assets.bottom_pivot_quad.clone()),
             MeshMaterial3d(material),
-            Transform::from_translation(position + Vec3::Y * 0.5 * scale).with_scale(Vec3::splat(size)),
+            Transform::from_translation(position).with_scale(Vec3::splat(size)),
             Visibility::Visible,
             NotShadowCaster,
             NotShadowReceiver,
@@ -782,8 +836,8 @@ pub fn spawn_dirt_debris(
                 max_lifetime: lifetime,
                 base_alpha: 1.0,
             },
-            CameraFacing,
             VelocityAligned { velocity, gravity: 12.0 },
+            BottomPivot,
             GroundExplosionChild,
             Name::new(format!("GE_Dirt_{}", i)),
         ));
