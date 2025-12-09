@@ -505,6 +505,7 @@ pub fn debug_ground_explosion_system(
     mut flipbook_materials: ResMut<Assets<crate::ground_explosion::FlipbookMaterial>>,
     mut additive_materials: ResMut<Assets<crate::wfx_materials::AdditiveMaterial>>,
     debug_mode: Res<ExplosionDebugMode>,
+    camera_query: Query<&GlobalTransform, With<Camera>>,
 ) {
     // Only work when debug mode is active
     if !debug_mode.explosion_mode {
@@ -523,6 +524,9 @@ pub fn debug_ground_explosion_system(
         let position = Vec3::new(0.0, 0.0, 0.0); // Spawn at ground level
         let scale = 1.0;
 
+        // Get camera transform for local-space velocity calculation
+        let camera_transform = camera_query.iter().next();
+
         crate::ground_explosion::spawn_ground_explosion(
             &mut commands,
             &assets,
@@ -530,6 +534,7 @@ pub fn debug_ground_explosion_system(
             &mut additive_materials,
             position,
             scale,
+            camera_transform,
         );
 
         info!("🌋 UE5 Ground explosion spawned at (0, 0, 0) with scale {}", scale);

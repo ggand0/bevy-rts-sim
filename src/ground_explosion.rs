@@ -63,6 +63,7 @@ pub struct FlipbookSprite {
     pub lifetime: f32,
     pub max_lifetime: f32,
     pub base_alpha: f32, // Original alpha for fade calculations
+    pub loop_animation: bool, // If false, animation plays once then holds last frame
 }
 
 /// Velocity-aligned billboard - sprite up-axis follows velocity direction
@@ -75,6 +76,34 @@ pub struct VelocityAligned {
 /// Standard camera-facing billboard (unaligned mode)
 #[derive(Component)]
 pub struct CameraFacing;
+
+/// Smoke particle physics - velocity with drag and acceleration
+#[derive(Component)]
+pub struct SmokePhysics {
+    pub velocity: Vec3,
+    pub acceleration: Vec3,
+    pub drag: f32,
+}
+
+/// Smoke scale-over-life component - grows 2-3x using ease-out curve
+#[derive(Component)]
+pub struct SmokeScaleOverLife {
+    pub initial_size: f32,
+}
+
+/// Smoke color-over-life - color darkens and alpha fades over lifetime
+/// Based on typical UE5 Niagara ColorFromCurve:
+/// t=0.0: RGB(0.4), A=0.6 | t=0.3: RGB(0.3), A=0.5 | t=0.7: RGB(0.25), A=0.3 | t=1.0: RGB(0.2), A=0.0
+#[derive(Component)]
+pub struct SmokeColorOverLife;
+
+/// Sprite rotation around the billboard's facing axis (Z-axis in local space)
+/// This rotation is applied AFTER billboarding calculation to preserve random sprite orientation
+/// UE5: InitializeParticle.Sprite Rotation Angle 0-360°
+#[derive(Component)]
+pub struct SpriteRotation {
+    pub angle: f32, // Rotation angle in radians
+}
 
 /// Marker for bottom-pivot billboards (fireballs grow upward)
 #[derive(Component)]
@@ -90,6 +119,14 @@ pub struct GroundExplosion {
 /// Marker for ground explosion child entities
 #[derive(Component)]
 pub struct GroundExplosionChild;
+
+/// Impact light component for fading point lights
+#[derive(Component)]
+pub struct ImpactLight {
+    pub lifetime: f32,
+    pub max_lifetime: f32,
+    pub base_intensity: f32,
+}
 
 // ===== DEBUG MENU =====
 
@@ -248,6 +285,7 @@ pub fn spawn_ground_explosion(
     additive_materials: &mut ResMut<Assets<AdditiveMaterial>>,
     position: Vec3,
     scale: f32,
+    camera_transform: Option<&GlobalTransform>,
 ) {
     info!("🌋 Spawning ground explosion at {:?} (scale: {})", position, scale);
 
@@ -259,8 +297,8 @@ pub fn spawn_ground_explosion(
     // Secondary fireball (8x8 flipbook, velocity aligned, bottom pivot)
     spawn_secondary_fireball(commands, assets, flipbook_materials, position, scale, &mut rng);
 
-    // Smoke cloud (8x8 flipbook, camera facing)
-    spawn_smoke_cloud(commands, assets, flipbook_materials, position, scale, &mut rng);
+    // Smoke cloud (8x8 flipbook, camera facing) - uses camera-local velocity
+    spawn_smoke_cloud(commands, assets, flipbook_materials, position, scale, &mut rng, camera_transform);
 
     // Wisp smoke puffs (8x8 flipbook, camera facing, short duration)
     spawn_wisps(commands, assets, flipbook_materials, position, scale, &mut rng);
@@ -274,8 +312,8 @@ pub fn spawn_ground_explosion(
     // Bright flash sparks (single texture, velocity aligned)
     spawn_flash_sparks(commands, assets, additive_materials, position, scale, &mut rng);
 
-    // Impact ground flash
-    spawn_impact_flash(commands, assets, flipbook_materials, additive_materials, position, scale);
+    // Impact ground flash - short duration for full explosion
+    spawn_impact_flash(commands, assets, flipbook_materials, additive_materials, position, scale, 0.1);
 
     // Dirt debris (single texture, camera facing)
     spawn_dirt_debris(commands, assets, flipbook_materials, position, scale, &mut rng);
@@ -297,17 +335,18 @@ pub fn spawn_single_emitter(
     emitter_type: EmitterType,
     position: Vec3,
     scale: f32,
+    camera_transform: Option<&GlobalTransform>,
 ) {
     let mut rng = rand::thread_rng();
     match emitter_type {
         EmitterType::MainFireball => spawn_main_fireball(commands, assets, flipbook_materials, position, scale, &mut rng),
         EmitterType::SecondaryFireball => spawn_secondary_fireball(commands, assets, flipbook_materials, position, scale, &mut rng),
-        EmitterType::Smoke => spawn_smoke_cloud(commands, assets, flipbook_materials, position, scale, &mut rng),
+        EmitterType::Smoke => spawn_smoke_cloud(commands, assets, flipbook_materials, position, scale, &mut rng, camera_transform),
         EmitterType::Wisp => spawn_wisps(commands, assets, flipbook_materials, position, scale, &mut rng),
         EmitterType::Dust => spawn_dust_ring(commands, assets, flipbook_materials, position, scale, &mut rng),
         EmitterType::Spark => spawn_sparks(commands, assets, additive_materials, position, scale, &mut rng),
         EmitterType::FlashSpark => spawn_flash_sparks(commands, assets, additive_materials, position, scale, &mut rng),
-        EmitterType::Impact => spawn_impact_flash(commands, assets, flipbook_materials, additive_materials, position, scale),
+        EmitterType::Impact => spawn_impact_flash(commands, assets, flipbook_materials, additive_materials, position, scale, 2.0),
         EmitterType::Dirt => spawn_dirt_debris(commands, assets, flipbook_materials, position, scale, &mut rng),
     }
 }
@@ -372,6 +411,7 @@ pub fn spawn_main_fireball(
                 lifetime: 0.0,
                 max_lifetime: lifetime, // All fireballs same duration - animation synced
                 base_alpha: 1.0,
+                loop_animation: false,  // Play once
             },
             VelocityAligned { velocity, gravity: 0.0 },
             BottomPivot,
@@ -440,6 +480,7 @@ pub fn spawn_secondary_fireball(
                 lifetime: 0.0,
                 max_lifetime: lifetime, // All fireballs same duration - animation synced
                 base_alpha: 1.0,
+                loop_animation: false,  // Play once
             },
             VelocityAligned { velocity, gravity: 0.0 },
             BottomPivot,
@@ -449,8 +490,16 @@ pub fn spawn_secondary_fireball(
     }
 }
 
-/// Smoke cloud - 8x8 flipbook (35 frames used), 1s duration, camera facing (Unaligned)
-/// UE5: 10-15 particles, stationary smoke puffs scattered on XY plane, just animate in place
+/// Smoke cloud - 8x8 flipbook (35 frames used), camera facing (Unaligned)
+/// UE5: 10-15 particles, LOCAL SPACE velocity (spreads on camera plane)
+/// Velocity: random box ±800 XY (camera plane), +10 Z (toward camera) | Drag: 2.0 | Acceleration: +50 Z
+/// Scale: grows 2-3x over lifetime (ease-out curve)
+/// Alpha: fades linearly over lifetime
+///
+/// IMPORTANT: UE5 uses bLocalSpace=True, meaning velocity XY is relative to emitter orientation.
+/// Since the emitter typically faces the camera, XY spread is on the SCREEN PLANE (not world ground).
+/// This creates a more view-friendly spread pattern where smoke expands left/right and up/down
+/// relative to the camera view, rather than spreading on the world ground plane.
 pub fn spawn_smoke_cloud(
     commands: &mut Commands,
     assets: &GroundExplosionAssets,
@@ -458,47 +507,70 @@ pub fn spawn_smoke_cloud(
     position: Vec3,
     scale: f32,
     rng: &mut impl Rng,
+    camera_transform: Option<&GlobalTransform>,
 ) {
     // UE5: UniformRangedInt 10-15 particles
     let count = rng.gen_range(10..=15);
-    let lifetime = 1.0;
-    // UE5 only uses 35 frames of the 64
-    let frame_duration = lifetime / 35.0;
+
+    // Get camera orientation for local-space velocity calculation
+    // If no camera provided, fall back to world-space (spreads on XZ plane)
+    let (cam_right, cam_up, cam_forward) = if let Some(cam_tf) = camera_transform {
+        let forward = cam_tf.forward().as_vec3();
+        let right = cam_tf.right().as_vec3();
+        let up = cam_tf.up().as_vec3();
+        (right, up, forward)
+    } else {
+        // Fallback: assume camera looking along -Z
+        (Vec3::X, Vec3::Y, Vec3::NEG_Z)
+    };
 
     for i in 0..count {
-        // UE5: Size 50-100 cm - make them visible
-        let size = rng.gen_range(2.0..4.0) * scale;
-
-        // Scatter position on XY ground plane around impact
-        let scatter_radius = rng.gen_range(2.0..8.0) * scale;
-        let scatter_angle = rng.gen_range(0.0..std::f32::consts::TAU);
-        let spawn_offset = Vec3::new(
-            scatter_angle.cos() * scatter_radius,
-            0.2 * scale,  // Just above ground
-            scatter_angle.sin() * scatter_radius,
-        );
-
-        // Random start frame for variety
-        let start_frame = rng.gen_range(0..10);
+        // UE5: RandomRangeFloat002 size 50-100 cm -> 0.5-1.0m base size (will grow 3x)
+        let base_size = rng.gen_range(0.5..1.0) * scale;
 
         // UE5: RandomRangeFloat 1-4 for lifetime variation
-        let lifetime_var: f32 = rng.gen_range(1.0..4.0);
+        let particle_lifetime: f32 = rng.gen_range(1.0..4.0);
+        // Play 35 frames over the particle's lifetime
+        let frame_duration = particle_lifetime / 35.0;
 
+        // UE5: UniformRangedVector velocity in LOCAL SPACE
+        // Min: (800, 800, 0), Max: (-800, -800, 10)
+        // Local X = camera right (spread left/right on screen)
+        // Local Y = camera up (spread up/down on screen)
+        // Local Z = camera forward (toward/away from camera - minimal)
+        let local_x = rng.gen_range(-8.0..8.0) * scale;  // UE5 ±800 cm -> ±8m (screen left/right)
+        let local_y = rng.gen_range(-8.0..8.0) * scale;  // UE5 ±800 cm (screen up/down)
+        let local_z = rng.gen_range(0.0..0.1) * scale;   // UE5 0-10 (toward camera - minimal)
+
+        // Transform local velocity to world space
+        let velocity = cam_right * local_x + cam_up * local_y + cam_forward * local_z;
+
+        // UE5: AccelerationForce.Acceleration (0, 0, 50) - slowly rises in LOCAL Z
+        // In local space, Z is camera forward, but for visual effect we want world Y (up)
+        // so smoke rises upward regardless of camera orientation
+        let acceleration = Vec3::new(0.0, 0.5 * scale, 0.0);  // World up
+
+        // UE5: InitializeParticle.Sprite Rotation Angle 0-360°
+        let rotation_angle = rng.gen_range(0.0..std::f32::consts::TAU);
+
+        // Spawn at impact center
+        let spawn_offset = Vec3::new(0.0, 0.1 * scale, 0.0);
+
+        // UE5 M_Smoke material:
+        // - ParticleColor.RGB × Texture.RGB = BaseColor
+        // - ParticleColor.A × Texture.A = Opacity (with depth fade)
+        // - Color comes from Niagara ColorFromCurve, starts at RGB(0.4), A=0.6
         let material = materials.add(FlipbookMaterial {
-            frame_data: Vec4::new(
-                (start_frame % 8) as f32,
-                (start_frame / 8) as f32,
-                8.0,
-                8.0,
-            ),
-            color_data: Vec4::new(0.7, 0.7, 0.7, 0.6),  // Gray smoke
+            frame_data: Vec4::new(0.0, 0.0, 8.0, 8.0),
+            color_data: Vec4::new(0.4, 0.4, 0.4, 0.6),  // Initial: medium grey, 60% opacity
             sprite_texture: assets.smoke_texture.clone(),
         });
 
         commands.spawn((
             Mesh3d(assets.centered_quad.clone()),
             MeshMaterial3d(material),
-            Transform::from_translation(position + spawn_offset).with_scale(Vec3::splat(size)),
+            Transform::from_translation(position + spawn_offset)
+                .with_scale(Vec3::splat(base_size)),
             Visibility::Visible,
             NotShadowCaster,
             NotShadowReceiver,
@@ -507,12 +579,22 @@ pub fn spawn_smoke_cloud(
                 rows: 8,
                 total_frames: 35, // UE5 uses 35 frames
                 frame_duration,
-                elapsed: start_frame as f32 * frame_duration,
+                elapsed: 0.0,
                 lifetime: 0.0,
-                max_lifetime: lifetime * lifetime_var.min(2.0), // Cap at 2s
-                base_alpha: 0.6,
+                max_lifetime: particle_lifetime,
+                base_alpha: 0.6,  // Initial alpha from color curve
+                loop_animation: false,
             },
-            // Stationary - no velocity, just animate in place
+            SmokePhysics {
+                velocity,
+                acceleration,
+                drag: 2.0,  // UE5: Drag 2.0
+            },
+            SmokeScaleOverLife {
+                initial_size: base_size,
+            },
+            SmokeColorOverLife,  // Animate color over lifetime
+            SpriteRotation { angle: rotation_angle },  // Random rotation preserved during billboarding
             CameraFacing,
             GroundExplosionChild,
             Name::new(format!("GE_Smoke_{}", i)),
@@ -562,6 +644,7 @@ pub fn spawn_wisps(
                 lifetime: 0.0,
                 max_lifetime: lifetime,  // Play once then fade
                 base_alpha: 0.8,
+                loop_animation: false,  // Play once
             },
             // Stationary, camera-facing
             CameraFacing,
@@ -634,6 +717,7 @@ pub fn spawn_dust_ring(
                 lifetime: 0.0,
                 max_lifetime: lifetime,
                 base_alpha: 0.8,
+                loop_animation: false,  // Play once
             },
             VelocityAligned { velocity, gravity: 0.0 },  // No gravity - fast upward motion
             BottomPivot,
@@ -691,6 +775,7 @@ pub fn spawn_sparks(
                 lifetime: 0.0,
                 max_lifetime: lifetime,
                 base_alpha: 1.0,
+                loop_animation: true,  // Single frame, doesn't matter
             },
             VelocityAligned { velocity, gravity: 8.0 },
             GroundExplosionChild,
@@ -746,6 +831,7 @@ pub fn spawn_flash_sparks(
                 lifetime: 0.0,
                 max_lifetime: lifetime,
                 base_alpha: 1.0,
+                loop_animation: true,  // Single frame, doesn't matter
             },
             VelocityAligned { velocity, gravity: 5.0 },
             GroundExplosionChild,
@@ -754,8 +840,9 @@ pub fn spawn_flash_sparks(
     }
 }
 
-/// Impact flash - tilted ground flash with impact texture + glow circle
-/// UE5: Ground-facing billboard tilted from vertical
+/// Impact flash - tilted ground flash with impact texture + point light + glow ring
+/// UE5: Dual renderer - sprite + light renderer with RadiusScale 35.0
+/// lifetime parameter allows short flash for full explosion (0.1s) vs longer for debug (2.0s)
 pub fn spawn_impact_flash(
     commands: &mut Commands,
     assets: &GroundExplosionAssets,
@@ -763,13 +850,37 @@ pub fn spawn_impact_flash(
     additive_materials: &mut ResMut<Assets<AdditiveMaterial>>,
     position: Vec3,
     scale: f32,
+    lifetime: f32,
 ) {
-    let lifetime = 0.3;
 
-    // Glow circle - additive soft glow, camera-facing
-    let glow_size = 15.0 * scale;
+    // Point light - illuminates nearby geometry
+    // UE5: RadiusScale 35.0, color bound to particle (orange/yellow)
+    let light_radius = 35.0 * scale;
+    let light_intensity = 80000.0 * scale; // Bright initial flash
+
+    commands.spawn((
+        PointLight {
+            color: Color::srgb(1.0, 0.7, 0.3), // Orange/yellow flame color
+            intensity: light_intensity,
+            range: light_radius,
+            shadows_enabled: false, // Performance: no shadows for explosion lights
+            ..default()
+        },
+        Transform::from_translation(position + Vec3::Y * 1.0 * scale),
+        ImpactLight {
+            lifetime: 0.0,
+            max_lifetime: lifetime,
+            base_intensity: light_intensity,
+        },
+        GroundExplosionChild,
+        Name::new("GE_ImpactLight"),
+    ));
+
+    // Glow circle sprite - visible glowing ring effect (camera-facing, additive)
+    // This creates the visible "ring" effect that UE5's sprite renderer produces
+    let glow_size = 15.0 * scale; // Large visible glow
     let glow_material = additive_materials.add(AdditiveMaterial {
-        tint_color: Vec4::new(1.0, 0.8, 0.5, 0.5), // Orange tint
+        tint_color: Vec4::new(1.0, 0.8, 0.4, 1.0), // Orange/yellow glow
         soft_particles_fade: Vec4::new(1.0, 0.0, 0.0, 0.0),
         particle_texture: assets.glow_circle_texture.clone(),
     });
@@ -777,7 +888,7 @@ pub fn spawn_impact_flash(
     commands.spawn((
         Mesh3d(assets.centered_quad.clone()),
         MeshMaterial3d(glow_material),
-        Transform::from_translation(position + Vec3::Y * 0.5)
+        Transform::from_translation(position + Vec3::Y * 0.5 * scale)
             .with_scale(Vec3::splat(glow_size)),
         Visibility::Visible,
         NotShadowCaster,
@@ -790,29 +901,31 @@ pub fn spawn_impact_flash(
             elapsed: 0.0,
             lifetime: 0.0,
             max_lifetime: lifetime,
-            base_alpha: 0.5,
+            base_alpha: 1.0,
+            loop_animation: true,  // Single frame, doesn't matter
         },
-        CameraFacing,
+        CameraFacing, // Face the camera for visibility
         GroundExplosionChild,
         Name::new("GE_GlowCircle"),
     ));
 
     // Impact texture - tilted ground-facing billboard
-    let impact_size = 12.0 * scale;
+    // UE5: Material M_Impact_3, Sprite Size 50-100, VelocityAligned
+    let impact_size = 8.0 * scale; // UE5: 50-100 cm -> ~0.5-1m, scaled up
     let impact_material = flipbook_materials.add(FlipbookMaterial {
         frame_data: Vec4::new(0.0, 0.0, 1.0, 1.0),
-        color_data: Vec4::new(1.0, 1.0, 1.0, 1.0),
+        color_data: Vec4::new(1.0, 0.9, 0.7, 1.0), // Slight orange tint
         sprite_texture: assets.impact_texture.clone(),
     });
 
-    // Tilt 45° from vertical
-    let tilt_angle = 45.0_f32.to_radians();
+    // Tilt 70° from vertical (more horizontal, facing up)
+    let tilt_angle = 70.0_f32.to_radians();
     let tilt_rotation = Quat::from_rotation_x(tilt_angle);
 
     commands.spawn((
         Mesh3d(assets.centered_quad.clone()),
         MeshMaterial3d(impact_material),
-        Transform::from_translation(position + Vec3::Y * 0.2 * scale)
+        Transform::from_translation(position + Vec3::Y * 0.15 * scale)
             .with_rotation(tilt_rotation)
             .with_scale(Vec3::splat(impact_size)),
         Visibility::Visible,
@@ -827,6 +940,7 @@ pub fn spawn_impact_flash(
             lifetime: 0.0,
             max_lifetime: lifetime,
             base_alpha: 1.0,
+            loop_animation: true,  // Single frame, doesn't matter
         },
         GroundExplosionChild,
         Name::new("GE_ImpactFlash"),
@@ -879,6 +993,7 @@ pub fn spawn_dirt_debris(
                 lifetime: 0.0,
                 max_lifetime: lifetime,
                 base_alpha: 1.0,
+                loop_animation: true,  // Single frame, doesn't matter
             },
             VelocityAligned { velocity, gravity: 12.0 },
             BottomPivot,
@@ -934,6 +1049,7 @@ pub fn spawn_velocity_dirt(
                 lifetime: 0.0,
                 max_lifetime: lifetime,
                 base_alpha: 1.0,
+                loop_animation: true,  // Single frame, doesn't matter
             },
             VelocityAligned { velocity, gravity: 10.0 },
             GroundExplosionChild,
@@ -950,18 +1066,25 @@ pub fn animate_flipbook_sprites(
         &mut FlipbookSprite,
         &MeshMaterial3d<FlipbookMaterial>,
         Option<&Name>,
+        Option<&SmokeScaleOverLife>,  // Detect smoke for linear alpha fade
     )>,
     mut materials: ResMut<Assets<FlipbookMaterial>>,
     time: Res<Time>,
 ) {
     let dt = time.delta_secs();
 
-    for (mut sprite, material_handle, name) in query.iter_mut() {
+    for (mut sprite, material_handle, name, is_smoke) in query.iter_mut() {
         sprite.elapsed += dt;
         sprite.lifetime += dt;
 
-        // Calculate current frame
-        let frame = ((sprite.elapsed / sprite.frame_duration) as u32) % sprite.total_frames;
+        // Calculate current frame - respect loop_animation flag
+        let raw_frame = (sprite.elapsed / sprite.frame_duration) as u32;
+        let frame = if sprite.loop_animation {
+            raw_frame % sprite.total_frames
+        } else {
+            // Clamp to last frame if not looping
+            raw_frame.min(sprite.total_frames - 1)
+        };
         let col = frame % sprite.columns;
         let row = frame / sprite.columns;
 
@@ -972,20 +1095,22 @@ pub fn animate_flipbook_sprites(
             }
         }
 
-        // Calculate alpha fade (fade out in last 20% of lifetime)
-        let progress = sprite.lifetime / sprite.max_lifetime;
-        let alpha = if progress > 0.8 {
-            1.0 - (progress - 0.8) * 5.0
-        } else {
-            1.0
-        };
-
-        // Update material - frame_data.xy = current frame, color_data.w = alpha
+        // Update material frame data
         if let Some(material) = materials.get_mut(&material_handle.0) {
             material.frame_data.x = col as f32;
             material.frame_data.y = row as f32;
-            // Use base_alpha from component, multiply by fade factor
-            material.color_data.w = (sprite.base_alpha * alpha).max(0.0);
+
+            // Smoke color is handled by update_smoke_color system (has SmokeColorOverLife)
+            // Other particles: fade out in last 20% of lifetime
+            if is_smoke.is_none() {
+                let progress = sprite.lifetime / sprite.max_lifetime;
+                let alpha = if progress > 0.8 {
+                    1.0 - (progress - 0.8) * 5.0
+                } else {
+                    1.0
+                };
+                material.color_data.w = (sprite.base_alpha * alpha).max(0.0);
+            }
         }
     }
 }
@@ -1054,8 +1179,9 @@ pub fn update_velocity_aligned_billboards(
 }
 
 /// Update camera-facing billboards
+/// Applies SpriteRotation AFTER computing camera-facing orientation
 pub fn update_camera_facing_billboards(
-    mut query: Query<&mut Transform, (With<CameraFacing>, With<GroundExplosionChild>)>,
+    mut query: Query<(&mut Transform, Option<&SpriteRotation>), (With<CameraFacing>, With<GroundExplosionChild>)>,
     camera_query: Query<&GlobalTransform, With<Camera>>,
 ) {
     let camera_pos = camera_query
@@ -1064,7 +1190,7 @@ pub fn update_camera_facing_billboards(
         .map(|t| t.translation())
         .unwrap_or(Vec3::ZERO);
 
-    for mut transform in query.iter_mut() {
+    for (mut transform, sprite_rotation) in query.iter_mut() {
         let to_camera = (camera_pos - transform.translation).normalize_or_zero();
 
         if to_camera.length_squared() > 0.001 {
@@ -1072,7 +1198,15 @@ pub fn update_camera_facing_billboards(
             let right = Vec3::Y.cross(forward).normalize_or_zero();
             if right.length_squared() > 0.001 {
                 let up = forward.cross(right);
-                transform.rotation = Quat::from_mat3(&Mat3::from_cols(right, up, forward));
+                let billboard_rotation = Quat::from_mat3(&Mat3::from_cols(right, up, forward));
+
+                // Apply sprite rotation AFTER billboarding (rotation around the forward/Z axis)
+                if let Some(sprite_rot) = sprite_rotation {
+                    let local_rotation = Quat::from_rotation_z(sprite_rot.angle);
+                    transform.rotation = billboard_rotation * local_rotation;
+                } else {
+                    transform.rotation = billboard_rotation;
+                }
             }
         }
     }
@@ -1086,6 +1220,94 @@ pub fn cleanup_ground_explosions(
     for (entity, sprite) in query.iter() {
         if sprite.lifetime >= sprite.max_lifetime {
             commands.entity(entity).despawn();
+        }
+    }
+}
+
+/// Update smoke particle physics - velocity with drag and acceleration
+pub fn update_smoke_physics(
+    mut query: Query<(&mut Transform, &mut SmokePhysics), With<GroundExplosionChild>>,
+    time: Res<Time>,
+) {
+    let dt = time.delta_secs();
+
+    for (mut transform, mut physics) in query.iter_mut() {
+        // Apply acceleration
+        let accel = physics.acceleration;
+        physics.velocity += accel * dt;
+
+        // Apply drag (exponential decay)
+        // UE5 drag formula: velocity *= exp(-drag * dt)
+        let drag_factor = (-physics.drag * dt).exp();
+        physics.velocity *= drag_factor;
+
+        // Update position
+        transform.translation += physics.velocity * dt;
+    }
+}
+
+/// Update smoke scale over lifetime - grows 2-3x using ease-out curve
+/// UE5: scale(t) = initial_size * (1.0 + 2.0 * ease_out(t))
+/// where ease_out(t) = 1 - (1-t)²
+pub fn update_smoke_scale(
+    mut query: Query<(&mut Transform, &FlipbookSprite, &SmokeScaleOverLife), With<GroundExplosionChild>>,
+) {
+    for (mut transform, sprite, scale_over_life) in query.iter_mut() {
+        let t = (sprite.lifetime / sprite.max_lifetime).clamp(0.0, 1.0);
+
+        // Ease-out curve: 1 - (1-t)²
+        let ease_out = 1.0 - (1.0 - t) * (1.0 - t);
+
+        // Scale grows from 1x to 3x over lifetime
+        let scale_factor = 1.0 + 2.0 * ease_out;
+        let new_size = scale_over_life.initial_size * scale_factor;
+
+        transform.scale = Vec3::splat(new_size);
+    }
+}
+
+/// Update smoke color over lifetime - UE5 Niagara ColorFromCurve
+/// Color curve: t=0.0: RGB(0.4), A=0.6 → t=1.0: RGB(0.2), A=0.0
+/// Smoke starts medium grey, darkens slightly as it fades out
+pub fn update_smoke_color(
+    query: Query<(&FlipbookSprite, &MeshMaterial3d<FlipbookMaterial>), (With<GroundExplosionChild>, With<SmokeColorOverLife>)>,
+    mut materials: ResMut<Assets<FlipbookMaterial>>,
+) {
+    for (sprite, material_handle) in query.iter() {
+        let t = (sprite.lifetime / sprite.max_lifetime).clamp(0.0, 1.0);
+
+        // Color curve keyframes (approximate from UE5):
+        // t=0.0: RGB=0.4, A=0.6
+        // t=0.3: RGB=0.3, A=0.5
+        // t=0.7: RGB=0.25, A=0.3
+        // t=1.0: RGB=0.2, A=0.0
+
+        // Linear interpolation through keyframes
+        let (rgb, alpha) = if t < 0.3 {
+            // 0.0 -> 0.3
+            let local_t = t / 0.3;
+            let rgb = 0.4 - 0.1 * local_t;    // 0.4 -> 0.3
+            let a = 0.6 - 0.1 * local_t;      // 0.6 -> 0.5
+            (rgb, a)
+        } else if t < 0.7 {
+            // 0.3 -> 0.7
+            let local_t = (t - 0.3) / 0.4;
+            let rgb = 0.3 - 0.05 * local_t;   // 0.3 -> 0.25
+            let a = 0.5 - 0.2 * local_t;      // 0.5 -> 0.3
+            (rgb, a)
+        } else {
+            // 0.7 -> 1.0
+            let local_t = (t - 0.7) / 0.3;
+            let rgb = 0.25 - 0.05 * local_t;  // 0.25 -> 0.2
+            let a = 0.3 * (1.0 - local_t);    // 0.3 -> 0.0
+            (rgb, a)
+        };
+
+        if let Some(material) = materials.get_mut(&material_handle.0) {
+            material.color_data.x = rgb;
+            material.color_data.y = rgb;
+            material.color_data.z = rgb;
+            material.color_data.w = alpha;
         }
     }
 }
@@ -1120,6 +1342,42 @@ pub fn animate_additive_sprites(
     }
 }
 
+/// Update impact lights - fade intensity over lifetime
+pub fn update_impact_lights(
+    mut commands: Commands,
+    mut query: Query<(Entity, &mut ImpactLight, &mut PointLight)>,
+    time: Res<Time>,
+) {
+    let dt = time.delta_secs();
+
+    for (entity, mut impact_light, mut point_light) in query.iter_mut() {
+        impact_light.lifetime += dt;
+
+        let progress = impact_light.lifetime / impact_light.max_lifetime;
+
+        if progress >= 1.0 {
+            // Despawn expired lights
+            commands.entity(entity).despawn();
+            continue;
+        }
+
+        // Fast initial fade, then slower decay
+        // UE5 light curve: bright flash then quick falloff
+        let fade = if progress < 0.1 {
+            // First 10%: full brightness
+            1.0
+        } else if progress < 0.3 {
+            // 10-30%: quick fade to 30%
+            1.0 - (progress - 0.1) * 3.5
+        } else {
+            // 30-100%: slow fade to 0
+            0.3 * (1.0 - (progress - 0.3) / 0.7)
+        };
+
+        point_light.intensity = impact_light.base_intensity * fade.max(0.0);
+    }
+}
+
 // ===== DEBUG MENU SYSTEM =====
 
 /// Debug menu system - P to toggle, 1-9 to spawn individual emitters
@@ -1130,6 +1388,7 @@ pub fn ground_explosion_debug_menu_system(
     ground_assets: Option<Res<GroundExplosionAssets>>,
     mut flipbook_materials: ResMut<Assets<FlipbookMaterial>>,
     mut additive_materials: ResMut<Assets<AdditiveMaterial>>,
+    camera_query: Query<&GlobalTransform, With<Camera>>,
 ) {
     // P key toggles the debug menu
     if keyboard_input.just_pressed(KeyCode::KeyP) {
@@ -1194,6 +1453,9 @@ pub fn ground_explosion_debug_menu_system(
         None
     };
 
+    // Get camera transform for local-space velocity calculation
+    let camera_transform = camera_query.iter().next();
+
     if let Some((emitter_type, name)) = emitter {
         spawn_single_emitter(
             &mut commands,
@@ -1203,6 +1465,7 @@ pub fn ground_explosion_debug_menu_system(
             emitter_type,
             position,
             scale,
+            camera_transform,
         );
         info!("🌋 Spawned: {} at (0, 0, 0)", name);
     }
@@ -1216,6 +1479,7 @@ pub fn ground_explosion_debug_menu_system(
             &mut additive_materials,
             position,
             1.5,  // Use 1.5x scale for combined effect
+            camera_transform,
         );
         info!("🌋 Spawned: FULL GROUND EXPLOSION at (0, 0, 0)");
     }

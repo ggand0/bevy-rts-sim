@@ -173,7 +173,11 @@ fn main() {
             ground_explosion::animate_flipbook_sprites,
             ground_explosion::update_velocity_aligned_billboards,
             ground_explosion::update_camera_facing_billboards,
+            ground_explosion::update_smoke_physics,
+            ground_explosion::update_smoke_scale,
+            ground_explosion::update_smoke_color,
             ground_explosion::animate_additive_sprites,
+            ground_explosion::update_impact_lights,
             ground_explosion::cleanup_ground_explosions,
             ground_explosion::ground_explosion_debug_menu_system,
         ))
