@@ -241,6 +241,26 @@ pub struct ImpactLight {
     pub base_intensity: f32,
 }
 
+/// Parts debris physics - 3D mesh particles with gravity and ground collision
+/// UE5 parts.md: 50-75 mesh debris, gravity -980, 1 bounce with friction
+#[derive(Component)]
+pub struct PartsPhysics {
+    pub velocity: Vec3,
+    pub angular_velocity: Vec3,  // Rotation speed (radians/sec per axis)
+    pub gravity: f32,
+    pub bounce_count: u32,       // Track number of bounces
+    pub ground_y: f32,           // Ground level for collision
+}
+
+/// Parts scale over life - holds at 1.0 until 90%, then shrinks to 0
+/// UE5: Scale curve 0→1 (grow), hold at 0.9, then 1→0 (shrink to nothing)
+#[derive(Component)]
+pub struct PartsScaleOverLife {
+    pub initial_size: f32,
+    pub lifetime: f32,
+    pub max_lifetime: f32,
+}
+
 // ===== DEBUG MENU =====
 
 /// Debug menu state for ground explosion emitter testing
@@ -252,16 +272,16 @@ pub struct GroundExplosionDebugMenu {
 /// Emitter types for individual testing
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EmitterType {
-    MainFireball,      // 1
-    SecondaryFireball, // 2
-    Smoke,             // 3
-    Wisp,              // 4
-    Dust,              // 5
-    Spark,             // 6
-    FlashSpark,        // 7
-    Impact,            // 8
-    Dirt,              // 9
-    // VelocityDirt not mapped - only 9 keys
+    MainFireball,      // F1
+    SecondaryFireball, // F2
+    Smoke,             // F3
+    Wisp,              // F4
+    Dust,              // F5
+    Spark,             // F6
+    FlashSpark,        // F7
+    Impact,            // F8
+    Dirt,              // F9
+    Parts,             // F11 (F10 is full explosion)
 }
 
 // ===== PRELOADED ASSETS =====
@@ -282,6 +302,9 @@ pub struct GroundExplosionAssets {
     // Shared meshes
     pub centered_quad: Handle<Mesh>,
     pub bottom_pivot_quad: Handle<Mesh>,
+    // Debris meshes for parts emitter (3 variants)
+    pub debris_meshes: [Handle<Mesh>; 3],
+    pub debris_material: Handle<StandardMaterial>,
 }
 
 // ===== MESH CREATION =====
@@ -365,8 +388,29 @@ pub fn setup_ground_explosion_assets(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
     mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     info!("🌋 Loading ground explosion assets...");
+
+    // Create 3 debris mesh variants using Bevy's primitive shapes
+    // UE5 parts.md: 3 mesh variants randomly selected, size 5-7 units
+    let debris_meshes = [
+        // Variant 0: Small cube (chunky rock)
+        meshes.add(Cuboid::new(1.0, 0.8, 0.6)),
+        // Variant 1: Flat slab (debris piece)
+        meshes.add(Cuboid::new(1.2, 0.4, 0.8)),
+        // Variant 2: Elongated piece (shrapnel)
+        meshes.add(Cuboid::new(0.5, 0.5, 1.4)),
+    ];
+
+    // Debris material - dark brown/grey unlit look
+    // UE5: Color range (0.26, 0.17, 0.05) brown to (0.44, 0.42, 0.42) grey
+    let debris_material = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.35, 0.30, 0.24), // Mid brown-grey
+        perceptual_roughness: 1.0,
+        metallic: 0.0,
+        ..default()
+    });
 
     let assets = GroundExplosionAssets {
         // Premium assets - CC-BY licensed, not included in repo
@@ -382,6 +426,8 @@ pub fn setup_ground_explosion_assets(
         glow_circle_texture: asset_server.load("textures/wfx/WFX_T_GlowCircle A8.png"),
         centered_quad: meshes.add(create_centered_quad(1.0)),
         bottom_pivot_quad: meshes.add(create_bottom_pivot_quad(1.0)),
+        debris_meshes,
+        debris_material,
     };
 
     commands.insert_resource(assets);
@@ -434,7 +480,10 @@ pub fn spawn_ground_explosion(
     // Velocity-stretched dirt (single texture, velocity aligned)
     spawn_velocity_dirt(commands, assets, flipbook_materials, position, scale, &mut rng);
 
-    info!("✅ Ground explosion spawned with 10 emitters");
+    // Parts debris (3D mesh, gravity, bounce)
+    spawn_parts(commands, assets, position, scale, &mut rng);
+
+    info!("✅ Ground explosion spawned with 11 emitters");
 }
 
 // ===== EMITTER SPAWN FUNCTIONS =====
@@ -461,6 +510,7 @@ pub fn spawn_single_emitter(
         EmitterType::FlashSpark => spawn_flash_sparks(commands, assets, additive_materials, position, scale, &mut rng),
         EmitterType::Impact => spawn_impact_flash(commands, assets, flipbook_materials, additive_materials, position, scale, 2.0),
         EmitterType::Dirt => spawn_dirt_debris(commands, assets, flipbook_materials, position, scale, &mut rng),
+        EmitterType::Parts => spawn_parts(commands, assets, position, scale, &mut rng),
     }
 }
 
@@ -1437,6 +1487,81 @@ pub fn spawn_velocity_dirt(
     }
 }
 
+/// Parts debris - 3D mesh shrapnel/rock pieces flying outward with gravity
+/// UE5 parts.md: 50-75 mesh debris, box velocity, gravity, 1 bounce collision
+pub fn spawn_parts(
+    commands: &mut Commands,
+    assets: &GroundExplosionAssets,
+    position: Vec3,
+    scale: f32,
+    rng: &mut impl Rng,
+) {
+    // UE5: 50-75 (RandomRangeInt)
+    let count = rng.gen_range(50..75);
+
+    for i in 0..count {
+        // UE5: Size 5-7 units (0.05-0.07m)
+        // Scaled to 0.3-0.5m - small enough that despawn isn't noticeable
+        let size = rng.gen_range(0.3..0.5) * scale;
+
+        // UE5: UniformRangedVector - box velocity
+        // Min: (800, 800, 500), Max: (-800, -800, 2500)
+        // This means X/Y: ±800, Z: 500-2500 (UE5 Z-up)
+        // In Bevy (Y-up): X/Z: ±8m/s, Y: 5-25m/s
+        let velocity = Vec3::new(
+            rng.gen_range(-8.0..8.0) * scale,
+            rng.gen_range(5.0..25.0) * scale,   // Strong upward launch
+            rng.gen_range(-8.0..8.0) * scale,
+        );
+
+        // Random angular velocity for tumbling (radians/sec)
+        let angular_velocity = Vec3::new(
+            rng.gen_range(-10.0..10.0),
+            rng.gen_range(-10.0..10.0),
+            rng.gen_range(-10.0..10.0),
+        );
+
+        // UE5: RandomRangeFloat 0.5-1.5s lifetime
+        let lifetime = rng.gen_range(0.5..1.5);
+
+        // Random initial rotation
+        let initial_rotation = Quat::from_euler(
+            EulerRot::XYZ,
+            rng.gen_range(0.0..std::f32::consts::TAU),
+            rng.gen_range(0.0..std::f32::consts::TAU),
+            rng.gen_range(0.0..std::f32::consts::TAU),
+        );
+
+        // Select one of 3 mesh variants randomly
+        let mesh_index = rng.gen_range(0..3);
+
+        commands.spawn((
+            Mesh3d(assets.debris_meshes[mesh_index].clone()),
+            MeshMaterial3d(assets.debris_material.clone()),
+            Transform::from_translation(position)
+                .with_rotation(initial_rotation)
+                .with_scale(Vec3::splat(size)),
+            Visibility::Visible,
+            NotShadowCaster,
+            NotShadowReceiver,
+            PartsPhysics {
+                velocity,
+                angular_velocity,
+                gravity: 9.8,   // Earth gravity (UE5: -980 cm/s²)
+                bounce_count: 0,
+                ground_y: position.y, // Ground level at spawn position
+            },
+            PartsScaleOverLife {
+                initial_size: size,
+                lifetime: 0.0,
+                max_lifetime: lifetime,
+            },
+            GroundExplosionChild,
+            Name::new(format!("GE_Parts_{}", i)),
+        ));
+    }
+}
+
 // ===== ANIMATION SYSTEMS =====
 
 /// Update flipbook sprite animations and lifetime
@@ -2155,6 +2280,88 @@ pub fn update_spark_l_physics(
     }
 }
 
+/// Update parts debris physics - gravity, rotation, and ground collision with bounce
+/// UE5 parts.md: gravity -980, 1 bounce with friction 0.25, rotational drag
+pub fn update_parts_physics(
+    mut commands: Commands,
+    mut query: Query<(Entity, &mut Transform, &mut PartsPhysics, &PartsScaleOverLife), With<GroundExplosionChild>>,
+    time: Res<Time>,
+) {
+    let dt = time.delta_secs();
+
+    for (entity, mut transform, mut physics, scale_life) in query.iter_mut() {
+        // Check if particle should despawn
+        if scale_life.lifetime >= scale_life.max_lifetime {
+            commands.entity(entity).despawn();
+            continue;
+        }
+
+        // Apply gravity
+        physics.velocity.y -= physics.gravity * dt;
+
+        // Update position
+        transform.translation += physics.velocity * dt;
+
+        // Apply rotation (tumbling)
+        let rotation_delta = Quat::from_euler(
+            EulerRot::XYZ,
+            physics.angular_velocity.x * dt,
+            physics.angular_velocity.y * dt,
+            physics.angular_velocity.z * dt,
+        );
+        transform.rotation = rotation_delta * transform.rotation;
+
+        // Apply rotational drag (slow down spinning over time)
+        physics.angular_velocity *= 0.99;
+
+        // Ground collision
+        if transform.translation.y < physics.ground_y && physics.bounce_count < 1 {
+            // Bounce off ground
+            transform.translation.y = physics.ground_y;
+            physics.velocity.y = -physics.velocity.y * 0.25;  // UE5: friction 0.25
+            physics.velocity.x *= 0.5;  // Horizontal friction
+            physics.velocity.z *= 0.5;
+            physics.bounce_count += 1;
+
+            // Add some spin on bounce
+            physics.angular_velocity *= 0.5;
+        }
+    }
+}
+
+/// Update parts scale over lifetime - holds at 1.0 until 90%, then shrinks to 0
+/// UE5 parts.md: Scale curve 0→1→1→0 (grow, hold, shrink)
+pub fn update_parts_scale(
+    mut query: Query<(&mut Transform, &mut PartsScaleOverLife), With<GroundExplosionChild>>,
+    time: Res<Time>,
+) {
+    let dt = time.delta_secs();
+
+    for (mut transform, mut scale_life) in query.iter_mut() {
+        scale_life.lifetime += dt;
+
+        let t = (scale_life.lifetime / scale_life.max_lifetime).clamp(0.0, 1.0);
+
+        // UE5 scale curve:
+        // t=0.0→0.1: quick grow from 0→1
+        // t=0.1→0.9: hold at 1.0
+        // t=0.9→1.0: fast shrink from 1→0
+        let scale_factor = if t < 0.1 {
+            // Quick grow-in (0→1 in first 10%)
+            t / 0.1
+        } else if t < 0.9 {
+            // Hold at 1.0
+            1.0
+        } else {
+            // Fast shrink (1→0 in last 10%)
+            1.0 - (t - 0.9) / 0.1
+        };
+
+        let size = scale_life.initial_size * scale_factor;
+        transform.scale = Vec3::splat(size);
+    }
+}
+
 /// Update additive material alpha for sparks and glow effects
 /// Note: This is the generic handler for additive sprites without specific color components
 pub fn animate_additive_sprites(
@@ -2251,6 +2458,7 @@ pub fn ground_explosion_debug_menu_system(
             info!("   F8: Impact Flash (additive)");
             info!("   F9: Dirt Debris");
             info!("   F10: FULL EXPLOSION (all emitters)");
+            info!("   F11: Parts Debris (3D mesh)");
             info!("   P: Close menu");
         } else {
             info!("🔧 Ground Explosion Debug Menu CLOSED");
@@ -2305,6 +2513,8 @@ pub fn ground_explosion_debug_menu_system(
         Some((EmitterType::Impact, "Impact Flash"))
     } else if keyboard_input.just_pressed(KeyCode::F9) {
         Some((EmitterType::Dirt, "Dirt Debris"))
+    } else if keyboard_input.just_pressed(KeyCode::F11) {
+        Some((EmitterType::Parts, "Parts Debris"))
     } else {
         None
     };

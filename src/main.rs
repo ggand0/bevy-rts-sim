@@ -194,6 +194,9 @@ fn main() {
             ground_explosion::update_spark_color,
             ground_explosion::update_spark_l_color,
             ground_explosion::update_spark_l_physics,
+            // Parts debris (3D mesh) physics and scale
+            ground_explosion::update_parts_physics,
+            ground_explosion::update_parts_scale,
             ground_explosion::animate_additive_sprites,
             ground_explosion::update_impact_lights,
             ground_explosion::cleanup_ground_explosions,
