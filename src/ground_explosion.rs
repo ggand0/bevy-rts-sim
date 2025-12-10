@@ -111,6 +111,15 @@ pub struct SmokePhysics {
     pub drag: f32,
 }
 
+/// Dirt particle physics - velocity with gravity and drag (no acceleration)
+/// UE5: GravityForce -980 cm/s², Drag 2.0
+#[derive(Component)]
+pub struct DirtPhysics {
+    pub velocity: Vec3,
+    pub gravity: f32,
+    pub drag: f32,
+}
+
 /// Smoke scale-over-life component - grows 2-3x using ease-out curve
 #[derive(Component)]
 pub struct SmokeScaleOverLife {
@@ -125,6 +134,17 @@ pub struct SmokeScaleOverLife {
 #[derive(Component)]
 pub struct FireballScaleOverLife {
     pub initial_size: f32,
+}
+
+/// Dirt scale-over-life component - UE5 curves from dirt.md:
+/// - Scale: Linear shrink 100→0 over lifetime
+/// - Size XY: X stretches (1→2), Y compresses (1→0.5) - "flattening" effect
+/// - Alpha: Fast fade-in (0→2.0 in first 10%), slow fade-out (2.0→0 in remaining 90%)
+#[derive(Component)]
+pub struct DirtScaleOverLife {
+    pub initial_size: f32,
+    pub base_scale_x: f32,  // Random initial X scale
+    pub base_scale_y: f32,  // Random initial Y scale
 }
 
 /// Smoke color-over-life - color darkens and alpha fades over lifetime
@@ -1034,7 +1054,9 @@ pub fn spawn_impact_flash(
     ));
 }
 
-/// Dirt debris - billboard dirt chunks, velocity aligned (rotated to face travel direction)
+/// Dirt debris - billboard dirt chunks (Unaligned), camera-facing with gravity
+/// UE5: 35 particles, 0.1s spawn delay, velocity box XY:±500 Z:1000-1500
+/// Drag: 2.0, Gravity: -980, Size: 50-100, Lifetime: 1-4s, Sprite rotation 0-360°
 pub fn spawn_dirt_debris(
     commands: &mut Commands,
     assets: &GroundExplosionAssets,
@@ -1043,32 +1065,49 @@ pub fn spawn_dirt_debris(
     scale: f32,
     rng: &mut impl Rng,
 ) {
-    let count = 8;
-    let lifetime = 1.0;
+    // UE5: 35 fixed count
+    let count = 35;
 
     for i in 0..count {
-        let size = rng.gen_range(0.45..1.2) * scale;  // 1.5x size
+        // UE5: Size range 50-100 units -> 0.5-1.0m scaled
+        let size = rng.gen_range(0.5..1.0) * scale;
 
-        let theta = rng.gen_range(0.0..std::f32::consts::TAU);
-        let speed = rng.gen_range(4.0..8.0) * scale;
+        // UE5: RandomRangeVector2D for non-uniform size
+        // Min: (30, 200), Max: (100, 500) -> normalized to multipliers
+        let base_scale_x = rng.gen_range(0.3..1.0);  // Width variation
+        let base_scale_y = rng.gen_range(0.4..1.0);  // Height variation
 
+        // UE5: UniformRangedVector - box velocity
+        // X/Y: ±500 (±5m/s scaled), Z: 1000-1500 (10-15m/s scaled)
         let velocity = Vec3::new(
-            theta.cos() * speed,
-            rng.gen_range(5.0..10.0) * scale,
-            theta.sin() * speed,
+            rng.gen_range(-5.0..5.0) * scale,
+            rng.gen_range(10.0..15.0) * scale,  // Strong upward launch
+            rng.gen_range(-5.0..5.0) * scale,
         );
 
+        // UE5: RandomRangeFloat 1.0-4.0s lifetime
+        let lifetime = rng.gen_range(1.0..4.0);
+
+        // UE5: Sprite Rotation Angle 0-360°
+        let rotation_angle = rng.gen_range(0.0..std::f32::consts::TAU);
+
+        // UE5 ColorCurve: Dark brown (0.082, 0.063, 0.050) at t=0
+        // Alpha starts at 0 (handled by alpha curve in update system)
         let material = materials.add(FlipbookMaterial {
             frame_data: Vec4::new(0.0, 0.0, 1.0, 1.0),
-            color_data: Vec4::new(0.6, 0.5, 0.4, 1.0), // Brown dirt
+            color_data: Vec4::new(0.082, 0.063, 0.050, 0.0), // Dark brown, alpha=0 (fade-in)
             sprite_texture: assets.dirt_texture.clone(),
         });
 
+        // UE5: Spawn delay 0.1s
+        let spawn_delay = 0.1;
+
         commands.spawn((
-            Mesh3d(assets.bottom_pivot_quad.clone()),
+            Mesh3d(assets.centered_quad.clone()),  // Billboard, not bottom-pivot
             MeshMaterial3d(material),
-            Transform::from_translation(position).with_scale(Vec3::splat(size)),
-            Visibility::Visible,
+            Transform::from_translation(position)
+                .with_scale(Vec3::new(size * base_scale_x, size * base_scale_y, size)),
+            Visibility::Hidden,  // Start hidden until spawn delay passes
             NotShadowCaster,
             NotShadowReceiver,
             FlipbookSprite {
@@ -1076,14 +1115,26 @@ pub fn spawn_dirt_debris(
                 rows: 1,
                 total_frames: 1,
                 frame_duration: lifetime,
-                elapsed: 0.0,
+                elapsed: -spawn_delay,  // Negative elapsed = spawn delay
                 lifetime: 0.0,
                 max_lifetime: lifetime,
                 base_alpha: 1.0,
-                loop_animation: true,  // Single frame, doesn't matter
+                loop_animation: true,
             },
-            VelocityAligned { velocity, gravity: 12.0 },
-            BottomPivot,
+            // UE5: Billboard (Unaligned) with gravity and drag
+            DirtPhysics {
+                velocity,
+                gravity: 9.8,  // Earth gravity (scaled from 980 cm/s²)
+                drag: 2.0,
+            },
+            // UE5 curves: shrink, XY flattening, alpha fade-in/out
+            DirtScaleOverLife {
+                initial_size: size,
+                base_scale_x,
+                base_scale_y,
+            },
+            SpriteRotation { angle: rotation_angle },
+            CameraFacing,
             GroundExplosionChild,
             Name::new(format!("GE_Dirt_{}", i)),
         ));
@@ -1371,6 +1422,34 @@ pub fn update_smoke_physics(
     }
 }
 
+/// Update dirt particle physics - velocity with gravity and drag
+/// UE5: GravityForce -980 cm/s², Drag 2.0
+pub fn update_dirt_physics(
+    mut query: Query<(&mut Transform, &mut DirtPhysics, Option<&FlipbookSprite>), With<GroundExplosionChild>>,
+    time: Res<Time>,
+) {
+    let dt = time.delta_secs();
+
+    for (mut transform, mut physics, flipbook) in query.iter_mut() {
+        // Skip particles still in spawn delay
+        if let Some(fb) = flipbook {
+            if fb.elapsed < 0.0 {
+                continue;
+            }
+        }
+
+        // Apply gravity
+        physics.velocity.y -= physics.gravity * dt;
+
+        // Apply drag (exponential decay)
+        let drag_factor = (-physics.drag * dt).exp();
+        physics.velocity *= drag_factor;
+
+        // Update position
+        transform.translation += physics.velocity * dt;
+    }
+}
+
 /// Update smoke scale over lifetime - grows 2-3x using ease-out curve
 /// UE5: scale(t) = initial_size * (1.0 + 2.0 * ease_out(t))
 /// where ease_out(t) = 1 - (1-t)²
@@ -1407,6 +1486,74 @@ pub fn update_fireball_scale(
 
         let new_size = scale_over_life.initial_size * scale_factor;
         transform.scale = Vec3::splat(new_size);
+    }
+}
+
+/// Update dirt scale over lifetime - UE5 curves from dirt.md:
+/// - Scale: Linear shrink 100→0 over lifetime
+/// - Size XY: X stretches (1→2), Y compresses (1→0.5) - "flattening" effect
+pub fn update_dirt_scale(
+    mut query: Query<(&mut Transform, &FlipbookSprite, &DirtScaleOverLife), With<GroundExplosionChild>>,
+) {
+    for (mut transform, sprite, scale_data) in query.iter_mut() {
+        // Skip particles in spawn delay
+        if sprite.elapsed < 0.0 {
+            continue;
+        }
+
+        let t = (sprite.lifetime / sprite.max_lifetime).clamp(0.0, 1.0);
+
+        // UE5: Linear shrink from 100% to 0%
+        let shrink_factor = 1.0 - t;
+
+        // UE5 Size XY curve: X stretches (1→2), Y compresses (1→0.5)
+        let x_stretch = 1.0 + t;          // 1.0 → 2.0
+        let y_compress = 1.0 - t * 0.5;   // 1.0 → 0.5
+
+        // Apply all factors
+        let final_size = scale_data.initial_size * shrink_factor;
+        transform.scale = Vec3::new(
+            final_size * scale_data.base_scale_x * x_stretch,
+            final_size * scale_data.base_scale_y * y_compress,
+            final_size,
+        );
+    }
+}
+
+/// Update dirt color/alpha over lifetime - UE5 curves from dirt.md:
+/// - Alpha: Fast fade-in (0→2.0 in first 10%), slow cubic fade-out (2.0→0 in remaining 90%)
+/// - Color: Very subtle shift from dark brown (0.082, 0.063, 0.050) to slightly lighter (0.109, 0.084, 0.066)
+pub fn update_dirt_alpha(
+    query: Query<(&FlipbookSprite, &MeshMaterial3d<FlipbookMaterial>), (With<GroundExplosionChild>, With<DirtScaleOverLife>)>,
+    mut materials: ResMut<Assets<FlipbookMaterial>>,
+) {
+    for (sprite, material_handle) in query.iter() {
+        // Skip particles in spawn delay
+        if sprite.elapsed < 0.0 {
+            continue;
+        }
+
+        let t = (sprite.lifetime / sprite.max_lifetime).clamp(0.0, 1.0);
+
+        // UE5 Alpha curve: Fast fade-in (0→2.0 in first 10%), slow cubic fade-out (2.0→0 in remaining 90%)
+        let alpha = if t < 0.1 {
+            // Fast fade-in: 0 → 2.0 (clamped to 1.0 for rendering, but stored as multiplier)
+            (t / 0.1 * 2.0).min(1.0)
+        } else {
+            // Slow cubic fade-out: peak → 0
+            let local_t = (t - 0.1) / 0.9;
+            (1.0 - local_t * local_t).max(0.0)
+        };
+
+        // UE5 Color curve: Very subtle brown shift
+        // t=0.0: (0.082, 0.063, 0.050) → t=1.0: (0.109, 0.084, 0.066)
+        let r = 0.082 + t * (0.109 - 0.082);
+        let g = 0.063 + t * (0.084 - 0.063);
+        let b = 0.050 + t * (0.066 - 0.050);
+
+        if let Some(material) = materials.get_mut(material_handle.id()) {
+            material.color_data = Vec4::new(r, g, b, alpha);
+        }
     }
 }
 
