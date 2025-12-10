@@ -763,77 +763,84 @@ pub fn spawn_wisps(
     scale: f32,
     rng: &mut impl Rng,
 ) {
-    // UE5: 3 fixed count
-    let count = 3;
+    // Spawn 2 sets of 3 wisps each, second set with delay
+    // Each set scaled 2× larger for better visibility
+    let wisp_scale = scale * 2.0;
+    let count_per_set = 3;
 
-    for i in 0..count {
-        // UE5: RandomRangeFloat 1.0-3.0s lifetime with 2-3x multiplier
-        let lifetime = rng.gen_range(1.0..3.0) * rng.gen_range(2.0..3.0);
-        let frame_duration = lifetime / 64.0;  // Play all 64 frames once
+    for set in 0..2 {
+        // Second set spawns with 0.1s delay
+        let spawn_delay = if set == 0 { 0.0 } else { -0.1 };
 
-        // UE5 spec: 80-180 units (0.8-1.8m), scaled up 3x for visibility
-        // With 5× scale curve = final 12-27m (better match with fireballs)
-        let size = rng.gen_range(2.4..5.4) * scale;
+        for i in 0..count_per_set {
+            // UE5: RandomRangeFloat 1.0-3.0s lifetime with 2-3x multiplier
+            let lifetime = rng.gen_range(1.0..3.0) * rng.gen_range(2.0..3.0);
+            let frame_duration = lifetime / 64.0;  // Play all 64 frames once
 
-        // UE5: Two-phase velocity creating arc motion
-        // Initial velocity: X/Y ±50, Z 500-1200 (upward launch)
-        let initial_velocity = Vec3::new(
-            rng.gen_range(-0.5..0.5) * scale,  // ±50 cm -> ±0.5m
-            rng.gen_range(5.0..12.0) * scale,  // 500-1200 cm -> 5-12m/s upward
-            rng.gen_range(-0.5..0.5) * scale,
-        );
+            // UE5 spec: 80-180 units (0.8-1.8m), scaled up for visibility
+            // With 5× scale curve and 2× wisp_scale = much larger final size
+            let size = rng.gen_range(2.4..5.4) * wisp_scale;
 
-        // Secondary velocity: X/Y ±120, Z -900 to -1000 (falling back)
-        let secondary_velocity = Vec3::new(
-            rng.gen_range(-1.2..1.2) * scale,  // ±120 cm -> ±1.2m
-            rng.gen_range(-10.0..-9.0) * scale,  // -900 to -1000 cm -> -9 to -10 m/s
-            rng.gen_range(-1.2..1.2) * scale,
-        );
+            // UE5: Two-phase velocity creating arc motion
+            // Initial velocity: X/Y ±50, Z 500-1200 (upward launch)
+            let initial_velocity = Vec3::new(
+                rng.gen_range(-0.5..0.5) * wisp_scale,  // ±50 cm -> ±0.5m
+                rng.gen_range(5.0..12.0) * wisp_scale,  // 500-1200 cm -> 5-12m/s upward
+                rng.gen_range(-0.5..0.5) * wisp_scale,
+            );
 
-        // Combined effective velocity (both apply simultaneously in UE5)
-        let velocity = initial_velocity + secondary_velocity;
+            // Secondary velocity: X/Y ±120, Z -900 to -1000 (falling back)
+            let secondary_velocity = Vec3::new(
+                rng.gen_range(-1.2..1.2) * wisp_scale,  // ±120 cm -> ±1.2m
+                rng.gen_range(-10.0..-9.0) * wisp_scale,  // -900 to -1000 cm -> -9 to -10 m/s
+                rng.gen_range(-1.2..1.2) * wisp_scale,
+            );
 
-        // UE5: Sprite Rotation Angle 0-360°
-        let rotation_angle = rng.gen_range(0.0..std::f32::consts::TAU);
+            // Combined effective velocity (both apply simultaneously in UE5)
+            let velocity = initial_velocity + secondary_velocity;
 
-        // UE5: Medium grey wisp that blends with main fireball emitters
-        // Alpha starts at 3.0 (300% brightness) as per UE5 spec
-        let material = materials.add(FlipbookMaterial {
-            frame_data: Vec4::new(0.0, 0.0, 8.0, 8.0),
-            color_data: Vec4::new(0.4, 0.4, 0.4, 3.0), // Medium grey, 3× brightness
-            sprite_texture: assets.wisp_texture.clone(),
-        });
+            // UE5: Sprite Rotation Angle 0-360°
+            let rotation_angle = rng.gen_range(0.0..std::f32::consts::TAU);
 
-        commands.spawn((
-            Mesh3d(assets.centered_quad.clone()),
-            MeshMaterial3d(material),
-            // Start at 0 scale (grows from 0 to 5×)
-            Transform::from_translation(position + Vec3::Y * 0.5 * scale).with_scale(Vec3::ZERO),
-            Visibility::Visible,
-            NotShadowCaster,
-            NotShadowReceiver,
-            FlipbookSprite {
-                columns: 8,
-                rows: 8,
-                total_frames: 64,
-                frame_duration,
-                elapsed: 0.0,
-                lifetime: 0.0,
-                max_lifetime: lifetime,
-                base_alpha: 1.0,
-                loop_animation: false,  // Play once
-            },
-            // UE5: Billboard (Unaligned) with combined velocity
-            WispPhysics {
-                velocity,
-                secondary_velocity: Vec3::ZERO,  // Already combined above
-            },
-            WispScaleOverLife { initial_size: size },
-            SpriteRotation { angle: rotation_angle },
-            CameraFacing,
-            GroundExplosionChild,
-            Name::new(format!("GE_Wisp_{}", i)),
-        ));
+            // UE5: Wisp smoke - using same dark grey as dust for consistency
+            // Alpha starts at 3.0 (300% brightness) as per UE5 spec
+            let material = materials.add(FlipbookMaterial {
+                frame_data: Vec4::new(0.0, 0.0, 8.0, 8.0),
+                color_data: Vec4::new(0.15, 0.12, 0.10, 3.0), // Dark grey-black (same as dust), 3× brightness
+                sprite_texture: assets.wisp_texture.clone(),
+            });
+
+            commands.spawn((
+                Mesh3d(assets.centered_quad.clone()),
+                MeshMaterial3d(material),
+                // Start at 0 scale (grows from 0 to 5×)
+                Transform::from_translation(position + Vec3::Y * 0.5 * wisp_scale).with_scale(Vec3::ZERO),
+                Visibility::Visible,
+                NotShadowCaster,
+                NotShadowReceiver,
+                FlipbookSprite {
+                    columns: 8,
+                    rows: 8,
+                    total_frames: 64,
+                    frame_duration,
+                    elapsed: spawn_delay,  // Negative = spawn delay
+                    lifetime: 0.0,
+                    max_lifetime: lifetime,
+                    base_alpha: 1.0,
+                    loop_animation: false,  // Play once
+                },
+                // UE5: Billboard (Unaligned) with combined velocity
+                WispPhysics {
+                    velocity,
+                    secondary_velocity: Vec3::ZERO,  // Already combined above
+                },
+                WispScaleOverLife { initial_size: size },
+                SpriteRotation { angle: rotation_angle },
+                CameraFacing,
+                GroundExplosionChild,
+                Name::new(format!("GE_Wisp_{}_{}", set, i)),
+            ));
+        }
     }
 }
 
