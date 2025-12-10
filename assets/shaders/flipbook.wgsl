@@ -31,11 +31,16 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
 
     // These textures store smoke/explosion in alpha channel
     // RGB contains the color, A contains the opacity mask
-    // Tint the texture color with our color_data
-    let tinted_color = sprite_sample.rgb * color_data.rgb;
+    //
+    // UE5 uses alpha values > 1.0 as brightness multipliers (e.g., 3.0 = 3× brighter)
+    // This is how dust/wisp emitters achieve their initial bright appearance
+    let alpha_multiplier = color_data.a;
 
-    // Use texture alpha multiplied by our fade alpha
-    let final_alpha = sprite_sample.a * color_data.a;
+    // Tint the texture color with our color_data, then apply alpha as brightness boost
+    let tinted_color = sprite_sample.rgb * color_data.rgb * alpha_multiplier;
+
+    // Final alpha: texture alpha × clamped multiplier (opacity max at 1.0)
+    let final_alpha = sprite_sample.a * min(alpha_multiplier, 1.0);
 
     return vec4<f32>(tinted_color, final_alpha);
 }

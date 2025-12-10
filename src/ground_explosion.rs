@@ -796,11 +796,11 @@ pub fn spawn_wisps(
         // UE5: Sprite Rotation Angle 0-360°
         let rotation_angle = rng.gen_range(0.0..std::f32::consts::TAU);
 
-        // UE5 ColorCurve: Constant dark brown (0.105, 0.080, 0.056)
-        // Alpha handled by update system (starts at 3.0)
+        // UE5: Medium grey wisp that blends with main fireball emitters
+        // Alpha starts at 3.0 (300% brightness) as per UE5 spec
         let material = materials.add(FlipbookMaterial {
             frame_data: Vec4::new(0.0, 0.0, 8.0, 8.0),
-            color_data: Vec4::new(0.105, 0.080, 0.056, 1.0), // Dark brown
+            color_data: Vec4::new(0.4, 0.4, 0.4, 3.0), // Medium grey, 3× brightness
             sprite_texture: assets.wisp_texture.clone(),
         });
 
@@ -882,11 +882,11 @@ pub fn spawn_dust_ring(
             angle.sin() * 0.5 * scale,
         );
 
-        // UE5 ColorCurve: Constant dark brown (0.147, 0.114, 0.070)
-        // Alpha starts at 3.0 (handled by update system)
+        // UE5: Dark grey/black dust that blends with main fireball emitters
+        // Alpha starts at 3.0 (300% brightness) as per UE5 spec
         let material = materials.add(FlipbookMaterial {
             frame_data: Vec4::new(0.0, 0.0, 4.0, 1.0), // col, row, columns (4), rows (1)
-            color_data: Vec4::new(0.147, 0.114, 0.070, 1.0), // Dark brown
+            color_data: Vec4::new(0.15, 0.12, 0.10, 3.0), // Dark grey-black, 3× brightness
             sprite_texture: assets.dust_texture.clone(),
         });
 
@@ -1819,8 +1819,8 @@ pub fn update_dust_scale(
     }
 }
 
-/// Update dust alpha over lifetime - UE5 curves from dust.md:
-/// - Alpha: 3.0→0 linear fade
+/// Update dust alpha over lifetime - UE5 accurate: 3.0→0 linear fade
+/// UE5 uses alpha > 1.0 as brightness multiplier, shader now handles this
 pub fn update_dust_alpha(
     query: Query<(&FlipbookSprite, &MeshMaterial3d<FlipbookMaterial>), (With<GroundExplosionChild>, With<DustScaleOverLife>)>,
     mut materials: ResMut<Assets<FlipbookMaterial>>,
@@ -1828,12 +1828,11 @@ pub fn update_dust_alpha(
     for (sprite, material_handle) in query.iter() {
         let t = (sprite.lifetime / sprite.max_lifetime).clamp(0.0, 1.0);
 
-        // UE5: Alpha starts at 3.0, fades linearly to 0
-        // Clamp to 1.0 for rendering
-        let alpha = ((1.0 - t) * 3.0).min(1.0);
+        // UE5: Alpha starts at 3.0 (300% brightness!), fades linearly to 0
+        // This is how dust appears bright initially then fades
+        let alpha = 3.0 * (1.0 - t);
 
         if let Some(material) = materials.get_mut(material_handle.id()) {
-            // Color stays constant dark brown (0.147, 0.114, 0.070)
             material.color_data.w = alpha;
         }
     }
@@ -1876,8 +1875,8 @@ pub fn update_wisp_scale(
     }
 }
 
-/// Update wisp alpha over lifetime - UE5 curves from wisp.md:
-/// - Alpha: 3.0→1.0 in first 10%, then 1.0→0 linear fade
+/// Update wisp alpha over lifetime - UE5 accurate: 3.0→1.0 fast, then 1.0→0 linear
+/// UE5 uses alpha > 1.0 as brightness multiplier, shader now handles this
 pub fn update_wisp_alpha(
     query: Query<(&FlipbookSprite, &MeshMaterial3d<FlipbookMaterial>), (With<GroundExplosionChild>, With<WispScaleOverLife>)>,
     mut materials: ResMut<Assets<FlipbookMaterial>>,
@@ -1885,19 +1884,18 @@ pub fn update_wisp_alpha(
     for (sprite, material_handle) in query.iter() {
         let t = (sprite.lifetime / sprite.max_lifetime).clamp(0.0, 1.0);
 
-        // UE5: Alpha drops from 3.0→1.0 in first 10%, then linear fade 1.0→0
+        // UE5: Alpha starts at 3.0 (300% brightness!), drops to 1.0 in first 10%
+        // Then fades linearly 1.0→0 over remaining 90%
         let alpha = if t < 0.1 {
-            // Fast drop: 3.0 → 1.0 (clamp to 1.0 for rendering)
-            let local_t = t / 0.1;
-            (3.0 - local_t * 2.0).min(1.0)
+            // Fast drop: 3.0 → 1.0 in first 10%
+            3.0 - (t / 0.1) * 2.0
         } else {
-            // Linear fade: 1.0 → 0.0
+            // Linear fade: 1.0 → 0.0 over remaining 90%
             let local_t = (t - 0.1) / 0.9;
             1.0 - local_t
         };
 
         if let Some(material) = materials.get_mut(material_handle.id()) {
-            // Color stays constant dark brown (0.105, 0.080, 0.056)
             material.color_data.w = alpha.max(0.0);
         }
     }
@@ -1980,6 +1978,8 @@ pub fn ground_explosion_debug_menu_system(
     mut flipbook_materials: ResMut<Assets<FlipbookMaterial>>,
     mut additive_materials: ResMut<Assets<AdditiveMaterial>>,
     camera_query: Query<&GlobalTransform, With<Camera>>,
+    terrain_config: Res<crate::terrain::TerrainConfig>,
+    heightmap: Res<crate::terrain::TerrainHeightmap>,
 ) {
     // P key toggles the debug menu
     if keyboard_input.just_pressed(KeyCode::KeyP) {
@@ -2019,7 +2019,17 @@ pub fn ground_explosion_debug_menu_system(
         return;
     };
 
-    let position = Vec3::new(0.0, 0.0, 0.0);
+    // For FirebaseDelta (map3), spawn at terrain height at offset position around the tower
+    // For other maps, keep spawning at origin
+    let position = if terrain_config.current_map == crate::terrain::MapPreset::FirebaseDelta {
+        // Offset from center (tower is at origin) - spawn ~30-50m away
+        let offset_x = 40.0;
+        let offset_z = 30.0;
+        let terrain_y = heightmap.sample_height(offset_x, offset_z);
+        Vec3::new(offset_x, terrain_y, offset_z)
+    } else {
+        Vec3::new(0.0, 0.0, 0.0)
+    };
     let scale = 1.0;
 
     let emitter = if keyboard_input.just_pressed(KeyCode::F1) {
@@ -2058,7 +2068,7 @@ pub fn ground_explosion_debug_menu_system(
             scale,
             camera_transform,
         );
-        info!("🌋 Spawned: {} at (0, 0, 0)", name);
+        info!("🌋 Spawned: {} at ({:.1}, {:.1}, {:.1})", name, position.x, position.y, position.z);
     }
 
     // F10 spawns the combined full explosion effect
@@ -2072,6 +2082,6 @@ pub fn ground_explosion_debug_menu_system(
             1.0,  // Default scale
             camera_transform,
         );
-        info!("🌋 Spawned: FULL GROUND EXPLOSION at (0, 0, 0)");
+        info!("🌋 Spawned: FULL GROUND EXPLOSION at ({:.1}, {:.1}, {:.1})", position.x, position.y, position.z);
     }
 }
