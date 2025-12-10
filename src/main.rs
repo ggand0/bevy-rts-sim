@@ -181,6 +181,14 @@ fn main() {
             ground_explosion::update_dirt_alpha,
             ground_explosion::update_dirt001_scale,
             ground_explosion::update_dirt001_alpha,
+        ))
+        .add_systems(Update, (
+            // Ground explosion animations continued
+            ground_explosion::update_dust_scale,
+            ground_explosion::update_dust_alpha,
+            ground_explosion::update_wisp_physics,
+            ground_explosion::update_wisp_scale,
+            ground_explosion::update_wisp_alpha,
             ground_explosion::update_smoke_color,
             ground_explosion::animate_additive_sprites,
             ground_explosion::update_impact_lights,

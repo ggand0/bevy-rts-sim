@@ -158,6 +158,35 @@ pub struct Dirt001ScaleOverLife {
     pub base_scale_y: f32,
 }
 
+/// Dust scale-over-life component - UE5 curves from dust.md:
+/// - Scale XY: Linear growth from 0 to (3×, 2×) - X grows faster than Y
+/// - Alpha: 3.0→0 linear fade (starts very bright)
+/// - Color: Constant dark brown (0.147, 0.114, 0.070)
+#[derive(Component)]
+pub struct DustScaleOverLife {
+    pub initial_size: f32,
+    pub base_scale_x: f32,
+    pub base_scale_y: f32,
+}
+
+/// Wisp scale-over-life component - UE5 curves from wisp.md:
+/// - Scale: 0→5× cubic ease-in growth
+/// - Alpha: 3.0→1.0 in 10%, then 1.0→0 linear fade
+/// - Color: Constant dark brown (0.105, 0.080, 0.056)
+/// - Has combined velocity (up then down arc motion)
+#[derive(Component)]
+pub struct WispScaleOverLife {
+    pub initial_size: f32,
+}
+
+/// Wisp physics - two-phase velocity creating arc motion
+/// Initial upward launch + secondary falling back
+#[derive(Component)]
+pub struct WispPhysics {
+    pub velocity: Vec3,
+    pub secondary_velocity: Vec3,
+}
+
 /// Smoke color-over-life - color darkens and alpha fades over lifetime
 /// Based on typical UE5 Niagara ColorFromCurve:
 /// t=0.0: RGB(0.4), A=0.6 | t=0.3: RGB(0.3), A=0.5 | t=0.7: RGB(0.25), A=0.3 | t=1.0: RGB(0.2), A=0.0
@@ -722,8 +751,10 @@ pub fn spawn_smoke_cloud(
     }
 }
 
-/// Wisp - single large billboard that plays 64-frame animation once then fades
-/// UE5: Single fading smoke blob, size 80-180 cm, plays once
+/// Wisp smoke - 8x8 flipbook, camera-facing billboards with arc motion
+/// UE5: 3 particles, two-phase velocity (up then down), 1-3s lifetime
+/// Scale: 0→5× cubic ease-in, Alpha: 3.0→1.0 in 10% then linear fade
+/// Color: Constant dark brown (0.105, 0.080, 0.056)
 pub fn spawn_wisps(
     commands: &mut Commands,
     assets: &GroundExplosionAssets,
@@ -732,26 +763,51 @@ pub fn spawn_wisps(
     scale: f32,
     rng: &mut impl Rng,
 ) {
-    // Single billboard wisp
-    let count = 1;
-    // Animation plays once over ~1 second then fades
-    let lifetime = 1.0;
-    let frame_duration = lifetime / 64.0;  // Play all 64 frames once
+    // UE5: 3 fixed count
+    let count = 3;
 
     for i in 0..count {
-        // UE5: RandomRangeFloat002 80-180 for size - make it bigger
-        let size = rng.gen_range(6.0..10.0) * scale;  // Larger billboard
+        // UE5: RandomRangeFloat 1.0-3.0s lifetime with 2-3x multiplier
+        let lifetime = rng.gen_range(1.0..3.0) * rng.gen_range(2.0..3.0);
+        let frame_duration = lifetime / 64.0;  // Play all 64 frames once
 
+        // UE5: RandomRangeFloat002 80-180 units (0.8-1.8m)
+        let size = rng.gen_range(0.8..1.8) * scale;
+
+        // UE5: Two-phase velocity creating arc motion
+        // Initial velocity: X/Y ±50, Z 500-1200 (upward launch)
+        let initial_velocity = Vec3::new(
+            rng.gen_range(-0.5..0.5) * scale,  // ±50 cm -> ±0.5m
+            rng.gen_range(5.0..12.0) * scale,  // 500-1200 cm -> 5-12m/s upward
+            rng.gen_range(-0.5..0.5) * scale,
+        );
+
+        // Secondary velocity: X/Y ±120, Z -900 to -1000 (falling back)
+        let secondary_velocity = Vec3::new(
+            rng.gen_range(-1.2..1.2) * scale,  // ±120 cm -> ±1.2m
+            rng.gen_range(-10.0..-9.0) * scale,  // -900 to -1000 cm -> -9 to -10 m/s
+            rng.gen_range(-1.2..1.2) * scale,
+        );
+
+        // Combined effective velocity (both apply simultaneously in UE5)
+        let velocity = initial_velocity + secondary_velocity;
+
+        // UE5: Sprite Rotation Angle 0-360°
+        let rotation_angle = rng.gen_range(0.0..std::f32::consts::TAU);
+
+        // UE5 ColorCurve: Constant dark brown (0.105, 0.080, 0.056)
+        // Alpha handled by update system (starts at 3.0)
         let material = materials.add(FlipbookMaterial {
             frame_data: Vec4::new(0.0, 0.0, 8.0, 8.0),
-            color_data: Vec4::new(0.85, 0.85, 0.85, 0.8),  // Light gray, slightly transparent
+            color_data: Vec4::new(0.105, 0.080, 0.056, 1.0), // Dark brown
             sprite_texture: assets.wisp_texture.clone(),
         });
 
         commands.spawn((
             Mesh3d(assets.centered_quad.clone()),
             MeshMaterial3d(material),
-            Transform::from_translation(position + Vec3::Y * 1.0 * scale).with_scale(Vec3::splat(size)),
+            // Start at 0 scale (grows from 0 to 5×)
+            Transform::from_translation(position + Vec3::Y * 0.5 * scale).with_scale(Vec3::ZERO),
             Visibility::Visible,
             NotShadowCaster,
             NotShadowReceiver,
@@ -762,11 +818,17 @@ pub fn spawn_wisps(
                 frame_duration,
                 elapsed: 0.0,
                 lifetime: 0.0,
-                max_lifetime: lifetime,  // Play once then fade
-                base_alpha: 0.8,
+                max_lifetime: lifetime,
+                base_alpha: 1.0,
                 loop_animation: false,  // Play once
             },
-            // Stationary, camera-facing
+            // UE5: Billboard (Unaligned) with combined velocity
+            WispPhysics {
+                velocity,
+                secondary_velocity: Vec3::ZERO,  // Already combined above
+            },
+            WispScaleOverLife { initial_size: size },
+            SpriteRotation { angle: rotation_angle },
             CameraFacing,
             GroundExplosionChild,
             Name::new(format!("GE_Wisp_{}", i)),
@@ -777,7 +839,8 @@ pub fn spawn_wisps(
 /// Dust ring - 4x1 flipbook (4 frames), velocity aligned
 /// UE5: 2-3 particles, AddVelocityInCone 35° upward, speed 500-1000, size 300-500 cm
 /// Short lifetime (0.1-0.5s), animation plays once fast
-/// Billboards are almost vertical (velocity-aligned pointing up) - barely see the face
+/// UE5 curves: Scale XY growth (0→3×, 0→2×), Alpha 3.0→0 linear fade
+/// Color: Constant dark brown (0.147, 0.114, 0.070)
 pub fn spawn_dust_ring(
     commands: &mut Commands,
     assets: &GroundExplosionAssets,
@@ -788,24 +851,26 @@ pub fn spawn_dust_ring(
 ) {
     // UE5: UniformRangedInt 2-3 particles
     let count = rng.gen_range(2..=3);
-    // UE5: RandomRangeFloat 0.1-0.5 for lifetime - animation plays once fast
-    let lifetime = rng.gen_range(0.1..0.5);
-    let frame_duration = lifetime / 4.0;  // 4 frames over short lifetime
 
     for i in 0..count {
+        // UE5: RandomRangeFloat 0.1-0.5 for lifetime - very short
+        let lifetime = rng.gen_range(0.1..0.5);
+        let frame_duration = lifetime / 4.0;  // 4 frames over short lifetime
+
         let angle = rng.gen_range(0.0..std::f32::consts::TAU);
-        // UE5: Size 300-500 cm -> 3-5m
+
+        // UE5: Size 300-500 units (3-5m)
         let size = rng.gen_range(3.0..5.0) * scale;
 
         // UE5: AddVelocityInCone - 35° cone pointing up, speed 500-1000
-        // Almost vertical velocity so billboards are nearly edge-on to camera
+        // Cone axis (0,0,3) = strong upward bias
         let cone_angle = 35.0_f32.to_radians();
         let phi = rng.gen_range(0.0..cone_angle);  // 0-35° from vertical
-        let speed = rng.gen_range(5.0..10.0) * scale;  // 500-1000 cm/s
+        let speed = rng.gen_range(5.0..10.0) * scale;  // 500-1000 cm/s -> 5-10 m/s
 
         let velocity = Vec3::new(
             phi.sin() * angle.cos() * speed,
-            phi.cos() * speed,  // Mostly upward - makes billboard almost vertical
+            phi.cos() * speed,  // Mostly upward
             phi.sin() * angle.sin() * speed,
         );
 
@@ -815,16 +880,19 @@ pub fn spawn_dust_ring(
             angle.sin() * 0.5 * scale,
         );
 
+        // UE5 ColorCurve: Constant dark brown (0.147, 0.114, 0.070)
+        // Alpha starts at 3.0 (handled by update system)
         let material = materials.add(FlipbookMaterial {
             frame_data: Vec4::new(0.0, 0.0, 4.0, 1.0), // col, row, columns (4), rows (1)
-            color_data: Vec4::new(0.0, 0.0, 0.0, 1.0), // Black dust
+            color_data: Vec4::new(0.147, 0.114, 0.070, 1.0), // Dark brown
             sprite_texture: assets.dust_texture.clone(),
         });
 
         commands.spawn((
             Mesh3d(assets.bottom_pivot_quad.clone()),
             MeshMaterial3d(material),
-            Transform::from_translation(position + offset).with_scale(Vec3::splat(size)),
+            // Start at 0 scale (grows from 0)
+            Transform::from_translation(position + offset).with_scale(Vec3::ZERO),
             Visibility::Visible,
             NotShadowCaster,
             NotShadowReceiver,
@@ -836,10 +904,16 @@ pub fn spawn_dust_ring(
                 elapsed: 0.0,
                 lifetime: 0.0,
                 max_lifetime: lifetime,
-                base_alpha: 0.8,
+                base_alpha: 1.0,
                 loop_animation: false,  // Play once
             },
             VelocityAligned { velocity, gravity: 0.0 },  // No gravity - fast upward motion
+            // UE5: Scale grows from 0 - X faster than Y
+            DustScaleOverLife {
+                initial_size: size,
+                base_scale_x: 1.0,
+                base_scale_y: 1.0,
+            },
             BottomPivot,
             GroundExplosionChild,
             Name::new(format!("GE_Dust_{}", i)),
@@ -1716,6 +1790,113 @@ pub fn update_smoke_color(
             material.color_data.y = rgb;
             material.color_data.z = rgb;
             material.color_data.w = alpha;
+        }
+    }
+}
+
+/// Update dust scale over lifetime - UE5 curves from dust.md:
+/// - Scale XY: Linear growth from 0 to (3×, 2×) - X grows faster than Y
+/// - Alpha: 3.0→0 linear fade (starts very bright)
+/// - Color: Constant dark brown (0.147, 0.114, 0.070)
+pub fn update_dust_scale(
+    mut query: Query<(&mut Transform, &FlipbookSprite, &DustScaleOverLife), With<GroundExplosionChild>>,
+) {
+    for (mut transform, sprite, scale_data) in query.iter_mut() {
+        let t = (sprite.lifetime / sprite.max_lifetime).clamp(0.0, 1.0);
+
+        // UE5: Linear growth from 0 to final size
+        // X grows to 3×, Y grows to 2×
+        let x_scale = t * 3.0;
+        let y_scale = t * 2.0;
+
+        transform.scale = Vec3::new(
+            scale_data.initial_size * scale_data.base_scale_x * x_scale,
+            scale_data.initial_size * scale_data.base_scale_y * y_scale,
+            scale_data.initial_size,
+        );
+    }
+}
+
+/// Update dust alpha over lifetime - UE5 curves from dust.md:
+/// - Alpha: 3.0→0 linear fade
+pub fn update_dust_alpha(
+    query: Query<(&FlipbookSprite, &MeshMaterial3d<FlipbookMaterial>), (With<GroundExplosionChild>, With<DustScaleOverLife>)>,
+    mut materials: ResMut<Assets<FlipbookMaterial>>,
+) {
+    for (sprite, material_handle) in query.iter() {
+        let t = (sprite.lifetime / sprite.max_lifetime).clamp(0.0, 1.0);
+
+        // UE5: Alpha starts at 3.0, fades linearly to 0
+        // Clamp to 1.0 for rendering
+        let alpha = ((1.0 - t) * 3.0).min(1.0);
+
+        if let Some(material) = materials.get_mut(material_handle.id()) {
+            // Color stays constant dark brown (0.147, 0.114, 0.070)
+            material.color_data.w = alpha;
+        }
+    }
+}
+
+/// Update wisp physics - apply velocity to position
+pub fn update_wisp_physics(
+    mut query: Query<(&mut Transform, &WispPhysics, Option<&FlipbookSprite>), With<GroundExplosionChild>>,
+    time: Res<Time>,
+) {
+    let dt = time.delta_secs();
+
+    for (mut transform, physics, flipbook) in query.iter_mut() {
+        // Skip particles still in spawn delay
+        if let Some(fb) = flipbook {
+            if fb.elapsed < 0.0 {
+                continue;
+            }
+        }
+
+        // Apply combined velocity to position
+        transform.translation += physics.velocity * dt;
+    }
+}
+
+/// Update wisp scale over lifetime - UE5 curves from wisp.md:
+/// - Scale: 0→5× cubic ease-in growth
+pub fn update_wisp_scale(
+    mut query: Query<(&mut Transform, &FlipbookSprite, &WispScaleOverLife), With<GroundExplosionChild>>,
+) {
+    for (mut transform, sprite, scale_data) in query.iter_mut() {
+        let t = (sprite.lifetime / sprite.max_lifetime).clamp(0.0, 1.0);
+
+        // UE5: Cubic ease-in (smoothstep variant) - faster initial growth
+        let ease = t * t * (3.0 - 2.0 * t);
+        let scale_factor = ease * 5.0;  // Grows to 5× base size
+
+        let new_size = scale_data.initial_size * scale_factor;
+        transform.scale = Vec3::splat(new_size.max(0.001));  // Prevent zero scale
+    }
+}
+
+/// Update wisp alpha over lifetime - UE5 curves from wisp.md:
+/// - Alpha: 3.0→1.0 in first 10%, then 1.0→0 linear fade
+pub fn update_wisp_alpha(
+    query: Query<(&FlipbookSprite, &MeshMaterial3d<FlipbookMaterial>), (With<GroundExplosionChild>, With<WispScaleOverLife>)>,
+    mut materials: ResMut<Assets<FlipbookMaterial>>,
+) {
+    for (sprite, material_handle) in query.iter() {
+        let t = (sprite.lifetime / sprite.max_lifetime).clamp(0.0, 1.0);
+
+        // UE5: Alpha drops from 3.0→1.0 in first 10%, then linear fade 1.0→0
+        let alpha = if t < 0.1 {
+            // Fast drop: 3.0 → 1.0 (clamp to 1.0 for rendering)
+            let local_t = t / 0.1;
+            (3.0 - local_t * 2.0).min(1.0)
+        } else {
+            // Linear fade: 1.0 → 0.0
+            let local_t = (t - 0.1) / 0.9;
+            1.0 - local_t
+        };
+
+        if let Some(material) = materials.get_mut(material_handle.id()) {
+            // Color stays constant dark brown (0.105, 0.080, 0.056)
+            material.color_data.w = alpha.max(0.0);
         }
     }
 }
