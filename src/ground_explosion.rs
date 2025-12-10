@@ -117,6 +117,16 @@ pub struct SmokeScaleOverLife {
     pub initial_size: f32,
 }
 
+/// Fireball scale-over-life component - UE5 Value_Scale_Factor_FloatCurve
+/// Actual UE5 curve data:
+/// - (t=0.0, value=0.5) → (t=1.0, value=2.0)
+/// - Cubic interpolation with tangent ~3.2 (fast initial growth, eases out)
+/// LUT samples: t=0.0→0.5, t=0.2→1.0, t=0.5→1.55, t=0.8→1.87, t=1.0→2.0
+#[derive(Component)]
+pub struct FireballScaleOverLife {
+    pub initial_size: f32,
+}
+
 /// Smoke color-over-life - color darkens and alpha fades over lifetime
 /// Based on typical UE5 Niagara ColorFromCurve:
 /// t=0.0: RGB(0.4), A=0.6 | t=0.3: RGB(0.3), A=0.5 | t=0.7: RGB(0.25), A=0.3 | t=1.0: RGB(0.2), A=0.0
@@ -465,6 +475,7 @@ pub fn spawn_main_fireball(
             },
             VelocityAligned { velocity, gravity: 0.0 },
             SpriteRotation { angle: rotation_angle },
+            FireballScaleOverLife { initial_size: size },
             BottomPivot,
             GroundExplosionChild,
             Name::new(format!("GE_MainFireball_{}", i)),
@@ -558,6 +569,7 @@ pub fn spawn_secondary_fireball(
             },
             VelocityAligned { velocity, gravity: 0.0 },
             SpriteRotation { angle: rotation_angle },
+            FireballScaleOverLife { initial_size: size },
             BottomPivot,
             GroundExplosionChild,
             Name::new(format!("GE_SecondaryFireball_{}", i)),
@@ -1191,11 +1203,13 @@ pub fn animate_flipbook_sprites(
             material.frame_data.y = row as f32;
 
             // Smoke color is handled by update_smoke_color system (has SmokeColorOverLife)
-            // Other particles: fade out in last 20% of lifetime
+            // Other particles: UE5 Scale_Alpha_FloatCurve - hold at 1.0 until t=0.8, then cubic fade
             if is_smoke.is_none() {
                 let progress = sprite.lifetime / sprite.max_lifetime;
                 let alpha = if progress > 0.8 {
-                    1.0 - (progress - 0.8) * 5.0
+                    // UE5: Cubic ease-out fade from t=0.8 to t=1.0
+                    let local_t = (progress - 0.8) / 0.2;  // 0.0 → 1.0
+                    1.0 - local_t * local_t  // Quadratic approximation of cubic
                 } else {
                     1.0
                 };
@@ -1373,6 +1387,25 @@ pub fn update_smoke_scale(
         let scale_factor = 1.0 + 2.0 * ease_out;
         let new_size = scale_over_life.initial_size * scale_factor;
 
+        transform.scale = Vec3::splat(new_size);
+    }
+}
+
+/// Update fireball scale over lifetime - UE5 Value_Scale_Factor_FloatCurve
+/// Actual UE5 curve: (t=0.0, 0.5) → (t=1.0, 2.0) with cubic ease-out (tangent ~3.2)
+/// LUT: t=0.0→0.5, t=0.1→0.76, t=0.2→1.0, t=0.3→1.21, t=0.5→1.55, t=0.8→1.87, t=1.0→2.0
+pub fn update_fireball_scale(
+    mut query: Query<(&mut Transform, &FlipbookSprite, &FireballScaleOverLife), With<GroundExplosionChild>>,
+) {
+    for (mut transform, sprite, scale_over_life) in query.iter_mut() {
+        let t = (sprite.lifetime / sprite.max_lifetime).clamp(0.0, 1.0);
+
+        // UE5 cubic interpolation: 0.5 → 2.0 with ease-out (tangent 3.2)
+        // Using cubic ease-out: 1 - (1-t)³
+        let ease = 1.0 - (1.0 - t).powi(3);
+        let scale_factor = 0.5 + ease * 1.5;  // 0.5 → 2.0
+
+        let new_size = scale_over_life.initial_size * scale_factor;
         transform.scale = Vec3::splat(new_size);
     }
 }

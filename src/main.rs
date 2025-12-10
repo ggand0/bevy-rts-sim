@@ -175,6 +175,7 @@ fn main() {
             ground_explosion::update_camera_facing_billboards,
             ground_explosion::update_smoke_physics,
             ground_explosion::update_smoke_scale,
+            ground_explosion::update_fireball_scale,
             ground_explosion::update_smoke_color,
             ground_explosion::animate_additive_sprites,
             ground_explosion::update_impact_lights,
