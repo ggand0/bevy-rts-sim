@@ -2,6 +2,7 @@
 // Ported from NS_Explosion_Sand_5
 
 use bevy::prelude::*;
+use bevy::audio::{AudioPlayer, PlaybackSettings};
 use bevy::pbr::{Material, MaterialPipeline, MaterialPipelineKey, NotShadowCaster, NotShadowReceiver};
 use bevy::render::mesh::{Indices, MeshVertexBufferLayoutRef, PrimitiveTopology};
 use bevy::render::render_resource::{AsBindGroup, BlendState, RenderPipelineDescriptor, ShaderRef, SpecializedMeshPipelineError};
@@ -445,10 +446,20 @@ pub fn spawn_ground_explosion(
     position: Vec3,
     scale: f32,
     camera_transform: Option<&GlobalTransform>,
+    audio_assets: Option<&crate::types::AudioAssets>,
 ) {
     info!("🌋 Spawning ground explosion at {:?} (scale: {})", position, scale);
 
     let mut rng = rand::thread_rng();
+
+    // Play random explosion sound
+    if let Some(audio) = audio_assets {
+        let sound = audio.get_random_ground_explosion_sound(&mut rng);
+        commands.spawn((
+            AudioPlayer::new(sound),
+            PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::Linear(crate::constants::VOLUME_EXPLOSION)),
+        ));
+    }
 
     // Main fireball (9x9 flipbook, velocity aligned, bottom pivot)
     spawn_main_fireball(commands, assets, flipbook_materials, position, scale, &mut rng);
@@ -526,8 +537,8 @@ pub fn spawn_main_fireball(
     scale: f32,
     rng: &mut impl Rng,
 ) {
-    // UE5: RandomRangeInt 7-13 particles
-    let count = rng.gen_range(7..=13);
+    // UE5: RandomRangeInt 7-13 particles, scaled 1.3× for fuller appearance
+    let count = rng.gen_range(9..=17);
     let lifetime = 1.0;
     let total_frames = 64; // 8x8 grid (texture is 2048x2048, 256px per frame)
     let frame_duration = lifetime / total_frames as f32;
@@ -624,8 +635,8 @@ pub fn spawn_secondary_fireball(
     scale: f32,
     rng: &mut impl Rng,
 ) {
-    // UE5: RandomRangeInt 5-10 particles
-    let count = rng.gen_range(5..=10);
+    // UE5: RandomRangeInt 5-10 particles, scaled 1.3× for fuller appearance
+    let count = rng.gen_range(7..=13);
     let lifetime = 1.0;
     let total_frames = 64; // 8x8 grid (different texture than main)
     let frame_duration = lifetime / total_frames as f32;
@@ -2442,6 +2453,7 @@ pub fn ground_explosion_debug_menu_system(
     camera_query: Query<&GlobalTransform, With<Camera>>,
     terrain_config: Res<crate::terrain::TerrainConfig>,
     heightmap: Res<crate::terrain::TerrainHeightmap>,
+    audio_assets: Res<crate::types::AudioAssets>,
 ) {
     // P key toggles the debug menu
     if keyboard_input.just_pressed(KeyCode::KeyP) {
@@ -2546,6 +2558,7 @@ pub fn ground_explosion_debug_menu_system(
             position,
             1.0,  // Default scale
             camera_transform,
+            Some(&audio_assets),
         );
         info!("🌋 Spawned: FULL GROUND EXPLOSION at ({:.1}, {:.1}, {:.1})", position.x, position.y, position.z);
     }

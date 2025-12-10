@@ -144,12 +144,18 @@ pub struct AudioAssets {
     pub explosion_sound: Handle<AudioSource>,
     pub mg_sound: Handle<AudioSource>,
     pub shield_impact_sound: Handle<AudioSource>,
+    pub ground_explosion_sounds: Vec<Handle<AudioSource>>,
 }
 
 impl AudioAssets {
     pub fn get_random_laser_sound(&self, rng: &mut rand::rngs::ThreadRng) -> Handle<AudioSource> {
         let index = rng.gen_range(0..self.laser_sounds.len());
         self.laser_sounds[index].clone()
+    }
+
+    pub fn get_random_ground_explosion_sound(&self, rng: &mut rand::rngs::ThreadRng) -> Handle<AudioSource> {
+        let index = rng.gen_range(0..self.ground_explosion_sounds.len());
+        self.ground_explosion_sounds[index].clone()
     }
 }
 

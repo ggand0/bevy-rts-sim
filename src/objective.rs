@@ -506,6 +506,7 @@ pub fn debug_ground_explosion_system(
     mut additive_materials: ResMut<Assets<crate::wfx_materials::AdditiveMaterial>>,
     debug_mode: Res<ExplosionDebugMode>,
     camera_query: Query<&GlobalTransform, With<Camera>>,
+    audio_assets: Res<crate::types::AudioAssets>,
 ) {
     // Only work when debug mode is active
     if !debug_mode.explosion_mode {
@@ -535,6 +536,7 @@ pub fn debug_ground_explosion_system(
             position,
             scale,
             camera_transform,
+            Some(&audio_assets),
         );
 
         info!("🌋 UE5 Ground explosion spawned at (0, 0, 0) with scale {}", scale);
