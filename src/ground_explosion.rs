@@ -484,8 +484,10 @@ pub fn spawn_main_fireball(
 
     for i in 0..count {
         // UE5 spec: 2500-2600 units (25-26m base), with 0.5→2.0 scale curve = 12.5-52m final
-        // Current: 20-26m base × 0.5→2.0 = 10-52m final (slightly smaller than UE5)
-        let size = rng.gen_range(20.0..26.0) * scale;
+        // PREVIOUS: 20-26m base × 0.5→2.0 = 10-52m final
+        // Scaled down to better match other emitters that were scaled up for visibility
+        // Now: 14-18m base × 0.5→2.0 = 7-36m final (middle ground)
+        let size = rng.gen_range(14.0..18.0) * scale;
 
         // UE5: SphereLocation radius 50 units -> 0.5m scaled
         // Spawn within sphere (not just XZ plane)
@@ -580,8 +582,10 @@ pub fn spawn_secondary_fireball(
 
     for i in 0..count {
         // UE5 spec: 2500-2600 units (25-26m base), with 0.5→2.0 scale curve = 12.5-52m final
-        // Current: 20-26m base × 0.5→2.0 = 10-52m final (same as main fireball)
-        let size = rng.gen_range(20.0..26.0) * scale;
+        // PREVIOUS: 20-26m base × 0.5→2.0 = 10-52m final
+        // Scaled down to better match other emitters that were scaled up for visibility
+        // Now: 14-18m base × 0.5→2.0 = 7-36m final (same as main fireball)
+        let size = rng.gen_range(14.0..18.0) * scale;
 
         // UE5: SphereLocation radius 50 units -> 0.5m scaled
         // Spawn within sphere (not just XZ plane)
@@ -875,75 +879,82 @@ pub fn spawn_dust_ring(
     rng: &mut impl Rng,
 ) {
     // UE5: UniformRangedInt 2-3 particles
-    let count = rng.gen_range(2..=3);
+    // PREVIOUS: single set of 2-3
+    // Now: 2 sets like wisp for better visibility
+    let count_per_set = rng.gen_range(2..=3);
 
-    for i in 0..count {
-        // UE5: RandomRangeFloat 0.1-0.5 for lifetime - very short
-        let lifetime = rng.gen_range(0.1..0.5);
-        let frame_duration = lifetime / 4.0;  // 4 frames over short lifetime
+    for set in 0..2 {
+        // Second set spawns with slight delay
+        let spawn_delay = if set == 0 { 0.0 } else { -0.05 };
 
-        let angle = rng.gen_range(0.0..std::f32::consts::TAU);
+        for i in 0..count_per_set {
+            // UE5: RandomRangeFloat 0.1-0.5 for lifetime - very short
+            let lifetime = rng.gen_range(0.1..0.5);
+            let frame_duration = lifetime / 4.0;  // 4 frames over short lifetime
 
-        // UE5 spec: 300-500 units (3-5m), scaled up 2x for visibility
-        // With (3×, 2×) scale curve = final 18-30m width, 12-20m height
-        let size = rng.gen_range(6.0..10.0) * scale;
+            let angle = rng.gen_range(0.0..std::f32::consts::TAU);
 
-        // UE5: AddVelocityInCone - 35° cone pointing up, speed 500-1000
-        // Cone axis (0,0,3) = strong upward bias
-        let cone_angle = 35.0_f32.to_radians();
-        let phi = rng.gen_range(0.0..cone_angle);  // 0-35° from vertical
-        let speed = rng.gen_range(5.0..10.0) * scale;  // 500-1000 cm/s -> 5-10 m/s
+            // UE5 spec: 300-500 units (3-5m), scaled up 2x for visibility
+            // With (3×, 2×) scale curve = final 18-30m width, 12-20m height
+            let size = rng.gen_range(6.0..10.0) * scale;
 
-        let velocity = Vec3::new(
-            phi.sin() * angle.cos() * speed,
-            phi.cos() * speed,  // Mostly upward
-            phi.sin() * angle.sin() * speed,
-        );
+            // UE5: AddVelocityInCone - 35° cone pointing up, speed 500-1000
+            // Cone axis (0,0,3) = strong upward bias
+            let cone_angle = 35.0_f32.to_radians();
+            let phi = rng.gen_range(0.0..cone_angle);  // 0-35° from vertical
+            let speed = rng.gen_range(5.0..10.0) * scale;  // 500-1000 cm/s -> 5-10 m/s
 
-        let offset = Vec3::new(
-            angle.cos() * 0.5 * scale,
-            0.1 * scale,
-            angle.sin() * 0.5 * scale,
-        );
+            let velocity = Vec3::new(
+                phi.sin() * angle.cos() * speed,
+                phi.cos() * speed,  // Mostly upward
+                phi.sin() * angle.sin() * speed,
+            );
 
-        // UE5: Dark grey/black dust that blends with main fireball emitters
-        // Alpha starts at 3.0 (300% brightness) as per UE5 spec
-        let material = materials.add(FlipbookMaterial {
-            frame_data: Vec4::new(0.0, 0.0, 4.0, 1.0), // col, row, columns (4), rows (1)
-            color_data: Vec4::new(0.15, 0.12, 0.10, 3.0), // Dark grey-black, 3× brightness
-            sprite_texture: assets.dust_texture.clone(),
-        });
+            let offset = Vec3::new(
+                angle.cos() * 0.5 * scale,
+                0.1 * scale,
+                angle.sin() * 0.5 * scale,
+            );
 
-        commands.spawn((
-            Mesh3d(assets.bottom_pivot_quad.clone()),
-            MeshMaterial3d(material),
-            // Start at 0 scale (grows from 0)
-            Transform::from_translation(position + offset).with_scale(Vec3::ZERO),
-            Visibility::Visible,
-            NotShadowCaster,
-            NotShadowReceiver,
-            FlipbookSprite {
-                columns: 4,
-                rows: 1,
-                total_frames: 4,
-                frame_duration,
-                elapsed: 0.0,
-                lifetime: 0.0,
-                max_lifetime: lifetime,
-                base_alpha: 1.0,
-                loop_animation: false,  // Play once
-            },
-            VelocityAligned { velocity, gravity: 0.0 },  // No gravity - fast upward motion
-            // UE5: Scale grows from 0 - X faster than Y
-            DustScaleOverLife {
-                initial_size: size,
-                base_scale_x: 1.0,
-                base_scale_y: 1.0,
-            },
-            BottomPivot,
-            GroundExplosionChild,
-            Name::new(format!("GE_Dust_{}", i)),
-        ));
+            // UE5: Dark grey/black dust that blends with main fireball emitters
+            // Alpha starts at 3.0 (300% brightness) as per UE5 spec
+            let material = materials.add(FlipbookMaterial {
+                frame_data: Vec4::new(0.0, 0.0, 4.0, 1.0), // col, row, columns (4), rows (1)
+                color_data: Vec4::new(0.15, 0.12, 0.10, 3.0), // Dark grey-black, 3× brightness
+                sprite_texture: assets.dust_texture.clone(),
+            });
+
+            commands.spawn((
+                Mesh3d(assets.bottom_pivot_quad.clone()),
+                MeshMaterial3d(material),
+                // Start at 0 scale (grows from 0)
+                Transform::from_translation(position + offset).with_scale(Vec3::ZERO),
+                Visibility::Hidden, // Start hidden if spawn delay
+                NotShadowCaster,
+                NotShadowReceiver,
+                FlipbookSprite {
+                    columns: 4,
+                    rows: 1,
+                    total_frames: 4,
+                    frame_duration,
+                    elapsed: spawn_delay, // Negative = spawn delay
+                    lifetime: 0.0,
+                    max_lifetime: lifetime,
+                    base_alpha: 1.0,
+                    loop_animation: false,  // Play once
+                },
+                VelocityAligned { velocity, gravity: 0.0 },  // No gravity - fast upward motion
+                // UE5: Scale grows from 0 - X faster than Y
+                DustScaleOverLife {
+                    initial_size: size,
+                    base_scale_x: 1.0,
+                    base_scale_y: 1.0,
+                },
+                BottomPivot,
+                GroundExplosionChild,
+                Name::new(format!("GE_Dust_{}_{}", set, i)),
+            ));
+        }
     }
 }
 
@@ -967,8 +978,8 @@ pub fn spawn_sparks(
     for i in 0..count {
         // UE5 spec: 1-3 units (0.01-0.03m)
         // PREVIOUS VALUE: size = rng.gen_range(0.2..0.6) * scale (scaled up for visibility)
-        // Using previous scaled-up values to maintain visibility
-        let size = rng.gen_range(0.2..0.6) * scale;
+        // Increased to 0.5-1.2m to better match fireball visibility
+        let size = rng.gen_range(0.5..1.2) * scale;
 
         // UE5: 90° cone (hemisphere), cone axis (0,0,1) = upward
         // Speed: 1000-2500 units = 10-25m in Bevy scale
@@ -1008,7 +1019,9 @@ pub fn spawn_sparks(
         commands.spawn((
             Mesh3d(assets.centered_quad.clone()),
             MeshMaterial3d(material),
-            Transform::from_translation(position + Vec3::Y * 0.5 * scale).with_scale(Vec3::splat(size)),
+            // PREVIOUS spawn height: Vec3::Y * 0.5 * scale
+            // Increased to 3.0 * scale to match fireball height (14-18m base)
+            Transform::from_translation(position + Vec3::Y * 3.0 * scale).with_scale(Vec3::splat(size)),
             Visibility::Visible,
             NotShadowCaster,
             NotShadowReceiver,
@@ -1055,9 +1068,9 @@ pub fn spawn_flash_sparks(
 
     for i in 0..count {
         // UE5 spec: 0.05-1.0 units (very small)
-        // PREVIOUS VALUE: size = rng.gen_range(0.225..0.6) * scale (1.5x size)
-        // Using previous scaled-up values to maintain visibility
-        let size = rng.gen_range(0.15..0.4) * scale;
+        // PREVIOUS VALUE: size = rng.gen_range(0.15..0.4) * scale
+        // Increased to 0.4-1.0m to better match fireball visibility
+        let size = rng.gen_range(0.4..1.0) * scale;
 
         // Ring spawn: spawn at equator of small sphere
         // theta = angle around the ring (0 to 2π)
@@ -1106,7 +1119,9 @@ pub fn spawn_flash_sparks(
         commands.spawn((
             Mesh3d(assets.centered_quad.clone()),
             MeshMaterial3d(material),
-            Transform::from_translation(position + spawn_offset + Vec3::Y * 0.5 * scale)
+            // PREVIOUS spawn height: Vec3::Y * 0.5 * scale
+            // Increased to 2.5 * scale to match fireball height
+            Transform::from_translation(position + spawn_offset + Vec3::Y * 2.5 * scale)
                 .with_scale(Vec3::splat(size)),
             Visibility::Visible,
             NotShadowCaster,
