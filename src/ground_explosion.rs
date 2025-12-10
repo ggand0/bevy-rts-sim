@@ -771,8 +771,9 @@ pub fn spawn_wisps(
         let lifetime = rng.gen_range(1.0..3.0) * rng.gen_range(2.0..3.0);
         let frame_duration = lifetime / 64.0;  // Play all 64 frames once
 
-        // UE5: RandomRangeFloat002 80-180 units (0.8-1.8m)
-        let size = rng.gen_range(0.8..1.8) * scale;
+        // UE5 spec: 80-180 units (0.8-1.8m), scaled up 3x for visibility
+        // With 5× scale curve = final 12-27m (better match with fireballs)
+        let size = rng.gen_range(2.4..5.4) * scale;
 
         // UE5: Two-phase velocity creating arc motion
         // Initial velocity: X/Y ±50, Z 500-1200 (upward launch)
@@ -859,8 +860,9 @@ pub fn spawn_dust_ring(
 
         let angle = rng.gen_range(0.0..std::f32::consts::TAU);
 
-        // UE5: Size 300-500 units (3-5m)
-        let size = rng.gen_range(3.0..5.0) * scale;
+        // UE5 spec: 300-500 units (3-5m), scaled up 2x for visibility
+        // With (3×, 2×) scale curve = final 18-30m width, 12-20m height
+        let size = rng.gen_range(6.0..10.0) * scale;
 
         // UE5: AddVelocityInCone - 35° cone pointing up, speed 500-1000
         // Cone axis (0,0,3) = strong upward bias
