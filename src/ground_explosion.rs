@@ -147,6 +147,17 @@ pub struct DirtScaleOverLife {
     pub base_scale_y: f32,  // Random initial Y scale
 }
 
+/// Dirt001 scale-over-life component - UE5 curves from dirt001.md:
+/// - Scale: Linear GROWTH 1→2 (opposite of dirt!)
+/// - Alpha: Same as dirt (fast fade-in 10%, slow fade-out 90%)
+/// - No XY flattening effect
+#[derive(Component)]
+pub struct Dirt001ScaleOverLife {
+    pub initial_size: f32,
+    pub base_scale_x: f32,
+    pub base_scale_y: f32,
+}
+
 /// Smoke color-over-life - color darkens and alpha fades over lifetime
 /// Based on typical UE5 Niagara ColorFromCurve:
 /// t=0.0: RGB(0.4), A=0.6 | t=0.3: RGB(0.3), A=0.5 | t=0.7: RGB(0.25), A=0.3 | t=1.0: RGB(0.2), A=0.0
@@ -426,7 +437,8 @@ pub fn spawn_main_fireball(
     let frame_duration = lifetime / total_frames as f32;
 
     for i in 0..count {
-        // UE5: Uniform Sprite Size 2500-2600 (in cm) -> ~25-26m, scale down for Bevy
+        // UE5 spec: 2500-2600 units (25-26m base), with 0.5→2.0 scale curve = 12.5-52m final
+        // Current: 20-26m base × 0.5→2.0 = 10-52m final (slightly smaller than UE5)
         let size = rng.gen_range(20.0..26.0) * scale;
 
         // UE5: SphereLocation radius 50 units -> 0.5m scaled
@@ -521,7 +533,8 @@ pub fn spawn_secondary_fireball(
     let frame_duration = lifetime / total_frames as f32;
 
     for i in 0..count {
-        // UE5: Uniform Sprite Size 2500-2600
+        // UE5 spec: 2500-2600 units (25-26m base), with 0.5→2.0 scale curve = 12.5-52m final
+        // Current: 20-26m base × 0.5→2.0 = 10-52m final (same as main fireball)
         let size = rng.gen_range(20.0..26.0) * scale;
 
         // UE5: SphereLocation radius 50 units -> 0.5m scaled
@@ -847,7 +860,9 @@ pub fn spawn_sparks(
     let lifetime = 2.0;
 
     for i in 0..count {
-        let size = rng.gen_range(0.15..0.45) * scale;  // 1.5x size
+        // UE5 spec: 1-3 units (0.01-0.03m), scaled up for visibility
+        // Previous: 0.15..0.45m, now ~1.5x larger
+        let size = rng.gen_range(0.2..0.6) * scale;
 
         // Random outward velocity with upward bias
         let theta: f32 = rng.gen_range(0.0..std::f32::consts::TAU);
@@ -1069,8 +1084,9 @@ pub fn spawn_dirt_debris(
     let count = 35;
 
     for i in 0..count {
-        // UE5: Size range 50-100 units -> 0.5-1.0m scaled
-        let size = rng.gen_range(0.5..1.0) * scale;
+        // UE5 spec: 50-100 units (0.5-1.0m), scaled up for visibility
+        // Previous: 1.5..2.5m, now ~1.5x larger
+        let size = rng.gen_range(2.0..3.5) * scale;
 
         // UE5: RandomRangeVector2D for non-uniform size
         // Min: (30, 200), Max: (100, 500) -> normalized to multipliers
@@ -1142,6 +1158,9 @@ pub fn spawn_dirt_debris(
 }
 
 /// Velocity-stretched dirt - debris that stretches along velocity
+/// UE5 dirt001 emitter - velocity-aligned debris (streaking)
+/// Unlike dirt (billboard, gravity), dirt001 creates fast streaking debris
+/// that shoots outward and fades without falling
 pub fn spawn_velocity_dirt(
     commands: &mut Commands,
     assets: &GroundExplosionAssets,
@@ -1150,32 +1169,60 @@ pub fn spawn_velocity_dirt(
     scale: f32,
     rng: &mut impl Rng,
 ) {
-    let count = 6;
-    let lifetime = 1.0;
+    // UE5: 10-15 (RandomRangeInt)
+    let count = rng.gen_range(10..=15);
 
     for i in 0..count {
-        let size = rng.gen_range(0.6..1.35) * scale;  // 1.5x size
+        // UE5 spec: 50-100 units (0.5-1.0m), scaled up for visibility
+        // Previous: 1.5..2.5m, now ~1.5x larger (matching dirt)
+        let size = rng.gen_range(2.0..3.5) * scale;
 
-        let theta = rng.gen_range(0.0..std::f32::consts::TAU);
-        let speed = rng.gen_range(6.0..12.0) * scale;
+        // UE5: RandomRangeVector2D for non-uniform size
+        // Min: (200, 350), Max: (400, 600) - elongated shapes
+        let base_scale_x = rng.gen_range(0.5..1.0);  // Width
+        let base_scale_y = rng.gen_range(0.6..1.2);  // Height (taller for velocity stretch)
+
+        // UE5: Cone velocity - 90° cone pointing upward
+        // Speed: 250-1000 (2.5-10m/s)
+        let speed = rng.gen_range(2.5..10.0) * scale;
+
+        // Generate random direction in upward cone (90° = hemisphere)
+        let theta = rng.gen_range(0.0..std::f32::consts::TAU);  // Azimuth
+        let phi = rng.gen_range(0.0..(std::f32::consts::PI * 0.5));  // Elevation (0-90°)
+
+        // Cone velocity with falloff toward center (faster at center)
+        let falloff = (1.0 - phi / (std::f32::consts::PI * 0.5)).powf(2.0);
+        let adjusted_speed = speed * (0.5 + 0.5 * falloff);
 
         let velocity = Vec3::new(
-            theta.cos() * speed,
-            rng.gen_range(8.0..15.0) * scale,
-            theta.sin() * speed,
+            theta.cos() * phi.sin() * adjusted_speed,
+            phi.cos() * adjusted_speed,  // Upward (Y in Bevy)
+            theta.sin() * phi.sin() * adjusted_speed,
         );
 
+        // UE5: RandomRangeFloat 0.8-1.7s lifetime (shorter than dirt)
+        let lifetime = rng.gen_range(0.8..1.7);
+
+        // UE5: Sprite Rotation Angle 0-360°
+        let rotation_angle = rng.gen_range(0.0..std::f32::consts::TAU);
+
+        // UE5 ColorCurve: Same dark brown as dirt (0.082, 0.063, 0.050)
+        // Alpha starts at 0 (fade-in handled by Dirt001ScaleOverLife)
         let material = materials.add(FlipbookMaterial {
             frame_data: Vec4::new(0.0, 0.0, 1.0, 1.0),
-            color_data: Vec4::new(0.5, 0.4, 0.3, 1.0),
+            color_data: Vec4::new(0.082, 0.063, 0.050, 0.0), // Dark brown, alpha=0
             sprite_texture: assets.dirt_texture.clone(),
         });
+
+        // UE5: Spawn delay 0.1s (same as dirt)
+        let spawn_delay = 0.1;
 
         commands.spawn((
             Mesh3d(assets.centered_quad.clone()),
             MeshMaterial3d(material),
-            Transform::from_translation(position + Vec3::Y * 0.5 * scale).with_scale(Vec3::splat(size)),
-            Visibility::Visible,
+            Transform::from_translation(position)
+                .with_scale(Vec3::new(size * base_scale_x, size * base_scale_y, size)),
+            Visibility::Hidden,  // Start hidden until spawn delay passes
             NotShadowCaster,
             NotShadowReceiver,
             FlipbookSprite {
@@ -1183,15 +1230,24 @@ pub fn spawn_velocity_dirt(
                 rows: 1,
                 total_frames: 1,
                 frame_duration: lifetime,
-                elapsed: 0.0,
+                elapsed: -spawn_delay,  // Negative = spawn delay
                 lifetime: 0.0,
                 max_lifetime: lifetime,
                 base_alpha: 1.0,
-                loop_animation: true,  // Single frame, doesn't matter
+                loop_animation: false,
             },
-            VelocityAligned { velocity, gravity: 10.0 },
+            // VelocityAligned with NO gravity (key difference from dirt)
+            // UE5: High drag (2.0) decelerates quickly
+            VelocityAligned { velocity, gravity: 0.0 },
+            // Track scale-over-life (same alpha curve as dirt)
+            Dirt001ScaleOverLife {
+                initial_size: size,
+                base_scale_x,
+                base_scale_y,
+            },
+            SpriteRotation { angle: rotation_angle },
             GroundExplosionChild,
-            Name::new(format!("GE_VelDirt_{}", i)),
+            Name::new(format!("GE_Dirt001_{}", i)),
         ));
     }
 }
@@ -1557,6 +1613,67 @@ pub fn update_dirt_alpha(
     }
 }
 
+/// Update dirt001 scale over lifetime - UE5 curves from dirt001.md:
+/// - Scale: Linear GROWTH 1→2 (opposite of dirt which shrinks!)
+/// - No XY flattening effect
+pub fn update_dirt001_scale(
+    mut query: Query<(&mut Transform, &FlipbookSprite, &Dirt001ScaleOverLife), With<GroundExplosionChild>>,
+) {
+    for (mut transform, sprite, scale_data) in query.iter_mut() {
+        // Skip particles in spawn delay
+        if sprite.elapsed < 0.0 {
+            continue;
+        }
+
+        let t = (sprite.lifetime / sprite.max_lifetime).clamp(0.0, 1.0);
+
+        // UE5: Linear growth from 1.0 to 2.0 (opposite of dirt!)
+        let growth_factor = 1.0 + t;
+
+        // Apply growth factor
+        let final_size = scale_data.initial_size * growth_factor;
+        transform.scale = Vec3::new(
+            final_size * scale_data.base_scale_x,
+            final_size * scale_data.base_scale_y,
+            final_size,
+        );
+    }
+}
+
+/// Update dirt001 color/alpha over lifetime - same alpha curve as dirt
+/// - Alpha: Fast fade-in (0→2.0 in first 10%), slow cubic fade-out (2.0→0 in remaining 90%)
+/// - Color: Same dark brown as dirt
+pub fn update_dirt001_alpha(
+    query: Query<(&FlipbookSprite, &MeshMaterial3d<FlipbookMaterial>), (With<GroundExplosionChild>, With<Dirt001ScaleOverLife>)>,
+    mut materials: ResMut<Assets<FlipbookMaterial>>,
+) {
+    for (sprite, material_handle) in query.iter() {
+        // Skip particles in spawn delay
+        if sprite.elapsed < 0.0 {
+            continue;
+        }
+
+        let t = (sprite.lifetime / sprite.max_lifetime).clamp(0.0, 1.0);
+
+        // UE5 Alpha curve: Same as dirt - fast fade-in, slow cubic fade-out
+        let alpha = if t < 0.1 {
+            (t / 0.1 * 2.0).min(1.0)
+        } else {
+            let local_t = (t - 0.1) / 0.9;
+            (1.0 - local_t * local_t).max(0.0)
+        };
+
+        // UE5 Color curve: Same dark brown as dirt
+        let r = 0.082 + t * (0.109 - 0.082);
+        let g = 0.063 + t * (0.084 - 0.063);
+        let b = 0.050 + t * (0.066 - 0.050);
+
+        if let Some(material) = materials.get_mut(material_handle.id()) {
+            material.color_data = Vec4::new(r, g, b, alpha);
+        }
+    }
+}
+
 /// Update smoke color over lifetime - UE5 Niagara ColorFromCurve
 /// Color curve: t=0.0: RGB(0.4), A=0.6 → t=1.0: RGB(0.2), A=0.0
 /// Smoke starts medium grey, darkens slightly as it fades out
@@ -1769,7 +1886,7 @@ pub fn ground_explosion_debug_menu_system(
             &mut flipbook_materials,
             &mut additive_materials,
             position,
-            1.5,  // Use 1.5x scale for combined effect
+            1.0,  // Default scale
             camera_transform,
         );
         info!("🌋 Spawned: FULL GROUND EXPLOSION at (0, 0, 0)");
