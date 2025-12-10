@@ -190,6 +190,10 @@ fn main() {
             ground_explosion::update_wisp_scale,
             ground_explosion::update_wisp_alpha,
             ground_explosion::update_smoke_color,
+            // Spark HDR color curves and physics
+            ground_explosion::update_spark_color,
+            ground_explosion::update_spark_l_color,
+            ground_explosion::update_spark_l_physics,
             ground_explosion::animate_additive_sprites,
             ground_explosion::update_impact_lights,
             ground_explosion::cleanup_ground_explosions,

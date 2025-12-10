@@ -193,6 +193,23 @@ pub struct WispPhysics {
 #[derive(Component)]
 pub struct SmokeColorOverLife;
 
+/// Spark HDR color over life - "cooling ember" effect
+/// UE5: HDR emissive (50/27/7.6) → dim red (1/0.05/0) over 55%, then fades
+/// Includes per-particle random phase for flickering
+#[derive(Component)]
+pub struct SparkColorOverLife {
+    pub random_phase: f32, // 0-TAU for flickering offset
+}
+
+/// Flash spark (spark_l) constant HDR orange with alpha fade
+/// UE5: Constant HDR (10/6.5/3.9), alpha fades 1→0
+/// Also has "shooting star" XY scale effect
+#[derive(Component)]
+pub struct SparkLColorOverLife {
+    pub random_phase: f32,   // 0-TAU for flickering offset
+    pub initial_size: f32,   // Base size for XY scale curve
+}
+
 /// Sprite rotation around the billboard's facing axis (Z-axis in local space)
 /// This rotation is applied AFTER billboarding calculation to preserve random sprite orientation
 /// UE5: InitializeParticle.Sprite Rotation Angle 0-360°
@@ -930,7 +947,9 @@ pub fn spawn_dust_ring(
     }
 }
 
-/// Sparks - single texture embers with gravity, velocity aligned
+/// Sparks - flying embers with gravity and HDR color cooling curve
+/// UE5 spark.md: 250-500 count, 90° cone, gravity -980, collision (1 bounce)
+/// HDR color: (50/27/7.6) → (1/0.05/0) over 55%, flickering via sin()
 pub fn spawn_sparks(
     commands: &mut Commands,
     assets: &GroundExplosionAssets,
@@ -939,35 +958,57 @@ pub fn spawn_sparks(
     scale: f32,
     rng: &mut impl Rng,
 ) {
-    let count = 15;
-    let lifetime = 2.0;
+    // UE5: 250-500 sparks. Using lower count for performance.
+    // PREVIOUS VALUE: count = 15 (kept for reference if UE5 count is too heavy)
+    let count = rng.gen_range(30..60);
+    // UE5: 2.0s duration, lifetime 0.1-4.0s variable
+    let base_lifetime = 2.0;
 
     for i in 0..count {
-        // UE5 spec: 1-3 units (0.01-0.03m), scaled up for visibility
-        // Previous: 0.15..0.45m, now ~1.5x larger
+        // UE5 spec: 1-3 units (0.01-0.03m)
+        // PREVIOUS VALUE: size = rng.gen_range(0.2..0.6) * scale (scaled up for visibility)
+        // Using previous scaled-up values to maintain visibility
         let size = rng.gen_range(0.2..0.6) * scale;
 
-        // Random outward velocity with upward bias
+        // UE5: 90° cone (hemisphere), cone axis (0,0,1) = upward
+        // Speed: 1000-2500 units = 10-25m in Bevy scale
         let theta: f32 = rng.gen_range(0.0..std::f32::consts::TAU);
-        let phi: f32 = rng.gen_range(0.2..1.2);
-        let speed: f32 = rng.gen_range(8.0..15.0) * scale;
+        // phi from 0 to PI/2 for 90° hemisphere (0 = straight up, PI/2 = horizontal)
+        let phi: f32 = rng.gen_range(0.0..std::f32::consts::FRAC_PI_2);
+        // UE5: 1000-2500 units = 10-25m, with falloff toward edges
+        // PREVIOUS VALUE: speed = rng.gen_range(8.0..15.0) * scale
+        let speed: f32 = rng.gen_range(10.0..25.0) * scale;
+
+        // Velocity falloff: faster toward center (lower phi)
+        let falloff = 1.0 - (phi / std::f32::consts::FRAC_PI_2) * 0.5;
+        let adjusted_speed = speed * falloff;
 
         let velocity = Vec3::new(
-            phi.sin() * theta.cos() * speed,
-            phi.cos() * speed + rng.gen_range(2.0..5.0) * scale,
-            phi.sin() * theta.sin() * speed,
+            phi.sin() * theta.cos() * adjusted_speed,
+            phi.cos() * adjusted_speed,  // Y is up in Bevy
+            phi.sin() * theta.sin() * adjusted_speed,
         );
 
+        // Variable lifetime: 0.1-4.0s (UE5)
+        let lifetime = rng.gen_range(0.5..base_lifetime);
+
+        // Initial HDR color: (50, 27, 7.6) normalized for shader's 4× brightness
+        // Shader does: tex.rgb * tint_color.rgb * 4.0
+        // So we pass: HDR_value / 4.0 to get final HDR output
+        // Initial: (50/4, 27/4, 7.6/4) = (12.5, 6.75, 1.9)
         let material = materials.add(AdditiveMaterial {
-            tint_color: Vec4::new(1.0, 0.8, 0.3, 1.0), // Orange-yellow
+            tint_color: Vec4::new(12.5, 6.75, 1.9, 1.0), // HDR orange-yellow (pre-divided by shader's 4×)
             soft_particles_fade: Vec4::new(1.0, 0.0, 0.0, 0.0),
             particle_texture: assets.flare_texture.clone(),
         });
 
+        // Random phase for flickering (0 to 2π)
+        let random_phase = rng.gen_range(0.0..std::f32::consts::TAU);
+
         commands.spawn((
             Mesh3d(assets.centered_quad.clone()),
             MeshMaterial3d(material),
-            Transform::from_translation(position + Vec3::Y * scale).with_scale(Vec3::splat(size)),
+            Transform::from_translation(position + Vec3::Y * 0.5 * scale).with_scale(Vec3::splat(size)),
             Visibility::Visible,
             NotShadowCaster,
             NotShadowReceiver,
@@ -982,14 +1023,18 @@ pub fn spawn_sparks(
                 base_alpha: 1.0,
                 loop_animation: true,  // Single frame, doesn't matter
             },
-            VelocityAligned { velocity, gravity: 8.0 },
+            // UE5: Gravity -980 cm/s² = 9.8 m/s²
+            VelocityAligned { velocity, gravity: 9.8 },
+            SparkColorOverLife { random_phase },
             GroundExplosionChild,
             Name::new(format!("GE_Spark_{}", i)),
         ));
     }
 }
 
-/// Flash sparks - bright quick sparks, 1s duration
+/// Flash sparks (spark_l) - bright ring burst with "shooting star" XY scale effect
+/// UE5 spark_l.md: 100-250 count, ring spawn at sphere equator, 100° cone
+/// Constant HDR orange (10/6.5/3.9), deceleration physics, XY scale curve
 pub fn spawn_flash_sparks(
     commands: &mut Commands,
     assets: &GroundExplosionAssets,
@@ -998,32 +1043,71 @@ pub fn spawn_flash_sparks(
     scale: f32,
     rng: &mut impl Rng,
 ) {
-    let count = 10;
-    let lifetime = 1.0;
+    // UE5: 100-250 sparks. Using lower count for performance.
+    // PREVIOUS VALUE: count = 10 (kept for reference)
+    let count = rng.gen_range(20..50);
+    // UE5: 1.0s duration, lifetime 0.1-2.0s variable
+    let base_lifetime = 1.0;
+
+    // Ring spawn radius (UE5: 5 units at sphere equator, scaled)
+    // Actually UE5 uses V=0.5 which is equator of spawn sphere
+    let ring_radius = 0.5 * scale;
 
     for i in 0..count {
-        let size = rng.gen_range(0.225..0.6) * scale;  // 1.5x size
+        // UE5 spec: 0.05-1.0 units (very small)
+        // PREVIOUS VALUE: size = rng.gen_range(0.225..0.6) * scale (1.5x size)
+        // Using previous scaled-up values to maintain visibility
+        let size = rng.gen_range(0.15..0.4) * scale;
 
-        let theta: f32 = rng.gen_range(0.0..std::f32::consts::TAU);
-        let phi: f32 = rng.gen_range(0.3..1.0);
-        let speed: f32 = rng.gen_range(10.0..20.0) * scale;
-
-        let velocity = Vec3::new(
-            phi.sin() * theta.cos() * speed,
-            phi.cos() * speed,
-            phi.sin() * theta.sin() * speed,
+        // Ring spawn: spawn at equator of small sphere
+        // theta = angle around the ring (0 to 2π)
+        let spawn_theta: f32 = rng.gen_range(0.0..std::f32::consts::TAU);
+        let spawn_offset = Vec3::new(
+            spawn_theta.cos() * ring_radius,
+            0.0,  // Equator = Y=0
+            spawn_theta.sin() * ring_radius,
         );
 
+        // UE5: 100° cone (wider than hemisphere), with upward bias
+        // phi from 0 to ~100° (0 = straight up, 100° = slightly past horizontal)
+        let max_phi = 100.0_f32.to_radians();
+        let phi: f32 = rng.gen_range(0.0..max_phi);
+        // Velocity direction - mostly outward from ring with upward component
+        let vel_theta: f32 = rng.gen_range(0.0..std::f32::consts::TAU);
+
+        // UE5: 400-5500 units = 4-55m, very wide range
+        // PREVIOUS VALUE: speed = rng.gen_range(10.0..20.0) * scale
+        let speed: f32 = rng.gen_range(4.0..55.0) * scale;
+
+        // Velocity with falloff toward edges
+        let falloff = 1.0 - (phi / max_phi) * 0.5;
+        let adjusted_speed = speed * falloff;
+
+        let velocity = Vec3::new(
+            phi.sin() * vel_theta.cos() * adjusted_speed,
+            phi.cos() * adjusted_speed,  // Y is up
+            phi.sin() * vel_theta.sin() * adjusted_speed,
+        );
+
+        // Variable lifetime: 0.1-2.0s (UE5)
+        let lifetime = rng.gen_range(0.3..base_lifetime);
+
+        // Constant HDR orange: (10, 6.5, 3.9) normalized for shader's 4× brightness
+        // (10/4, 6.5/4, 3.9/4) = (2.5, 1.625, 0.975)
         let material = materials.add(AdditiveMaterial {
-            tint_color: Vec4::new(1.0, 1.0, 0.9, 1.0), // Bright white-yellow
+            tint_color: Vec4::new(2.5, 1.625, 0.975, 1.0), // HDR orange (pre-divided by shader's 4×)
             soft_particles_fade: Vec4::new(1.0, 0.0, 0.0, 0.0),
             particle_texture: assets.flare_texture.clone(),
         });
 
+        // Random phase for flickering (0 to 2π)
+        let random_phase = rng.gen_range(0.0..std::f32::consts::TAU);
+
         commands.spawn((
             Mesh3d(assets.centered_quad.clone()),
             MeshMaterial3d(material),
-            Transform::from_translation(position + Vec3::Y * scale).with_scale(Vec3::splat(size)),
+            Transform::from_translation(position + spawn_offset + Vec3::Y * 0.5 * scale)
+                .with_scale(Vec3::splat(size)),
             Visibility::Visible,
             NotShadowCaster,
             NotShadowReceiver,
@@ -1038,7 +1122,10 @@ pub fn spawn_flash_sparks(
                 base_alpha: 1.0,
                 loop_animation: true,  // Single frame, doesn't matter
             },
-            VelocityAligned { velocity, gravity: 5.0 },
+            // UE5: No gravity, uses deceleration instead
+            // Deceleration is handled by SparkLColorOverLife update system
+            VelocityAligned { velocity, gravity: 0.0 },
+            SparkLColorOverLife { random_phase, initial_size: size },
             GroundExplosionChild,
             Name::new(format!("GE_FlashSpark_{}", i)),
         ));
@@ -1908,12 +1995,158 @@ pub fn update_wisp_alpha(
     }
 }
 
+/// Update spark HDR color over lifetime - "cooling ember" effect with flickering
+/// UE5: HDR (50/27/7.6) → (1/0.05/0) over 55%, then continues fading
+/// Flickering via sin(time + random_phase)
+pub fn update_spark_color(
+    mut query: Query<(
+        &mut FlipbookSprite,
+        &SparkColorOverLife,
+        &MeshMaterial3d<AdditiveMaterial>,
+    ), With<GroundExplosionChild>>,
+    mut materials: ResMut<Assets<AdditiveMaterial>>,
+    time: Res<Time>,
+) {
+    let dt = time.delta_secs();
+    let elapsed = time.elapsed_secs();
+
+    for (mut sprite, spark_color, material_handle) in query.iter_mut() {
+        // Update lifetime (since animate_additive_sprites filters out sparks)
+        sprite.lifetime += dt;
+        let t = (sprite.lifetime / sprite.max_lifetime).clamp(0.0, 1.0);
+
+        // HDR color curve (pre-divided by shader's 4× brightness)
+        // UE5: (50, 27, 7.6) → (1, 0.05, 0) over 55% of lifetime
+        let (r, g, b, alpha) = if t < 0.55 {
+            let local_t = t / 0.55;
+            // Interpolate from bright to dim
+            // Starting: (50/4, 27/4, 7.6/4) = (12.5, 6.75, 1.9)
+            // Ending: (1/4, 0.05/4, 0) = (0.25, 0.0125, 0)
+            let r = 12.5 * (1.0 - local_t) + 0.25 * local_t;
+            let g = 6.75 * (1.0 - local_t) + 0.0125 * local_t;
+            let b = 1.9 * (1.0 - local_t);
+            let alpha = 1.0 - local_t * 0.5;  // Slight fade during cooling
+            (r, g, b, alpha)
+        } else {
+            // Continue fading from dim red to invisible
+            let local_t = (t - 0.55) / 0.45;
+            let r = 0.25 * (1.0 - local_t * 0.5);
+            let g = 0.0125 * (1.0 - local_t * 0.6);
+            let b = 0.0;
+            let alpha = 0.5 * (1.0 - local_t);
+            (r, g, b, alpha)
+        };
+
+        // Flickering: sin(time + random_phase) oscillates 0-2, normalized to 0.5-1.5
+        let flicker = (elapsed * 8.0 + spark_color.random_phase).sin() * 0.25 + 1.0;
+
+        if let Some(material) = materials.get_mut(&material_handle.0) {
+            material.tint_color = Vec4::new(
+                r * flicker,
+                g * flicker,
+                b * flicker,
+                alpha.max(0.0),
+            );
+        }
+    }
+}
+
+/// Update flash spark (spark_l) color and "shooting star" XY scale
+/// UE5: Constant HDR (10/6.5/3.9), alpha fades, XY scale creates elongation
+pub fn update_spark_l_color(
+    mut query: Query<(
+        &mut FlipbookSprite,
+        &SparkLColorOverLife,
+        &MeshMaterial3d<AdditiveMaterial>,
+        &mut Transform,
+        &VelocityAligned,
+    ), With<GroundExplosionChild>>,
+    mut materials: ResMut<Assets<AdditiveMaterial>>,
+    time: Res<Time>,
+) {
+    let dt = time.delta_secs();
+    let elapsed = time.elapsed_secs();
+
+    for (mut sprite, spark_l, material_handle, mut transform, _velocity_aligned) in query.iter_mut() {
+        // Update lifetime (since animate_additive_sprites filters out sparks)
+        sprite.lifetime += dt;
+        let t = (sprite.lifetime / sprite.max_lifetime).clamp(0.0, 1.0);
+
+        // Constant HDR color (pre-divided by shader's 4×)
+        // UE5: (10/4, 6.5/4, 3.9/4) = (2.5, 1.625, 0.975)
+        let (r, g, b) = (2.5, 1.625, 0.975);
+
+        // Alpha: linear fade 1→0
+        let alpha = 1.0 - t;
+
+        // Flickering: sin(time + random_phase)
+        let flicker = (elapsed * 10.0 + spark_l.random_phase).sin() * 0.2 + 1.0;
+
+        if let Some(material) = materials.get_mut(&material_handle.0) {
+            material.tint_color = Vec4::new(
+                r * flicker,
+                g * flicker,
+                b * flicker,
+                alpha.max(0.0),
+            );
+        }
+
+        // "Shooting star" XY scale effect
+        // UE5: t=0: 0×0 → t=0.05: 0.3×50 → t=0.5: 5×3 → t=1.0: 5×3
+        // X = width perpendicular to velocity, Y = length along velocity
+        let (scale_x, scale_y) = if t < 0.05 {
+            // Fast stretch to elongated shape
+            let local_t = t / 0.05;
+            (local_t * 0.3, local_t * 50.0)
+        } else if t < 0.5 {
+            // Transition to normal shape
+            let local_t = (t - 0.05) / 0.45;
+            let x = 0.3 + local_t * 4.7;    // 0.3 → 5.0
+            let y = 50.0 - local_t * 47.0;  // 50.0 → 3.0
+            (x, y)
+        } else {
+            // Hold final shape
+            (5.0, 3.0)
+        };
+
+        // Apply XY scale - since VelocityAligned stretches along Y (velocity direction),
+        // we apply the elongation along local Y
+        // Scale relative to initial size, normalized so final (5, 3) gives reasonable result
+        let base_size = spark_l.initial_size;
+        let normalized_x = scale_x / 5.0;  // Normalize to 0-1 range at end
+        let normalized_y = scale_y / 5.0;  // Normalize (50 at peak is intentionally huge)
+
+        transform.scale = Vec3::new(
+            base_size * normalized_x.max(0.01),
+            base_size * normalized_y.max(0.01),
+            base_size,
+        );
+    }
+}
+
+/// Apply deceleration to flash sparks (spark_l)
+/// UE5: Acceleration (-25, -50, -100) instead of gravity
+pub fn update_spark_l_physics(
+    mut query: Query<&mut VelocityAligned, (With<GroundExplosionChild>, With<SparkLColorOverLife>)>,
+    time: Res<Time>,
+) {
+    let dt = time.delta_secs();
+    // UE5 deceleration: (-25, -50, -100) cm/s² = (-0.25, -0.5, -1.0) m/s²
+    let deceleration = Vec3::new(-0.25, -1.0, -0.5);  // Y is up in Bevy
+
+    for mut velocity_aligned in query.iter_mut() {
+        // Apply constant deceleration
+        velocity_aligned.velocity += deceleration * dt * 10.0;  // Scale up for visibility
+    }
+}
+
 /// Update additive material alpha for sparks and glow effects
+/// Note: This is the generic handler for additive sprites without specific color components
 pub fn animate_additive_sprites(
     mut query: Query<(
         &mut FlipbookSprite,
         &MeshMaterial3d<AdditiveMaterial>,
-    ), With<GroundExplosionChild>>,
+    ), (With<GroundExplosionChild>, Without<SparkColorOverLife>, Without<SparkLColorOverLife>)>,
     mut materials: ResMut<Assets<AdditiveMaterial>>,
     time: Res<Time>,
 ) {
