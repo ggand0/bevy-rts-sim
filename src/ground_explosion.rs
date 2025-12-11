@@ -977,7 +977,8 @@ pub fn spawn_smoke_cloud(
         let base_size = rng.gen_range(0.5..1.0) * scale;
 
         // UE5: RandomRangeFloat 1-4 for lifetime variation
-        let particle_lifetime: f32 = rng.gen_range(1.0..4.0);
+        // Reduced to 0.8-2.5s for faster fade-out
+        let particle_lifetime: f32 = rng.gen_range(0.8..2.5);
         // Play 35 frames over the particle's lifetime
         let frame_duration = particle_lifetime / 35.0;
 
