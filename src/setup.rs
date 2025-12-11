@@ -70,11 +70,16 @@ pub fn setup_scene(
     let explosion_sound = asset_server.load("audio/sfx/distant_explosion1.wav");
     let mg_sound = asset_server.load("audio/sfx/mg_3_single.wav");
     let shield_impact_sound = asset_server.load("audio/sfx/shield_impact0.wav");
+    let ground_explosion_sounds = vec![
+        asset_server.load("audio/sfx/ground_explosion0.wav"),
+        asset_server.load("audio/sfx/ground_explosion1.wav"),
+    ];
     commands.insert_resource(AudioAssets {
         laser_sounds,
         explosion_sound,
         mg_sound,
         shield_impact_sound,
+        ground_explosion_sounds,
     });
 
     // UI text for game info (can be hidden during scenarios)
@@ -235,7 +240,9 @@ pub fn spawn_army_with_squads(
 pub struct UnitMaterials {
     pub body_material: Handle<StandardMaterial>,
     pub head_material: Handle<StandardMaterial>,
+    #[allow(dead_code)] // Reserved for commander differentiation
     pub commander_body_material: Handle<StandardMaterial>,
+    #[allow(dead_code)] // Reserved for commander differentiation
     pub commander_head_material: Handle<StandardMaterial>,
 }
 

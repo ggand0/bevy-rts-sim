@@ -479,13 +479,13 @@ fn terrain_map_switching(
         return;
     }
 
-    let new_preset = if keys.just_pressed(KeyCode::Digit1) {
+    let new_preset = if keys.just_pressed(KeyCode::F1) {
         Some(MapPreset::Flat)
-    } else if keys.just_pressed(KeyCode::Digit2) {
+    } else if keys.just_pressed(KeyCode::F2) {
         Some(MapPreset::RollingHills)
-    } else if keys.just_pressed(KeyCode::Digit3) {
+    } else if keys.just_pressed(KeyCode::F3) {
         Some(MapPreset::FirebaseDelta)
-    } else if keys.just_pressed(KeyCode::Digit4) {
+    } else if keys.just_pressed(KeyCode::F4) {
         Some(MapPreset::Debug)
     } else {
         None

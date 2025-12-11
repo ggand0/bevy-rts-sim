@@ -117,11 +117,38 @@ impl Material for AdditiveMaterial {
     }
 
     fn alpha_mode(&self) -> AlphaMode {
-        AlphaMode::Add  // ONE + ONE additive blending
+        AlphaMode::Add
     }
 
     fn opaque_render_method(&self) -> bevy::pbr::OpaqueRendererMethod {
         bevy::pbr::OpaqueRendererMethod::Forward
+    }
+
+    fn specialize(
+        _pipeline: &MaterialPipeline<Self>,
+        descriptor: &mut bevy::render::render_resource::RenderPipelineDescriptor,
+        _layout: &MeshVertexBufferLayoutRef,
+        _key: MaterialPipelineKey<Self>,
+    ) -> Result<(), SpecializedMeshPipelineError> {
+        // Additive blending: src * srcAlpha + dst * 1
+        // This allows fading by reducing srcAlpha
+        if let Some(ref mut fragment) = descriptor.fragment {
+            for target in fragment.targets.iter_mut().flatten() {
+                target.blend = Some(BlendState {
+                    color: BlendComponent {
+                        src_factor: BlendFactor::SrcAlpha,
+                        dst_factor: BlendFactor::One,
+                        operation: BlendOperation::Add,
+                    },
+                    alpha: BlendComponent {
+                        src_factor: BlendFactor::SrcAlpha,
+                        dst_factor: BlendFactor::One,
+                        operation: BlendOperation::Add,
+                    },
+                });
+            }
+        }
+        Ok(())
     }
 }
 

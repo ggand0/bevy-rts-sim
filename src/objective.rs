@@ -497,6 +497,52 @@ pub fn debug_warfx_test_system(
     }
 }
 
+/// Debug system to spawn UE5-style ground explosion (9 key when debug mode active)
+pub fn debug_ground_explosion_system(
+    keyboard_input: Res<ButtonInput<KeyCode>>,
+    mut commands: Commands,
+    ground_assets: Option<Res<crate::ground_explosion::GroundExplosionAssets>>,
+    mut flipbook_materials: ResMut<Assets<crate::ground_explosion::FlipbookMaterial>>,
+    mut additive_materials: ResMut<Assets<crate::wfx_materials::AdditiveMaterial>>,
+    debug_mode: Res<ExplosionDebugMode>,
+    camera_query: Query<&GlobalTransform, With<Camera>>,
+    audio_assets: Res<crate::types::AudioAssets>,
+) {
+    // Only work when debug mode is active
+    if !debug_mode.explosion_mode {
+        return;
+    }
+
+    // 9 key: Spawn UE5-style ground explosion
+    if keyboard_input.just_pressed(KeyCode::Digit9) {
+        info!("🌋 DEBUG: Ground explosion hotkey (9) pressed!");
+
+        let Some(assets) = ground_assets else {
+            warn!("Ground explosion assets not loaded yet!");
+            return;
+        };
+
+        let position = Vec3::new(0.0, 0.0, 0.0); // Spawn at ground level
+        let scale = 1.0;
+
+        // Get camera transform for local-space velocity calculation
+        let camera_transform = camera_query.iter().next();
+
+        crate::ground_explosion::spawn_ground_explosion(
+            &mut commands,
+            &assets,
+            &mut flipbook_materials,
+            &mut additive_materials,
+            position,
+            scale,
+            camera_transform,
+            Some(&audio_assets),
+        );
+
+        info!("🌋 UE5 Ground explosion spawned at (0, 0, 0) with scale {}", scale);
+    }
+}
+
 /// Debug system to spawn test tower + shield (8 key)
 pub fn debug_spawn_shield_system(
     keyboard_input: Res<ButtonInput<KeyCode>>,
