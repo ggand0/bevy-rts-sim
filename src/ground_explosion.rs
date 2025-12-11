@@ -98,6 +98,7 @@ pub struct FlipbookSprite {
 pub struct VelocityAligned {
     pub velocity: Vec3,
     pub gravity: f32,
+    pub drag: f32,  // Velocity decay per second (0.0 = no drag)
 }
 
 /// Standard camera-facing billboard (unaligned mode)
@@ -283,6 +284,7 @@ pub enum EmitterType {
     Impact,            // F8
     Dirt,              // F9
     Parts,             // F11 (F10 is full explosion)
+    VelocityDirt,      // F12
 }
 
 // ===== PRELOADED ASSETS =====
@@ -522,6 +524,7 @@ pub fn spawn_single_emitter(
         EmitterType::Impact => spawn_impact_flash(commands, assets, flipbook_materials, additive_materials, position, scale, 2.0),
         EmitterType::Dirt => spawn_dirt_debris(commands, assets, flipbook_materials, position, scale, &mut rng),
         EmitterType::Parts => spawn_parts(commands, assets, position, scale, &mut rng),
+        EmitterType::VelocityDirt => spawn_velocity_dirt(commands, assets, flipbook_materials, position, scale, &mut rng),
     }
 }
 
@@ -615,7 +618,7 @@ pub fn spawn_main_fireball(
                 base_alpha: alpha,
                 loop_animation: false,
             },
-            VelocityAligned { velocity, gravity: 0.0 },
+            VelocityAligned { velocity, gravity: 0.0, drag: 0.0 },
             SpriteRotation { angle: rotation_angle },
             FireballScaleOverLife { initial_size: size },
             BottomPivot,
@@ -713,7 +716,7 @@ pub fn spawn_secondary_fireball(
                 base_alpha: alpha,
                 loop_animation: false,
             },
-            VelocityAligned { velocity, gravity: 0.0 },
+            VelocityAligned { velocity, gravity: 0.0, drag: 0.0 },
             SpriteRotation { angle: rotation_angle },
             FireballScaleOverLife { initial_size: size },
             BottomPivot,
@@ -1006,7 +1009,7 @@ pub fn spawn_dust_ring(
                     base_alpha: 1.0,
                     loop_animation: false,  // Play once
                 },
-                VelocityAligned { velocity, gravity: 0.0 },  // No gravity - fast upward motion
+                VelocityAligned { velocity, gravity: 0.0, drag: 0.0 },  // No gravity - fast upward motion
                 // UE5: Scale grows from 0 - X faster than Y
                 DustScaleOverLife {
                     initial_size: size,
@@ -1097,7 +1100,7 @@ pub fn spawn_sparks(
                 loop_animation: true,  // Single frame, doesn't matter
             },
             // UE5: Gravity -980 cm/s² = 9.8 m/s², reduced to 6.0 for higher arc
-            VelocityAligned { velocity, gravity: 6.0 },
+            VelocityAligned { velocity, gravity: 6.0, drag: 0.0 },
             SparkColorOverLife { random_phase },
             GroundExplosionChild,
             Name::new(format!("GE_Spark_{}", i)),
@@ -1198,7 +1201,7 @@ pub fn spawn_flash_sparks(
             },
             // UE5: No gravity, uses deceleration instead
             // Deceleration is handled by SparkLColorOverLife update system
-            VelocityAligned { velocity, gravity: 0.0 },
+            VelocityAligned { velocity, gravity: 0.0, drag: 0.0 },
             SparkLColorOverLife { random_phase, initial_size: size },
             GroundExplosionChild,
             Name::new(format!("GE_FlashSpark_{}", i)),
@@ -1482,7 +1485,7 @@ pub fn spawn_velocity_dirt(
             },
             // VelocityAligned with NO gravity (key difference from dirt)
             // UE5: High drag (2.0) decelerates quickly
-            VelocityAligned { velocity, gravity: 0.0 },
+            VelocityAligned { velocity, gravity: 0.0, drag: 2.0 },
             // Track scale-over-life (same alpha curve as dirt)
             Dirt001ScaleOverLife {
                 initial_size: size,
@@ -1676,6 +1679,12 @@ pub fn update_velocity_aligned_billboards(
 
         // Apply gravity
         vel_aligned.velocity.y -= vel_aligned.gravity * dt;
+
+        // Apply drag (exponential decay: v = v * e^(-drag * dt))
+        if vel_aligned.drag > 0.0 {
+            let drag_factor = (-vel_aligned.drag * dt).exp();
+            vel_aligned.velocity *= drag_factor;
+        }
 
         // Apply velocity to position
         transform.translation += vel_aligned.velocity * dt;
@@ -2469,6 +2478,7 @@ pub fn ground_explosion_debug_menu_system(
             info!("   F9: Dirt Debris");
             info!("   F10: FULL EXPLOSION (all emitters)");
             info!("   F11: Parts Debris (3D mesh)");
+            info!("   F12: Velocity Dirt (dirt001)");
             info!("   P: Close menu");
         } else {
             info!("🔧 Ground Explosion Debug Menu CLOSED");
@@ -2525,6 +2535,8 @@ pub fn ground_explosion_debug_menu_system(
         Some((EmitterType::Dirt, "Dirt Debris"))
     } else if keyboard_input.just_pressed(KeyCode::F11) {
         Some((EmitterType::Parts, "Parts Debris"))
+    } else if keyboard_input.just_pressed(KeyCode::F12) {
+        Some((EmitterType::VelocityDirt, "Velocity Dirt (dirt001)"))
     } else {
         None
     };
