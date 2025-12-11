@@ -568,9 +568,10 @@ pub fn spawn_main_fireball(
 
         // UE5: AddVelocityInCone - 90° cone pointing up (Z=1), speed 450-650
         // Convert to hemisphere distribution
+        // Reduced velocity for less vertical stretch (was 4.5-6.5)
         let theta = rng.gen_range(0.0..std::f32::consts::TAU);
         let phi = rng.gen_range(0.0..std::f32::consts::FRAC_PI_2); // 0-90° from vertical
-        let speed = rng.gen_range(4.5..6.5) * scale; // UE5 450-650 cm/s -> 4.5-6.5 m/s
+        let speed = rng.gen_range(3.0..5.0) * scale; // Reduced from 4.5-6.5 m/s
 
         let velocity = Vec3::new(
             phi.sin() * theta.cos() * speed,
@@ -666,9 +667,10 @@ pub fn spawn_secondary_fireball(
         );
 
         // UE5: AddVelocityInCone - 90° cone, speed 450-650
+        // Reduced velocity for less vertical stretch (was 4.5-6.5)
         let theta = rng.gen_range(0.0..std::f32::consts::TAU);
         let phi = rng.gen_range(0.0..std::f32::consts::FRAC_PI_2);
-        let speed = rng.gen_range(4.5..6.5) * scale;
+        let speed = rng.gen_range(3.0..5.0) * scale; // Reduced from 4.5-6.5 m/s
 
         let velocity = Vec3::new(
             phi.sin() * theta.cos() * speed,
@@ -1083,8 +1085,8 @@ pub fn spawn_sparks(
         commands.spawn((
             Mesh3d(assets.centered_quad.clone()),
             MeshMaterial3d(material),
-            // Spawn at explosion core height (3.0 * scale matches fireball base)
-            Transform::from_translation(position + Vec3::Y * 3.0 * scale).with_scale(Vec3::splat(size)),
+            // Spawn at explosion core
+            Transform::from_translation(position).with_scale(Vec3::splat(size)),
             Visibility::Visible,
             NotShadowCaster,
             NotShadowReceiver,
@@ -1099,8 +1101,8 @@ pub fn spawn_sparks(
                 base_alpha: 1.0,
                 loop_animation: true,  // Single frame, doesn't matter
             },
-            // UE5: Gravity -980 cm/s² = 9.8 m/s², reduced to 6.0 for higher arc
-            VelocityAligned { velocity, gravity: 6.0, drag: 0.0 },
+            // UE5: Gravity -980 cm/s² = 9.8 m/s²
+            VelocityAligned { velocity, gravity: 9.8, drag: 0.0 },
             SparkColorOverLife { random_phase },
             GroundExplosionChild,
             Name::new(format!("GE_Spark_{}", i)),
@@ -1182,8 +1184,8 @@ pub fn spawn_flash_sparks(
         commands.spawn((
             Mesh3d(assets.centered_quad.clone()),
             MeshMaterial3d(material),
-            // Spawn at explosion core height (2.5 * scale matches fireball base)
-            Transform::from_translation(position + spawn_offset + Vec3::Y * 2.5 * scale)
+            // Spawn at explosion core with ring offset
+            Transform::from_translation(position + spawn_offset)
                 .with_scale(Vec3::splat(size)),
             Visibility::Visible,
             NotShadowCaster,
@@ -1331,9 +1333,8 @@ pub fn spawn_dirt_debris(
     let count = 35;
 
     for i in 0..count {
-        // UE5 spec: 50-100 units (0.5-1.0m), scaled up for visibility
-        // Previous: 1.5..2.5m, now ~1.5x larger
-        let size = rng.gen_range(2.0..3.5) * scale;
+        // UE5 spec: 50-100 units (0.5-1.0m), scaled 4× to match main emitters
+        let size = rng.gen_range(8.0..14.0) * scale;
 
         // UE5: RandomRangeVector2D for non-uniform size
         // Min: (30, 200), Max: (100, 500) -> normalized to multipliers
@@ -1420,9 +1421,8 @@ pub fn spawn_velocity_dirt(
     let count = rng.gen_range(10..=15);
 
     for i in 0..count {
-        // UE5 spec: 50-100 units (0.5-1.0m), scaled up for visibility
-        // Previous: 1.5..2.5m, now ~1.5x larger (matching dirt)
-        let size = rng.gen_range(2.0..3.5) * scale;
+        // UE5 spec: 50-100 units (0.5-1.0m), scaled 4× to match main emitters
+        let size = rng.gen_range(8.0..14.0) * scale;
 
         // UE5: RandomRangeVector2D for non-uniform size
         // Min: (200, 350), Max: (400, 600) - elongated shapes
@@ -1865,8 +1865,9 @@ pub fn update_fireball_scale(
 
         // UE5 cubic interpolation: 0.5 → 2.0 with ease-out (tangent 3.2)
         // Using cubic ease-out: 1 - (1-t)³
+        // Adjusted to 0.5 → 1.3 for less vertical stretch
         let ease = 1.0 - (1.0 - t).powi(3);
-        let scale_factor = 0.5 + ease * 1.5;  // 0.5 → 2.0
+        let scale_factor = 0.5 + ease * 0.8;  // 0.5 → 1.3
 
         let new_size = scale_over_life.initial_size * scale_factor;
         transform.scale = Vec3::splat(new_size);
