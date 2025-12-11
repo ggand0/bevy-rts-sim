@@ -240,7 +240,9 @@ pub fn spawn_army_with_squads(
 pub struct UnitMaterials {
     pub body_material: Handle<StandardMaterial>,
     pub head_material: Handle<StandardMaterial>,
+    #[allow(dead_code)] // Reserved for commander differentiation
     pub commander_body_material: Handle<StandardMaterial>,
+    #[allow(dead_code)] // Reserved for commander differentiation
     pub commander_head_material: Handle<StandardMaterial>,
 }
 

@@ -85,6 +85,7 @@ impl Material for FlipbookMaterial {
 #[derive(Component)]
 pub struct FlipbookSprite {
     pub columns: u32,
+    #[allow(dead_code)] // Used for documentation/future use
     pub rows: u32,
     pub total_frames: u32,
     pub frame_duration: f32,
@@ -200,7 +201,6 @@ pub struct WispScaleOverLife {
 pub struct WispPhysics {
     pub velocity: Vec3,
     pub gravity: f32,
-    pub secondary_velocity: Vec3,  // Unused, kept for compatibility
 }
 
 /// Smoke color-over-life - color darkens and alpha fades over lifetime
@@ -240,6 +240,7 @@ pub struct BottomPivot;
 
 /// Ground explosion parent entity for lifetime tracking
 #[derive(Component)]
+#[allow(dead_code)] // Reserved for future parent entity tracking
 pub struct GroundExplosion {
     pub lifetime: f32,
     pub max_lifetime: f32,
@@ -302,6 +303,7 @@ pub enum EmitterType {
     Spark,             // 8 (both sparks)
     FlashSpark,        // 8 (both sparks)
     Parts,             // 9
+    #[allow(dead_code)]
     Impact,            // (internal, spawned with full explosion)
 }
 
@@ -555,6 +557,7 @@ pub fn spawn_single_emitter(
 /// Simple main fireball - 8x8 flipbook, bottom pivot, velocity aligned
 /// No UV zoom effect - shows full texture from start
 /// Useful for generic explosion effects
+#[allow(dead_code)]
 pub fn spawn_simple_main_fireball(
     commands: &mut Commands,
     assets: &GroundExplosionAssets,
@@ -642,6 +645,7 @@ pub fn spawn_simple_main_fireball(
 /// Simple secondary fireball - 8x8 flipbook, bottom pivot, velocity aligned
 /// No UV zoom effect - shows full texture from start
 /// Useful for generic explosion effects
+#[allow(dead_code)]
 pub fn spawn_simple_secondary_fireball(
     commands: &mut Commands,
     assets: &GroundExplosionAssets,
@@ -1120,7 +1124,6 @@ pub fn spawn_wisps(
             WispPhysics {
                 velocity,
                 gravity: 9.8,  // Same gravity as dirt
-                secondary_velocity: Vec3::ZERO,
             },
             WispScaleOverLife { initial_size: size },
             SpriteRotation { angle: rotation_angle },
@@ -1878,7 +1881,7 @@ pub fn update_velocity_aligned_billboards(
         .map(|t| t.translation())
         .unwrap_or(Vec3::ZERO);
 
-    for (mut transform, mut vel_aligned, bottom_pivot, sprite_rotation, flipbook) in query.iter_mut() {
+    for (mut transform, mut vel_aligned, _bottom_pivot, sprite_rotation, flipbook) in query.iter_mut() {
         // Skip particles still in spawn delay
         if let Some(fb) = flipbook {
             if fb.elapsed < 0.0 {

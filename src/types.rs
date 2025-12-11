@@ -323,6 +323,7 @@ impl Health {
         self.current <= 0.0
     }
     
+    #[allow(dead_code)]
     pub fn health_percentage(&self) -> f32 {
         self.current / self.max
     }
