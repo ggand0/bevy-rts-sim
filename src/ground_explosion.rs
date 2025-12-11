@@ -272,20 +272,24 @@ pub struct GroundExplosionDebugMenu {
     pub active: bool,
 }
 
+/// Marker component for the debug menu UI text
+#[derive(Component)]
+pub struct GroundExplosionDebugUI;
+
 /// Emitter types for individual testing
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EmitterType {
-    MainFireball,      // F1
-    SecondaryFireball, // F2
-    Smoke,             // F3
-    Wisp,              // F4
-    Dust,              // F5
-    Spark,             // F6
-    FlashSpark,        // F7
-    Impact,            // F8
-    Dirt,              // F9
-    Parts,             // F11 (F10 is full explosion)
-    VelocityDirt,      // F12
+    MainFireball,      // 1
+    SecondaryFireball, // 2
+    Dirt,              // 3
+    VelocityDirt,      // 4
+    Dust,              // 5
+    Wisp,              // 6
+    Smoke,             // 7
+    Spark,             // 8 (both sparks)
+    FlashSpark,        // 8 (both sparks)
+    Parts,             // 9
+    Impact,            // (internal, spawned with full explosion)
 }
 
 // ===== PRELOADED ASSETS =====
@@ -2455,36 +2459,31 @@ pub fn ground_explosion_debug_menu_system(
     if keyboard_input.just_pressed(KeyCode::KeyP) {
         debug_menu.active = !debug_menu.active;
         if debug_menu.active {
-            info!("🔧 Ground Explosion Debug Menu ACTIVE");
-            info!("   F1: Main Fireball (8x8 flipbook)");
-            info!("   F2: Secondary Fireball (8x8 flipbook)");
-            info!("   F3: Smoke Cloud (8x8 flipbook)");
-            info!("   F4: Wisps (8x8 flipbook)");
-            info!("   F5: Dust Ring (4x1 flipbook)");
-            info!("   F6: Sparks (additive)");
-            info!("   F7: Flash Sparks (additive)");
-            info!("   F8: Impact Flash (additive)");
-            info!("   F9: Dirt Debris");
-            info!("   F10: FULL EXPLOSION (all emitters)");
-            info!("   F11: Parts Debris (3D mesh)");
-            info!("   F12: Velocity Dirt (dirt001)");
-            info!("   P: Close menu");
+            info!("═══════════════════════════════════════");
+            info!("  GROUND EXPLOSION DEBUG [P]");
+            info!("═══════════════════════════════════════");
+            info!("  1: main       2: main001    3: dirt");
+            info!("  4: dirt001    5: dust       6: wisp");
+            info!("  7: smoke      8: sparks     9: parts");
+            info!("  J: group 1-6  K: full explosion");
+            info!("  P: close");
+            info!("═══════════════════════════════════════");
         } else {
-            info!("🔧 Ground Explosion Debug Menu CLOSED");
+            info!("Ground Explosion Debug CLOSED");
         }
         return;
     }
 
-    // Only process F keys when menu is active
+    // Only process keys when menu is active
     if !debug_menu.active {
         return;
     }
 
     let Some(assets) = ground_assets else {
         if keyboard_input.any_just_pressed([
-            KeyCode::F1, KeyCode::F2, KeyCode::F3,
-            KeyCode::F4, KeyCode::F5, KeyCode::F6,
-            KeyCode::F7, KeyCode::F8, KeyCode::F9,
+            KeyCode::Digit1, KeyCode::Digit2, KeyCode::Digit3,
+            KeyCode::Digit4, KeyCode::Digit5, KeyCode::Digit6,
+            KeyCode::Digit7, KeyCode::Digit8, KeyCode::Digit9,
         ]) {
             warn!("Ground explosion assets not loaded yet!");
         }
@@ -2504,34 +2503,29 @@ pub fn ground_explosion_debug_menu_system(
     };
     let scale = 1.0;
 
-    let emitter = if keyboard_input.just_pressed(KeyCode::F1) {
-        Some((EmitterType::MainFireball, "Main Fireball"))
-    } else if keyboard_input.just_pressed(KeyCode::F2) {
-        Some((EmitterType::SecondaryFireball, "Secondary Fireball"))
-    } else if keyboard_input.just_pressed(KeyCode::F3) {
-        Some((EmitterType::Smoke, "Smoke Cloud"))
-    } else if keyboard_input.just_pressed(KeyCode::F4) {
-        Some((EmitterType::Wisp, "Wisps"))
-    } else if keyboard_input.just_pressed(KeyCode::F5) {
-        Some((EmitterType::Dust, "Dust Ring"))
-    } else if keyboard_input.just_pressed(KeyCode::F6) {
-        Some((EmitterType::Spark, "Sparks"))
-    } else if keyboard_input.just_pressed(KeyCode::F7) {
-        Some((EmitterType::FlashSpark, "Flash Sparks"))
-    } else if keyboard_input.just_pressed(KeyCode::F8) {
-        Some((EmitterType::Impact, "Impact Flash"))
-    } else if keyboard_input.just_pressed(KeyCode::F9) {
-        Some((EmitterType::Dirt, "Dirt Debris"))
-    } else if keyboard_input.just_pressed(KeyCode::F11) {
-        Some((EmitterType::Parts, "Parts Debris"))
-    } else if keyboard_input.just_pressed(KeyCode::F12) {
-        Some((EmitterType::VelocityDirt, "Velocity Dirt (dirt001)"))
+    // Get camera transform for local-space velocity calculation
+    let camera_transform = camera_query.iter().next();
+
+    // Individual emitter keys (1-9)
+    let emitter = if keyboard_input.just_pressed(KeyCode::Digit1) {
+        Some((EmitterType::MainFireball, "main"))
+    } else if keyboard_input.just_pressed(KeyCode::Digit2) {
+        Some((EmitterType::SecondaryFireball, "main001"))
+    } else if keyboard_input.just_pressed(KeyCode::Digit3) {
+        Some((EmitterType::Dirt, "dirt"))
+    } else if keyboard_input.just_pressed(KeyCode::Digit4) {
+        Some((EmitterType::VelocityDirt, "dirt001"))
+    } else if keyboard_input.just_pressed(KeyCode::Digit5) {
+        Some((EmitterType::Dust, "dust"))
+    } else if keyboard_input.just_pressed(KeyCode::Digit6) {
+        Some((EmitterType::Wisp, "wisp"))
+    } else if keyboard_input.just_pressed(KeyCode::Digit7) {
+        Some((EmitterType::Smoke, "smoke"))
+    } else if keyboard_input.just_pressed(KeyCode::Digit9) {
+        Some((EmitterType::Parts, "parts"))
     } else {
         None
     };
-
-    // Get camera transform for local-space velocity calculation
-    let camera_transform = camera_query.iter().next();
 
     if let Some((emitter_type, name)) = emitter {
         spawn_single_emitter(
@@ -2544,11 +2538,60 @@ pub fn ground_explosion_debug_menu_system(
             scale,
             camera_transform,
         );
-        info!("🌋 Spawned: {} at ({:.1}, {:.1}, {:.1})", name, position.x, position.y, position.z);
+        info!("[P] Spawned: {}", name);
     }
 
-    // F10 spawns the combined full explosion effect
-    if keyboard_input.just_pressed(KeyCode::F10) {
+    // 8: Both spark emitters
+    if keyboard_input.just_pressed(KeyCode::Digit8) {
+        spawn_single_emitter(
+            &mut commands,
+            &assets,
+            &mut flipbook_materials,
+            &mut additive_materials,
+            EmitterType::Spark,
+            position,
+            scale,
+            camera_transform,
+        );
+        spawn_single_emitter(
+            &mut commands,
+            &assets,
+            &mut flipbook_materials,
+            &mut additive_materials,
+            EmitterType::FlashSpark,
+            position,
+            scale,
+            camera_transform,
+        );
+        info!("[P] Spawned: sparks (both)");
+    }
+
+    // J: Emitter group 1-6 (main, main001, dirt, dirt001, dust, wisp)
+    if keyboard_input.just_pressed(KeyCode::KeyJ) {
+        for emitter_type in [
+            EmitterType::MainFireball,
+            EmitterType::SecondaryFireball,
+            EmitterType::Dirt,
+            EmitterType::VelocityDirt,
+            EmitterType::Dust,
+            EmitterType::Wisp,
+        ] {
+            spawn_single_emitter(
+                &mut commands,
+                &assets,
+                &mut flipbook_materials,
+                &mut additive_materials,
+                emitter_type,
+                position,
+                scale,
+                camera_transform,
+            );
+        }
+        info!("[P] Spawned: group 1-6 (main, main001, dirt, dirt001, dust, wisp)");
+    }
+
+    // K: Full explosion (all emitters)
+    if keyboard_input.just_pressed(KeyCode::KeyK) {
         spawn_ground_explosion(
             &mut commands,
             &assets,
@@ -2559,6 +2602,42 @@ pub fn ground_explosion_debug_menu_system(
             camera_transform,
             Some(&audio_assets),
         );
-        info!("🌋 Spawned: FULL GROUND EXPLOSION at ({:.1}, {:.1}, {:.1})", position.x, position.y, position.z);
+        info!("[P] Spawned: FULL EXPLOSION");
+    }
+}
+
+/// Spawn the debug menu UI (hidden by default)
+pub fn setup_ground_explosion_debug_ui(mut commands: Commands) {
+    commands.spawn((
+        Text::new("GROUND EXPLOSION [P]\n─────────────────────\n1: main    2: main001\n3: dirt    4: dirt001\n5: dust    6: wisp\n7: smoke   8: sparks\n9: parts\n─────────────────────\nJ: group 1-6\nK: full explosion\nP: close"),
+        TextFont {
+            font_size: 16.0,
+            ..default()
+        },
+        TextColor(Color::srgb(1.0, 0.8, 0.2)),  // Orange/gold color
+        Node {
+            position_type: PositionType::Absolute,
+            // WFX debug UI is at bottom: 10px with font_size 16px (~20px line height)
+            // Position this just above it: 10 + 20 + 10 gap = 40px
+            bottom: Val::Px(40.0),
+            left: Val::Px(10.0),
+            ..default()
+        },
+        Visibility::Hidden,
+        GroundExplosionDebugUI,
+    ));
+}
+
+/// Update debug menu UI visibility based on menu state
+pub fn update_ground_explosion_debug_ui(
+    debug_menu: Res<GroundExplosionDebugMenu>,
+    mut query: Query<&mut Visibility, With<GroundExplosionDebugUI>>,
+) {
+    for mut visibility in query.iter_mut() {
+        *visibility = if debug_menu.active {
+            Visibility::Visible
+        } else {
+            Visibility::Hidden
+        };
     }
 }

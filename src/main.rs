@@ -61,7 +61,7 @@ fn main() {
         .insert_resource(ExplosionDebugMode::default())
         .insert_resource(selection::SelectionState::default())
         .insert_resource(ground_explosion::GroundExplosionDebugMenu::default())
-        .add_systems(Startup, (setup::setup_scene, spawn_uplink_towers, spawn_debug_mode_ui, setup_laser_assets, ground_explosion::setup_ground_explosion_assets))
+        .add_systems(Startup, (setup::setup_scene, spawn_uplink_towers, spawn_debug_mode_ui, setup_laser_assets, ground_explosion::setup_ground_explosion_assets, ground_explosion::setup_ground_explosion_debug_ui))
         // Army spawning runs after terrain is ready (terrain spawns in TerrainPlugin's Startup)
         .add_systems(Startup, setup::spawn_army_with_squads.after(terrain::spawn_initial_terrain))
         // Turret spawning runs after terrain is ready
@@ -201,6 +201,7 @@ fn main() {
             ground_explosion::update_impact_lights,
             ground_explosion::cleanup_ground_explosions,
             ground_explosion::ground_explosion_debug_menu_system,
+            ground_explosion::update_ground_explosion_debug_ui,
         ))
         .run();
 }
