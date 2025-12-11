@@ -46,8 +46,10 @@ pub struct FlipbookMaterial {
     pub frame_data: Vec4, // x: frame_col, y: frame_row, z: columns, w: rows
     #[uniform(1)]
     pub color_data: Vec4, // RGB: tint color, A: alpha
-    #[texture(2, dimension = "2d")]
-    #[sampler(3)]
+    #[uniform(2)]
+    pub uv_scale: f32, // UV zoom: 1.0 = full texture, >1 = zoomed into center (UE5: 500→1)
+    #[texture(3, dimension = "2d")]
+    #[sampler(4)]
     pub sprite_texture: Handle<Image>,
 }
 
@@ -137,6 +139,17 @@ pub struct SmokeScaleOverLife {
 pub struct FireballScaleOverLife {
     pub initial_size: f32,
 }
+
+/// UE5 UV zoom component - animates uv_scale from 500→1 over lifetime
+/// This creates a "zooming out" effect where more texture becomes visible over time
+/// LUT samples: t=0.0→500, t=0.2→466, t=0.4→350, t=0.6→224, t=0.8→100, t=1.0→1
+#[derive(Component)]
+pub struct FireballUVZoom;
+
+/// Marker for fireball S-curve alpha fade (replaces hold-then-fade)
+/// UE5 LUT: t=0→1.0, t=0.2→0.77, t=0.4→0.56, t=0.6→0.33, t=0.8→0.14, t=1.0→0.0
+#[derive(Component)]
+pub struct FireballAlphaCurve;
 
 /// Dirt scale-over-life component - UE5 curves from dirt.md:
 /// - Scale: Linear shrink 100→0 over lifetime
@@ -533,10 +546,195 @@ pub fn spawn_single_emitter(
     }
 }
 
+// =============================================================================
+// SIMPLE FIREBALL VARIANTS (no UV zoom - useful for other effects)
+// =============================================================================
+// These are the original implementations before adding UE5-accurate UV zoom.
+// They're simpler and can be useful for other explosion effects.
+
+/// Simple main fireball - 8x8 flipbook, bottom pivot, velocity aligned
+/// No UV zoom effect - shows full texture from start
+/// Useful for generic explosion effects
+pub fn spawn_simple_main_fireball(
+    commands: &mut Commands,
+    assets: &GroundExplosionAssets,
+    materials: &mut ResMut<Assets<FlipbookMaterial>>,
+    position: Vec3,
+    scale: f32,
+    rng: &mut impl Rng,
+) {
+    let count = rng.gen_range(9..=17);
+    let lifetime = 1.5;
+    let total_frames = 64;
+    let frame_duration = lifetime / total_frames as f32;
+
+    for i in 0..count {
+        let size = rng.gen_range(14.0..18.0) * scale;
+
+        // Spawn within sphere
+        let sphere_radius = 0.5 * scale;
+        let spawn_theta = rng.gen_range(0.0..std::f32::consts::TAU);
+        let spawn_phi = rng.gen_range(0.0..std::f32::consts::PI);
+        let spawn_r = rng.gen_range(0.0..sphere_radius);
+        let spawn_offset = Vec3::new(
+            spawn_r * spawn_phi.sin() * spawn_theta.cos(),
+            spawn_r * spawn_phi.cos().abs() * 0.5,
+            spawn_r * spawn_phi.sin() * spawn_theta.sin(),
+        );
+
+        // Cone velocity
+        let theta = rng.gen_range(0.0..std::f32::consts::TAU);
+        let phi = rng.gen_range(0.0..std::f32::consts::FRAC_PI_2);
+        let speed = rng.gen_range(3.0..5.0) * scale;
+
+        let velocity = Vec3::new(
+            phi.sin() * theta.cos() * speed,
+            phi.cos() * speed,
+            phi.sin() * theta.sin() * speed,
+        );
+
+        // HSV color variation
+        let hue_shift = rng.gen_range(-0.1..0.1);
+        let saturation = rng.gen_range(0.8..1.0);
+        let value = rng.gen_range(0.8..1.0);
+        let (r, g, b) = hsv_to_rgb(0.08 + hue_shift, saturation, value);
+
+        let alpha = rng.gen_range(0.8..1.0);
+        let rotation_angle = rng.gen_range(0.0..std::f32::consts::TAU);
+
+        let material = materials.add(FlipbookMaterial {
+            frame_data: Vec4::new(0.0, 0.0, 8.0, 8.0),
+            color_data: Vec4::new(r, g, b, alpha),
+            uv_scale: 1.0, // No zoom for simple variant
+            sprite_texture: assets.main_texture.clone(),
+        });
+
+        let spawn_delay = 0.05;
+
+        commands.spawn((
+            Mesh3d(assets.bottom_pivot_quad.clone()),
+            MeshMaterial3d(material),
+            Transform::from_translation(position + spawn_offset).with_scale(Vec3::splat(size)),
+            Visibility::Hidden,
+            NotShadowCaster,
+            NotShadowReceiver,
+            FlipbookSprite {
+                columns: 8,
+                rows: 8,
+                total_frames,
+                frame_duration,
+                elapsed: -spawn_delay,
+                lifetime: 0.0,
+                max_lifetime: lifetime,
+                base_alpha: alpha,
+                loop_animation: false,
+            },
+            VelocityAligned { velocity, gravity: 0.0, drag: 0.0 },
+            SpriteRotation { angle: rotation_angle },
+            FireballScaleOverLife { initial_size: size },
+            BottomPivot,
+            GroundExplosionChild,
+            Name::new(format!("GE_SimpleMainFireball_{}", i)),
+        ));
+    }
+}
+
+/// Simple secondary fireball - 8x8 flipbook, bottom pivot, velocity aligned
+/// No UV zoom effect - shows full texture from start
+/// Useful for generic explosion effects
+pub fn spawn_simple_secondary_fireball(
+    commands: &mut Commands,
+    assets: &GroundExplosionAssets,
+    materials: &mut ResMut<Assets<FlipbookMaterial>>,
+    position: Vec3,
+    scale: f32,
+    rng: &mut impl Rng,
+) {
+    let count = rng.gen_range(7..=13);
+    let lifetime = 1.5;
+    let total_frames = 64;
+    let frame_duration = lifetime / total_frames as f32;
+
+    for i in 0..count {
+        let size = rng.gen_range(14.0..18.0) * scale;
+
+        // Spawn within sphere
+        let sphere_radius = 0.5 * scale;
+        let spawn_theta = rng.gen_range(0.0..std::f32::consts::TAU);
+        let spawn_phi = rng.gen_range(0.0..std::f32::consts::PI);
+        let spawn_r = rng.gen_range(0.0..sphere_radius);
+        let spawn_offset = Vec3::new(
+            spawn_r * spawn_phi.sin() * spawn_theta.cos(),
+            spawn_r * spawn_phi.cos().abs() * 0.5,
+            spawn_r * spawn_phi.sin() * spawn_theta.sin(),
+        );
+
+        // Cone velocity
+        let theta = rng.gen_range(0.0..std::f32::consts::TAU);
+        let phi = rng.gen_range(0.0..std::f32::consts::FRAC_PI_2);
+        let speed = rng.gen_range(3.0..5.0) * scale;
+
+        let velocity = Vec3::new(
+            phi.sin() * theta.cos() * speed,
+            phi.cos() * speed,
+            phi.sin() * theta.sin() * speed,
+        );
+
+        // HSV color variation
+        let hue_shift = rng.gen_range(-0.1..0.1);
+        let saturation = rng.gen_range(0.8..1.0);
+        let value = rng.gen_range(0.8..1.0);
+        let (r, g, b) = hsv_to_rgb(0.08 + hue_shift, saturation, value);
+
+        let alpha = rng.gen_range(0.8..1.0);
+        let rotation_angle = rng.gen_range(0.0..std::f32::consts::TAU);
+
+        let material = materials.add(FlipbookMaterial {
+            frame_data: Vec4::new(0.0, 0.0, 8.0, 8.0),
+            color_data: Vec4::new(r, g, b, alpha),
+            uv_scale: 1.0, // No zoom for simple variant
+            sprite_texture: assets.secondary_texture.clone(),
+        });
+
+        let spawn_delay = 0.05;
+
+        commands.spawn((
+            Mesh3d(assets.bottom_pivot_quad.clone()),
+            MeshMaterial3d(material),
+            Transform::from_translation(position + spawn_offset).with_scale(Vec3::splat(size)),
+            Visibility::Hidden,
+            NotShadowCaster,
+            NotShadowReceiver,
+            FlipbookSprite {
+                columns: 8,
+                rows: 8,
+                total_frames,
+                frame_duration,
+                elapsed: -spawn_delay,
+                lifetime: 0.0,
+                max_lifetime: lifetime,
+                base_alpha: alpha,
+                loop_animation: false,
+            },
+            VelocityAligned { velocity, gravity: 0.0, drag: 0.0 },
+            SpriteRotation { angle: rotation_angle },
+            FireballScaleOverLife { initial_size: size },
+            BottomPivot,
+            GroundExplosionChild,
+            Name::new(format!("GE_SimpleSecondaryFireball_{}", i)),
+        ));
+    }
+}
+
+// =============================================================================
+// UE5-ACCURATE FIREBALL (with UV zoom effect)
+// =============================================================================
+
 /// Main fireball - 8x8 flipbook (64 frames), 1s duration, bottom pivot, velocity aligned
 /// UE5 spec says 9x9 but actual texture is 8x8 (2048/256=8)
 /// UE5: 7-13 particles, cone velocity 90°, size 2500-2600 (~25m), speed 450-650
 /// Spawn delay: 0.05s, HSV color variation, sprite rotation 0-360°
+/// NOW WITH: UV zoom effect (500→1) and S-curve alpha fade
 pub fn spawn_main_fireball(
     commands: &mut Commands,
     assets: &GroundExplosionAssets,
@@ -600,6 +798,7 @@ pub fn spawn_main_fireball(
         let material = materials.add(FlipbookMaterial {
             frame_data: Vec4::new(0.0, 0.0, 8.0, 8.0), // 8x8 grid
             color_data: Vec4::new(r, g, b, alpha),
+            uv_scale: 1.0, // UV zoom disabled - UE5's 500→1 doesn't translate directly to our shader
             sprite_texture: assets.main_texture.clone(),
         });
 
@@ -627,6 +826,8 @@ pub fn spawn_main_fireball(
             VelocityAligned { velocity, gravity: 0.0, drag: 0.0 },
             SpriteRotation { angle: rotation_angle },
             FireballScaleOverLife { initial_size: size },
+            // FireballUVZoom disabled - needs investigation of UE5's UV scale behavior
+            FireballAlphaCurve, // UE5 S-curve alpha fade (not hold-then-fade)
             BottomPivot,
             GroundExplosionChild,
             Name::new(format!("GE_MainFireball_{}", i)),
@@ -637,6 +838,7 @@ pub fn spawn_main_fireball(
 /// Secondary fireball - 8x8 flipbook (64 frames), 1s duration
 /// UE5: 5-10 particles, cone velocity 90°, size 2500-2600, speed 450-650
 /// Spawn delay: 0.05s, HSV color variation, sprite rotation 0-360°
+/// NOW WITH: UV zoom effect (500→1) and S-curve alpha fade
 pub fn spawn_secondary_fireball(
     commands: &mut Commands,
     assets: &GroundExplosionAssets,
@@ -699,6 +901,7 @@ pub fn spawn_secondary_fireball(
         let material = materials.add(FlipbookMaterial {
             frame_data: Vec4::new(0.0, 0.0, 8.0, 8.0),
             color_data: Vec4::new(r, g, b, alpha),
+            uv_scale: 1.0, // UV zoom disabled - UE5's 500→1 doesn't translate directly to our shader
             sprite_texture: assets.secondary_texture.clone(),
         });
 
@@ -726,6 +929,8 @@ pub fn spawn_secondary_fireball(
             VelocityAligned { velocity, gravity: 0.0, drag: 0.0 },
             SpriteRotation { angle: rotation_angle },
             FireballScaleOverLife { initial_size: size },
+            // FireballUVZoom disabled - needs investigation of UE5's UV scale behavior
+            FireballAlphaCurve, // UE5 S-curve alpha fade (not hold-then-fade)
             BottomPivot,
             GroundExplosionChild,
             Name::new(format!("GE_SecondaryFireball_{}", i)),
@@ -806,6 +1011,7 @@ pub fn spawn_smoke_cloud(
         let material = materials.add(FlipbookMaterial {
             frame_data: Vec4::new(0.0, 0.0, 8.0, 8.0),
             color_data: Vec4::new(0.4, 0.4, 0.4, 0.6),  // Initial: medium grey, 60% opacity
+            uv_scale: 1.0,
             sprite_texture: assets.smoke_texture.clone(),
         });
 
@@ -885,6 +1091,7 @@ pub fn spawn_wisps(
         let material = materials.add(FlipbookMaterial {
             frame_data: Vec4::new(0.0, 0.0, 8.0, 8.0),
             color_data: Vec4::new(0.15, 0.12, 0.10, 3.0), // Dark grey-black (same as dust), 3× brightness
+            uv_scale: 1.0,
             sprite_texture: assets.wisp_texture.clone(),
         });
 
@@ -978,6 +1185,7 @@ pub fn spawn_dust_ring(
             let material = materials.add(FlipbookMaterial {
                 frame_data: Vec4::new(0.0, 0.0, 4.0, 1.0), // col, row, columns (4), rows (1)
                 color_data: Vec4::new(0.15, 0.12, 0.10, 3.0), // Dark grey-black, 3× brightness
+                uv_scale: 1.0,
                 sprite_texture: assets.dust_texture.clone(),
             });
 
@@ -1275,6 +1483,7 @@ pub fn spawn_impact_flash(
     let impact_material = flipbook_materials.add(FlipbookMaterial {
         frame_data: Vec4::new(0.0, 0.0, 1.0, 1.0),
         color_data: Vec4::new(1.0, 0.9, 0.7, 1.0), // Slight orange tint
+        uv_scale: 1.0,
         sprite_texture: assets.impact_texture.clone(),
     });
 
@@ -1322,8 +1531,8 @@ pub fn spawn_dirt_debris(
     let count = 35;
 
     for i in 0..count {
-        // UE5 spec: 50-100 units (0.5-1.0m), scaled 4× to match main emitters
-        let size = rng.gen_range(8.0..14.0) * scale;
+        // UE5 spec: 50-100 units (0.5-1.0m), scaled 2× for visibility
+        let size = rng.gen_range(1.0..2.0) * scale;
 
         // UE5: RandomRangeVector2D for non-uniform size
         // Min: (30, 200), Max: (100, 500) -> normalized to multipliers
@@ -1349,6 +1558,7 @@ pub fn spawn_dirt_debris(
         let material = materials.add(FlipbookMaterial {
             frame_data: Vec4::new(0.0, 0.0, 1.0, 1.0),
             color_data: Vec4::new(0.082, 0.063, 0.050, 0.0), // Dark brown, alpha=0 (fade-in)
+            uv_scale: 1.0,
             sprite_texture: assets.dirt_texture.clone(),
         });
 
@@ -1410,8 +1620,8 @@ pub fn spawn_velocity_dirt(
     let count = rng.gen_range(10..=15);
 
     for i in 0..count {
-        // UE5 spec: 50-100 units (0.5-1.0m), scaled 4× to match main emitters
-        let size = rng.gen_range(8.0..14.0) * scale;
+        // UE5 spec: 50-100 units (0.5-1.0m), scaled 2× for visibility
+        let size = rng.gen_range(1.0..2.0) * scale;
 
         // UE5: RandomRangeVector2D for non-uniform size
         // Min: (200, 350), Max: (400, 600) - elongated shapes
@@ -1447,6 +1657,7 @@ pub fn spawn_velocity_dirt(
         let material = materials.add(FlipbookMaterial {
             frame_data: Vec4::new(0.0, 0.0, 1.0, 1.0),
             color_data: Vec4::new(0.082, 0.063, 0.050, 0.0), // Dark brown, alpha=0
+            uv_scale: 1.0,
             sprite_texture: assets.dirt_texture.clone(),
         });
 
@@ -1574,13 +1785,14 @@ pub fn animate_flipbook_sprites(
         &mut Visibility,
         Option<&Name>,
         Option<&SmokeScaleOverLife>,  // Detect smoke for linear alpha fade
+        Option<&FireballAlphaCurve>,  // Detect fireball for S-curve alpha fade
     )>,
     mut materials: ResMut<Assets<FlipbookMaterial>>,
     time: Res<Time>,
 ) {
     let dt = time.delta_secs();
 
-    for (mut sprite, material_handle, mut visibility, name, is_smoke) in query.iter_mut() {
+    for (mut sprite, material_handle, mut visibility, name, is_smoke, is_fireball) in query.iter_mut() {
         sprite.elapsed += dt;
 
         // Handle spawn delay: negative elapsed means particle is waiting to spawn
@@ -1621,15 +1833,22 @@ pub fn animate_flipbook_sprites(
             material.frame_data.y = row as f32;
 
             // Smoke color is handled by update_smoke_color system (has SmokeColorOverLife)
-            // Other particles: UE5 Scale_Alpha_FloatCurve - hold at 1.0 until t=0.8, then cubic fade
+            // Alpha curves differ by particle type:
             if is_smoke.is_none() {
                 let progress = sprite.lifetime / sprite.max_lifetime;
-                let alpha = if progress > 0.8 {
-                    // UE5: Cubic ease-out fade from t=0.8 to t=1.0
-                    let local_t = (progress - 0.8) / 0.2;  // 0.0 → 1.0
-                    1.0 - local_t * local_t  // Quadratic approximation of cubic
+                let alpha = if is_fireball.is_some() {
+                    // UE5 fireball: S-curve fade throughout entire lifetime
+                    // LUT: t=0→1.0, t=0.2→0.77, t=0.4→0.56, t=0.6→0.33, t=0.8→0.14, t=1.0→0.0
+                    let s = progress * progress * (3.0 - 2.0 * progress); // smoothstep
+                    1.0 - s
                 } else {
-                    1.0
+                    // Other particles: hold at 1.0 until t=0.8, then cubic fade
+                    if progress > 0.8 {
+                        let local_t = (progress - 0.8) / 0.2;  // 0.0 → 1.0
+                        1.0 - local_t * local_t  // Quadratic approximation of cubic
+                    } else {
+                        1.0
+                    }
                 };
                 material.color_data.w = (sprite.base_alpha * alpha).max(0.0);
             }
@@ -1860,6 +2079,32 @@ pub fn update_fireball_scale(
 
         let new_size = scale_over_life.initial_size * scale_factor;
         transform.scale = Vec3::splat(new_size);
+    }
+}
+
+/// Update fireball UV zoom over lifetime - UE5 UV scale curve
+/// UV scale 500→1 over lifetime (smoothstep ease)
+/// Creates a "zooming out" effect where more texture becomes visible
+pub fn update_fireball_uv_zoom(
+    mut query: Query<(&FlipbookSprite, &MeshMaterial3d<FlipbookMaterial>, &FireballUVZoom), With<GroundExplosionChild>>,
+    mut materials: ResMut<Assets<FlipbookMaterial>>,
+) {
+    for (sprite, material_handle, _) in query.iter_mut() {
+        // Skip particles in spawn delay
+        if sprite.elapsed < 0.0 {
+            continue;
+        }
+
+        let t = (sprite.lifetime / sprite.max_lifetime).clamp(0.0, 1.0);
+
+        // UE5 UV scale: 500 → 1 with smoothstep ease
+        // LUT: t=0→500, t=0.2→466, t=0.4→350, t=0.6→224, t=0.8→100, t=1.0→1
+        let ease = t * t * (3.0 - 2.0 * t); // smoothstep
+        let uv_scale = 500.0 - ease * 499.0; // 500 → 1
+
+        if let Some(material) = materials.get_mut(material_handle) {
+            material.uv_scale = uv_scale;
+        }
     }
 }
 

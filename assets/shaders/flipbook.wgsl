@@ -5,8 +5,10 @@ var<uniform> frame_data: vec4<f32>;  // x: frame_col, y: frame_row, z: columns, 
 @group(2) @binding(1)
 var<uniform> color_data: vec4<f32>;  // RGB: tint color, A: alpha (overall fade)
 @group(2) @binding(2)
-var sprite_texture: texture_2d<f32>;
+var<uniform> uv_scale: f32;  // UV zoom: 1.0 = full texture, >1 = zoomed into center
 @group(2) @binding(3)
+var sprite_texture: texture_2d<f32>;
+@group(2) @binding(4)
 var sprite_sampler: sampler;
 
 @fragment
@@ -21,10 +23,16 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let frame_size_x = 1.0 / columns;
     let frame_size_y = 1.0 / rows;
 
+    // Apply UV zoom effect (UE5: starts at 500, zooms out to 1)
+    // uv_scale > 1 means zoomed into center, 1 = full texture
+    // Center UV at 0.5, scale around center, then shift back
+    let centered_uv = in.uv - vec2<f32>(0.5, 0.5);
+    let zoomed_uv = centered_uv / uv_scale + vec2<f32>(0.5, 0.5);
+
     // Simple UV calculation matching explosion.wgsl approach
     // Scale UV to frame size, then offset to correct frame position
     let frame_offset = vec2<f32>(frame_col * frame_size_x, frame_row * frame_size_y);
-    let frame_uv = in.uv * vec2<f32>(frame_size_x, frame_size_y) + frame_offset;
+    let frame_uv = zoomed_uv * vec2<f32>(frame_size_x, frame_size_y) + frame_offset;
 
     // Sample the flipbook texture
     let sprite_sample = textureSample(sprite_texture, sprite_sampler, frame_uv);

@@ -177,6 +177,7 @@ fn main() {
             ground_explosion::update_dirt_physics,
             ground_explosion::update_smoke_scale,
             ground_explosion::update_fireball_scale,
+            ground_explosion::update_fireball_uv_zoom,
             ground_explosion::update_dirt_scale,
             ground_explosion::update_dirt_alpha,
             ground_explosion::update_dirt001_scale,
