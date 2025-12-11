@@ -69,7 +69,7 @@ impl Material for FlipbookMaterial {
         _key: MaterialPipelineKey<Self>,
     ) -> Result<(), SpecializedMeshPipelineError> {
         descriptor.primitive.cull_mode = None;
-        // Enable proper alpha blending
+        // Standard alpha blending
         if let Some(ref mut fragment) = descriptor.fragment {
             for target in fragment.targets.iter_mut().flatten() {
                 target.blend = Some(BlendState::ALPHA_BLENDING);
@@ -1142,84 +1142,78 @@ pub fn spawn_dust_ring(
     scale: f32,
     rng: &mut impl Rng,
 ) {
-    // UE5: UniformRangedInt 2-3 particles
-    // PREVIOUS: single set of 2-3
-    // Now: 2 sets like wisp for better visibility
-    let count_per_set = rng.gen_range(2..=3);
+    // UE5: UniformRangedInt 2-3 particles (single set, no double-spawn)
+    let count = rng.gen_range(2..=3);
 
-    for set in 0..2 {
-        // Second set spawns with slight delay
-        let spawn_delay = if set == 0 { 0.0 } else { -0.05 };
+    for i in 0..count {
+        // UE5: RandomRangeFloat 0.1-0.5 for lifetime - very short
+        let lifetime = rng.gen_range(0.1..0.5);
 
-        for i in 0..count_per_set {
-            // UE5: RandomRangeFloat 0.1-0.5 for lifetime - very short
-            let lifetime = rng.gen_range(0.1..0.5);
-            let frame_duration = lifetime / 4.0;  // 4 frames over short lifetime
+        // Random angle for velocity direction within cone
+        let angle = rng.gen_range(0.0..std::f32::consts::TAU);
 
-            let angle = rng.gen_range(0.0..std::f32::consts::TAU);
+        // UE5 spec: 300-500 units (3-5m)
+        // With (3×, 2×) scale curve = final ~9-15m width, ~6-10m height
+        let size = rng.gen_range(3.0..5.0) * scale;
 
-            // UE5 spec: 300-500 units (3-5m), scaled up 2x for visibility
-            // With (3×, 2×) scale curve = final 18-30m width, 12-20m height
-            let size = rng.gen_range(6.0..10.0) * scale;
+        // UE5: AddVelocityInCone - 35° cone pointing up, speed 500-1000
+        // Cone axis (0,0,3) = strong upward bias
+        let cone_angle = 35.0_f32.to_radians();
+        let phi = rng.gen_range(0.0..cone_angle);  // 0-35° from vertical
+        let speed = rng.gen_range(5.0..10.0) * scale;  // 500-1000 cm/s -> 5-10 m/s
 
-            // UE5: AddVelocityInCone - 35° cone pointing up, speed 500-1000
-            // Cone axis (0,0,3) = strong upward bias
-            let cone_angle = 35.0_f32.to_radians();
-            let phi = rng.gen_range(0.0..cone_angle);  // 0-35° from vertical
-            let speed = rng.gen_range(5.0..10.0) * scale;  // 500-1000 cm/s -> 5-10 m/s
+        let velocity = Vec3::new(
+            phi.sin() * angle.cos() * speed,
+            phi.cos() * speed,  // Mostly upward
+            phi.sin() * angle.sin() * speed,
+        );
 
-            let velocity = Vec3::new(
-                phi.sin() * angle.cos() * speed,
-                phi.cos() * speed,  // Mostly upward
-                phi.sin() * angle.sin() * speed,
-            );
+        // UE5: Spawn at exact origin - NO offset
+        let spawn_pos = position;
 
-            let offset = Vec3::new(
-                angle.cos() * 0.5 * scale,
-                0.1 * scale,
-                angle.sin() * 0.5 * scale,
-            );
+        // UE5: SubUV Animation Mode = Random - pick ONE random frame (0-3) that stays fixed
+        let random_frame = rng.gen_range(0..4) as f32;
 
-            // UE5: Dark grey/black dust that blends with main fireball emitters
-            // Alpha starts at 3.0 (300% brightness) as per UE5 spec
-            let material = materials.add(FlipbookMaterial {
-                frame_data: Vec4::new(0.0, 0.0, 4.0, 1.0), // col, row, columns (4), rows (1)
-                color_data: Vec4::new(0.15, 0.12, 0.10, 3.0), // Dark grey-black, 3× brightness
-                uv_scale: 1.0,
-                sprite_texture: assets.dust_texture.clone(),
-            });
+        // UE5: Dark brown color (0.147, 0.114, 0.070) from dust.md
+        // Alpha starts at 3.0 (300% brightness) as per UE5 spec
+        // Texture is 4×1 grid - frame is fixed at spawn (no animation)
+        let material = materials.add(FlipbookMaterial {
+            frame_data: Vec4::new(random_frame, 0.0, 4.0, 1.0), // col=random, row=0, columns (4), rows (1)
+            color_data: Vec4::new(0.147, 0.114, 0.070, 3.0), // UE5 dark brown, 3× brightness
+            uv_scale: 1.0,
+            sprite_texture: assets.dust_texture.clone(),
+        });
 
-            commands.spawn((
-                Mesh3d(assets.bottom_pivot_quad.clone()),
-                MeshMaterial3d(material),
-                // Start at 0 scale (grows from 0)
-                Transform::from_translation(position + offset).with_scale(Vec3::ZERO),
-                Visibility::Hidden, // Start hidden if spawn delay
-                NotShadowCaster,
-                NotShadowReceiver,
-                FlipbookSprite {
-                    columns: 4,
-                    rows: 1,
-                    total_frames: 4,
-                    frame_duration,
-                    elapsed: spawn_delay, // Negative = spawn delay
-                    lifetime: 0.0,
-                    max_lifetime: lifetime,
-                    base_alpha: 1.0,
-                    loop_animation: false,  // Play once
-                },
-                VelocityAligned { velocity, gravity: 0.0, drag: 0.0 },  // No gravity - fast upward motion
-                // UE5: Scale grows from 0 - X faster than Y
-                DustScaleOverLife {
-                    initial_size: size,
-                    base_scale_x: 1.0,
-                    base_scale_y: 1.0,
-                },
-                BottomPivot,
-                GroundExplosionChild,
-                Name::new(format!("GE_Dust_{}_{}", set, i)),
-            ));
-        }
+        commands.spawn((
+            Mesh3d(assets.bottom_pivot_quad.clone()),
+            MeshMaterial3d(material),
+            // UE5: Scale starts at ZERO - particles grow from nothing
+            Transform::from_translation(spawn_pos).with_scale(Vec3::ZERO),
+            Visibility::Visible,
+            NotShadowCaster,
+            NotShadowReceiver,
+            FlipbookSprite {
+                columns: 4,  // 4×1 grid texture
+                rows: 1,
+                total_frames: 1,  // Only 1 frame - no animation
+                frame_duration: lifetime,  // Doesn't matter since no animation
+                elapsed: 0.0,
+                lifetime: 0.0,
+                max_lifetime: lifetime,
+                base_alpha: 1.0,
+                loop_animation: false,
+            },
+            VelocityAligned { velocity, gravity: 0.0, drag: 0.0 },  // No gravity - fast upward motion
+            // UE5: Scale grows from 0 - X faster than Y (3×, 2×)
+            DustScaleOverLife {
+                initial_size: size,
+                base_scale_x: 1.0,
+                base_scale_y: 1.0,
+            },
+            BottomPivot,
+            GroundExplosionChild,
+            Name::new(format!("GE_Dust_{}", i)),
+        ));
     }
 }
 
@@ -1786,13 +1780,14 @@ pub fn animate_flipbook_sprites(
         Option<&Name>,
         Option<&SmokeScaleOverLife>,  // Detect smoke for linear alpha fade
         Option<&FireballAlphaCurve>,  // Detect fireball for S-curve alpha fade
+        Option<&DustScaleOverLife>,   // Detect dust - alpha handled by update_dust_alpha
     )>,
     mut materials: ResMut<Assets<FlipbookMaterial>>,
     time: Res<Time>,
 ) {
     let dt = time.delta_secs();
 
-    for (mut sprite, material_handle, mut visibility, name, is_smoke, is_fireball) in query.iter_mut() {
+    for (mut sprite, material_handle, mut visibility, name, is_smoke, is_fireball, is_dust) in query.iter_mut() {
         sprite.elapsed += dt;
 
         // Handle spawn delay: negative elapsed means particle is waiting to spawn
@@ -1817,6 +1812,7 @@ pub fn animate_flipbook_sprites(
             // Clamp to last frame if not looping
             raw_frame.min(sprite.total_frames - 1)
         };
+
         let col = frame % sprite.columns;
         let row = frame / sprite.columns;
 
@@ -1832,9 +1828,12 @@ pub fn animate_flipbook_sprites(
             material.frame_data.x = col as f32;
             material.frame_data.y = row as f32;
 
-            // Smoke color is handled by update_smoke_color system (has SmokeColorOverLife)
             // Alpha curves differ by particle type:
-            if is_smoke.is_none() {
+            // - Smoke: handled by update_smoke_color system (has SmokeColorOverLife)
+            // - Dust: handled by update_dust_alpha system (has DustScaleOverLife)
+            // - Fireball: S-curve fade
+            // - Others: hold then fade
+            if is_smoke.is_none() && is_dust.is_none() {
                 let progress = sprite.lifetime / sprite.max_lifetime;
                 let alpha = if is_fireball.is_some() {
                     // UE5 fireball: S-curve fade throughout entire lifetime
@@ -2294,7 +2293,7 @@ pub fn update_dust_scale(
         let t = (sprite.lifetime / sprite.max_lifetime).clamp(0.0, 1.0);
 
         // UE5: Linear growth from 0 to final size
-        // X grows to 3×, Y grows to 2×
+        // X grows to 3×, Y grows to 2× - starts at ZERO (intentional)
         let x_scale = t * 3.0;
         let y_scale = t * 2.0;
 
@@ -2306,8 +2305,9 @@ pub fn update_dust_scale(
     }
 }
 
-/// Update dust alpha over lifetime - UE5 accurate: 3.0→0 linear fade
+/// Update dust alpha over lifetime - UE5 accurate: 3.0→0 S-curve fade
 /// UE5 uses alpha > 1.0 as brightness multiplier, shader now handles this
+/// LUT: t=0→3.0, t=0.2→2.59, t=0.5→1.5, t=0.8→0.34, t=1.0→0
 pub fn update_dust_alpha(
     query: Query<(&FlipbookSprite, &MeshMaterial3d<FlipbookMaterial>), (With<GroundExplosionChild>, With<DustScaleOverLife>)>,
     mut materials: ResMut<Assets<FlipbookMaterial>>,
@@ -2315,9 +2315,10 @@ pub fn update_dust_alpha(
     for (sprite, material_handle) in query.iter() {
         let t = (sprite.lifetime / sprite.max_lifetime).clamp(0.0, 1.0);
 
-        // UE5: Alpha starts at 3.0 (300% brightness!), fades linearly to 0
-        // This is how dust appears bright initially then fades
-        let alpha = 3.0 * (1.0 - t);
+        // UE5: Alpha starts at 3.0 (300% brightness!), S-curve fade to 0
+        // Smoothstep: slower at start/end, faster in middle
+        let s = t * t * (3.0 - 2.0 * t); // smoothstep
+        let alpha = 3.0 * (1.0 - s);
 
         if let Some(material) = materials.get_mut(material_handle.id()) {
             material.color_data.w = alpha;
