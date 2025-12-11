@@ -539,7 +539,8 @@ pub fn spawn_main_fireball(
 ) {
     // UE5: RandomRangeInt 7-13 particles, scaled 1.3× for fuller appearance
     let count = rng.gen_range(9..=17);
-    let lifetime = 1.0;
+    // UE5: 1.0s, extended to 1.5s for longer linger to match SFX
+    let lifetime = 1.5;
     let total_frames = 64; // 8x8 grid (texture is 2048x2048, 256px per frame)
     let frame_duration = lifetime / total_frames as f32;
 
@@ -637,7 +638,8 @@ pub fn spawn_secondary_fireball(
 ) {
     // UE5: RandomRangeInt 5-10 particles, scaled 1.3× for fuller appearance
     let count = rng.gen_range(7..=13);
-    let lifetime = 1.0;
+    // UE5: 1.0s, extended to 1.5s for longer linger to match SFX
+    let lifetime = 1.5;
     let total_frames = 64; // 8x8 grid (different texture than main)
     let frame_duration = lifetime / total_frames as f32;
 
@@ -1038,18 +1040,16 @@ pub fn spawn_sparks(
 
     for i in 0..count {
         // UE5 spec: 1-3 units (0.01-0.03m)
-        // PREVIOUS VALUE: size = rng.gen_range(0.2..0.6) * scale (scaled up for visibility)
-        // Increased to 0.5-1.2m to better match fireball visibility
-        let size = rng.gen_range(0.5..1.2) * scale;
+        // PREVIOUS: 0.5-1.2m, increased for better visibility with blast SFX
+        let size = rng.gen_range(0.8..1.8) * scale;
 
         // UE5: 90° cone (hemisphere), cone axis (0,0,1) = upward
         // Speed: 1000-2500 units = 10-25m in Bevy scale
         let theta: f32 = rng.gen_range(0.0..std::f32::consts::TAU);
         // phi from 0 to PI/2 for 90° hemisphere (0 = straight up, PI/2 = horizontal)
         let phi: f32 = rng.gen_range(0.0..std::f32::consts::FRAC_PI_2);
-        // UE5: 1000-2500 units = 10-25m, with falloff toward edges
-        // PREVIOUS VALUE: speed = rng.gen_range(8.0..15.0) * scale
-        let speed: f32 = rng.gen_range(10.0..25.0) * scale;
+        // UE5: 1000-2500 units = 10-25m, scaled 1.5× for higher launch
+        let speed: f32 = rng.gen_range(15.0..37.5) * scale;
 
         // Velocity falloff: faster toward center (lower phi)
         let falloff = 1.0 - (phi / std::f32::consts::FRAC_PI_2) * 0.5;
@@ -1080,8 +1080,7 @@ pub fn spawn_sparks(
         commands.spawn((
             Mesh3d(assets.centered_quad.clone()),
             MeshMaterial3d(material),
-            // PREVIOUS spawn height: Vec3::Y * 0.5 * scale
-            // Increased to 3.0 * scale to match fireball height (14-18m base)
+            // Spawn at explosion core height (3.0 * scale matches fireball base)
             Transform::from_translation(position + Vec3::Y * 3.0 * scale).with_scale(Vec3::splat(size)),
             Visibility::Visible,
             NotShadowCaster,
@@ -1097,8 +1096,8 @@ pub fn spawn_sparks(
                 base_alpha: 1.0,
                 loop_animation: true,  // Single frame, doesn't matter
             },
-            // UE5: Gravity -980 cm/s² = 9.8 m/s²
-            VelocityAligned { velocity, gravity: 9.8 },
+            // UE5: Gravity -980 cm/s² = 9.8 m/s², reduced to 6.0 for higher arc
+            VelocityAligned { velocity, gravity: 6.0 },
             SparkColorOverLife { random_phase },
             GroundExplosionChild,
             Name::new(format!("GE_Spark_{}", i)),
@@ -1180,8 +1179,7 @@ pub fn spawn_flash_sparks(
         commands.spawn((
             Mesh3d(assets.centered_quad.clone()),
             MeshMaterial3d(material),
-            // PREVIOUS spawn height: Vec3::Y * 0.5 * scale
-            // Increased to 2.5 * scale to match fireball height
+            // Spawn at explosion core height (2.5 * scale matches fireball base)
             Transform::from_translation(position + spawn_offset + Vec3::Y * 2.5 * scale)
                 .with_scale(Vec3::splat(size)),
             Visibility::Visible,
