@@ -986,9 +986,10 @@ pub fn spawn_smoke_cloud(
         // Local X = camera right (spread left/right on screen)
         // Local Y = camera up (spread up/down on screen)
         // Local Z = camera forward (toward/away from camera - minimal)
-        let local_x = rng.gen_range(-8.0..8.0) * scale;  // UE5 ±800 cm -> ±8m (screen left/right)
-        let local_y = rng.gen_range(-8.0..8.0) * scale;  // UE5 ±800 cm (screen up/down)
-        let local_z = rng.gen_range(0.0..0.1) * scale;   // UE5 0-10 (toward camera - minimal)
+        // Scaled up 1.5× for better spread relative to explosion size
+        let local_x = rng.gen_range(-12.0..12.0) * scale;  // UE5 ±800 cm -> ±12m (1.5× for spread)
+        let local_y = rng.gen_range(-12.0..12.0) * scale;  // UE5 ±800 cm -> ±12m (1.5× for spread)
+        let local_z = rng.gen_range(0.0..0.1) * scale;     // UE5 0-10 (toward camera - minimal)
 
         // Transform local velocity to world space
         let velocity = cam_right * local_x + cam_up * local_y + cam_forward * local_z;
@@ -2237,8 +2238,9 @@ pub fn update_dirt001_alpha(
 }
 
 /// Update smoke color over lifetime - UE5 Niagara ColorFromCurve
-/// Color curve: t=0.0: RGB(0.4), A=0.6 → t=1.0: RGB(0.2), A=0.0
-/// Smoke starts medium grey, darkens slightly as it fades out
+/// T3D-verified smoke color and alpha curves:
+/// - Color: Dark brown (0.147, 0.117, 0.089) → Tan (0.328, 0.235, 0.156)
+/// - Alpha: Smoothstep bell curve 0→0.5→0 (ease-in to peak, ease-out from peak)
 pub fn update_smoke_color(
     query: Query<(&FlipbookSprite, &MeshMaterial3d<FlipbookMaterial>), (With<GroundExplosionChild>, With<SmokeColorOverLife>)>,
     mut materials: ResMut<Assets<FlipbookMaterial>>,
@@ -2246,37 +2248,29 @@ pub fn update_smoke_color(
     for (sprite, material_handle) in query.iter() {
         let t = (sprite.lifetime / sprite.max_lifetime).clamp(0.0, 1.0);
 
-        // Color curve keyframes (approximate from UE5):
-        // t=0.0: RGB=0.4, A=0.6
-        // t=0.3: RGB=0.3, A=0.5
-        // t=0.7: RGB=0.25, A=0.3
-        // t=1.0: RGB=0.2, A=0.0
+        // T3D-verified color curve: dark brown → tan
+        // Start: RGB(0.147, 0.117, 0.089) = #261D17
+        // End:   RGB(0.328, 0.235, 0.156) = #543C28
+        let start_color = Vec3::new(0.147, 0.117, 0.089);
+        let end_color = Vec3::new(0.328, 0.235, 0.156);
+        let color = start_color.lerp(end_color, t);
 
-        // Linear interpolation through keyframes
-        let (rgb, alpha) = if t < 0.3 {
-            // 0.0 -> 0.3
-            let local_t = t / 0.3;
-            let rgb = 0.4 - 0.1 * local_t;    // 0.4 -> 0.3
-            let a = 0.6 - 0.1 * local_t;      // 0.6 -> 0.5
-            (rgb, a)
-        } else if t < 0.7 {
-            // 0.3 -> 0.7
-            let local_t = (t - 0.3) / 0.4;
-            let rgb = 0.3 - 0.05 * local_t;   // 0.3 -> 0.25
-            let a = 0.5 - 0.2 * local_t;      // 0.5 -> 0.3
-            (rgb, a)
+        // T3D-verified alpha curve: smoothstep bell curve 0→0.5→0
+        // NOT a simple parabola - uses cubic S-curve for gradual fade-in/out
+        // LUT: t=0→0.0, t=0.25→0.24, t=0.5→0.5, t=0.75→0.27, t=1.0→0.0
+        let smoothstep = |x: f32| x * x * (3.0 - 2.0 * x);
+        let alpha = if t <= 0.5 {
+            // Ease-in to peak at t=0.5
+            0.5 * smoothstep(t * 2.0)
         } else {
-            // 0.7 -> 1.0
-            let local_t = (t - 0.7) / 0.3;
-            let rgb = 0.25 - 0.05 * local_t;  // 0.25 -> 0.2
-            let a = 0.3 * (1.0 - local_t);    // 0.3 -> 0.0
-            (rgb, a)
+            // Ease-out from peak
+            0.5 * smoothstep((1.0 - t) * 2.0)
         };
 
         if let Some(material) = materials.get_mut(&material_handle.0) {
-            material.color_data.x = rgb;
-            material.color_data.y = rgb;
-            material.color_data.z = rgb;
+            material.color_data.x = color.x;
+            material.color_data.y = color.y;
+            material.color_data.z = color.z;
             material.color_data.w = alpha;
         }
     }
