@@ -269,8 +269,8 @@ pub fn respawn_turrets_on_map_switch(
         commands.entity(base_entity).despawn();
     }
 
-    // Don't respawn turrets for Debug or FirebaseDelta maps (they have their own spawning)
-    if event.new_map == MapPreset::Debug || event.new_map == MapPreset::FirebaseDelta {
+    // Don't respawn turrets for Debug, FirebaseDelta, or DebugWhiteSand maps
+    if event.new_map == MapPreset::Debug || event.new_map == MapPreset::FirebaseDelta || event.new_map == MapPreset::DebugWhiteSand {
         info!("Skipping turret respawn for {:?} map", event.new_map);
         return;
     }

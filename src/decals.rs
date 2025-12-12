@@ -10,8 +10,9 @@ struct DecalsSpawned;
 impl Plugin for DecalPlugin {
     fn build(&self, app: &mut App) {
         // ClusteredDecalPlugin is already included in DefaultPlugins
-        app.add_systems(Startup, setup_decal_textures.before(crate::terrain::spawn_initial_terrain))
-            .add_systems(Update, spawn_test_decals);
+        app.add_systems(Startup, setup_decal_textures.before(crate::terrain::spawn_initial_terrain));
+            // Test decal spawning disabled - uncomment to re-enable:
+            // .add_systems(Update, spawn_test_decals);
     }
 }
 

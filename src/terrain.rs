@@ -30,6 +30,8 @@ impl Plugin for TerrainPlugin {
                 // spawn_debug_map_entities must run AFTER handle_map_switch_units
                 // because handle_map_switch_units clears the squad_manager
                 spawn_debug_map_entities.after(handle_map_switch_units),
+                // Hide UI elements for DebugWhiteSand map
+                toggle_ui_for_debug_maps,
             ));
     }
 }
@@ -49,6 +51,8 @@ pub enum MapPreset {
     FirebaseDelta,
     /// Small debug map for testing (~100x100 units)
     Debug,
+    /// Small debug map with white sand terrain (like Map3) for VFX testing
+    DebugWhiteSand,
 }
 
 /// Terrain configuration resource
@@ -487,6 +491,8 @@ fn terrain_map_switching(
         Some(MapPreset::FirebaseDelta)
     } else if keys.just_pressed(KeyCode::F4) {
         Some(MapPreset::Debug)
+    } else if keys.just_pressed(KeyCode::F5) {
+        Some(MapPreset::DebugWhiteSand)
     } else {
         None
     };
@@ -611,6 +617,29 @@ fn terrain_map_switching(
                     ));
 
                     info!("Switched to debug map ({}x{})", DEBUG_MAP_SIZE, DEBUG_MAP_SIZE);
+                }
+                MapPreset::DebugWhiteSand => {
+                    // Small debug map with white sand terrain (like Map3) for VFX testing
+                    const DEBUG_MAP_SIZE: f32 = 200.0;
+                    commands.insert_resource(TerrainHeightmap::flat(DEBUG_MAP_SIZE, -1.0));
+
+                    // Use white sandy color like Firebase Delta but brighter
+                    commands.spawn((
+                        Mesh3d(meshes.add(Rectangle::new(DEBUG_MAP_SIZE, DEBUG_MAP_SIZE))),
+                        MeshMaterial3d(materials.add(StandardMaterial {
+                            base_color: Color::srgb(0.65, 0.58, 0.48), // Lighter, whiter sand
+                            perceptual_roughness: 0.9,
+                            metallic: 0.0,
+                            ..default()
+                        })),
+                        Transform::from_xyz(0.0, -1.0, 0.0)
+                            .with_rotation(Quat::from_rotation_x(-PI / 2.0)),
+                        TerrainMarker,
+                        FlatGroundMarker,
+                        Name::new("DebugWhiteSandGround"),
+                    ));
+
+                    info!("Switched to debug white sand map ({}x{})", DEBUG_MAP_SIZE, DEBUG_MAP_SIZE);
                 }
             }
 
@@ -737,7 +766,7 @@ pub fn handle_map_switch_units(
         info!("Game state reset");
 
         // For FirebaseDelta and Debug maps, despawn all default units and towers
-        if event.new_map == MapPreset::FirebaseDelta || event.new_map == MapPreset::Debug {
+        if event.new_map == MapPreset::FirebaseDelta || event.new_map == MapPreset::Debug || event.new_map == MapPreset::DebugWhiteSand {
             // Collect entities to despawn first (can't despawn while iterating with mutable query)
             let droid_entities: Vec<Entity> = droid_query.iter().map(|(e, _, _, _)| e).collect();
             let despawned_units = droid_entities.len();
@@ -820,6 +849,7 @@ pub fn spawn_debug_map_entities(
     mut squad_manager: ResMut<SquadManager>,
 ) {
     for event in map_switch_events.read() {
+        // Only spawn entities for Debug map (Map 4), not DebugWhiteSand (Map 5)
         if event.new_map != MapPreset::Debug {
             continue;
         }
@@ -896,5 +926,33 @@ pub fn spawn_debug_map_entities(
         }
 
         info!("Debug map: Spawned 1 Team B tower + shield, 2 Team A squads");
+    }
+}
+
+/// System to hide/show UI elements based on current map
+/// Hides GameInfoUI and FpsText on DebugWhiteSand for clean screenshots
+fn toggle_ui_for_debug_maps(
+    config: Res<TerrainConfig>,
+    mut game_info_query: Query<&mut Visibility, (With<crate::types::GameInfoUI>, Without<crate::types::FpsText>)>,
+    mut fps_query: Query<&mut Visibility, With<crate::types::FpsText>>,
+) {
+    let should_hide = config.current_map == MapPreset::DebugWhiteSand;
+
+    // Hide/show GameInfoUI
+    for mut visibility in game_info_query.iter_mut() {
+        *visibility = if should_hide {
+            Visibility::Hidden
+        } else {
+            Visibility::Visible
+        };
+    }
+
+    // Hide/show FpsText
+    for mut visibility in fps_query.iter_mut() {
+        *visibility = if should_hide {
+            Visibility::Hidden
+        } else {
+            Visibility::Visible
+        };
     }
 }
