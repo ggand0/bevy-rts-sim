@@ -325,6 +325,8 @@ pub fn debug_warfx_test_system(
     mut smoke_only_materials: ResMut<Assets<crate::wfx_materials::SmokeOnlyMaterial>>,
     asset_server: Res<AssetServer>,
     mut debug_mode: ResMut<ExplosionDebugMode>,
+    terrain_config: Res<crate::terrain::TerrainConfig>,
+    heightmap: Res<crate::terrain::TerrainHeightmap>,
 ) {
     // 0 key: Toggle explosion debug mode
     if keyboard_input.just_pressed(KeyCode::Digit0) {
@@ -348,7 +350,15 @@ pub fn debug_warfx_test_system(
     if keyboard_input.just_pressed(KeyCode::Digit1) {
         info!("🎆 DEBUG: War FX test hotkey (1) pressed! Spawning glow...");
 
-        let position = Vec3::new(0.0, 10.0, 0.0);
+        // On Firebase Delta, spawn at offset position (same as UE ground explosion); on other maps spawn at Y=10
+        let position = if terrain_config.current_map == crate::terrain::MapPreset::FirebaseDelta {
+            let offset_x = 40.0;
+            let offset_z = 30.0;
+            let terrain_y = heightmap.sample_height(offset_x, offset_z);
+            Vec3::new(offset_x, terrain_y, offset_z)
+        } else {
+            Vec3::new(0.0, 10.0, 0.0)
+        };
         let scale = 2.0;
 
         // Spawn center glow billboards
@@ -370,7 +380,15 @@ pub fn debug_warfx_test_system(
     if keyboard_input.just_pressed(KeyCode::Digit2) {
         info!("🔥 DEBUG: War FX explosion hotkey (2) pressed! Spawning complete explosion...");
 
-        let position = Vec3::new(0.0, 10.0, 0.0);
+        // On Firebase Delta, spawn at offset position (same as UE ground explosion); on other maps spawn at Y=10
+        let position = if terrain_config.current_map == crate::terrain::MapPreset::FirebaseDelta {
+            let offset_x = 40.0;
+            let offset_z = 30.0;
+            let terrain_y = heightmap.sample_height(offset_x, offset_z);
+            Vec3::new(offset_x, terrain_y, offset_z)
+        } else {
+            Vec3::new(0.0, 10.0, 0.0)
+        };
         let scale = 2.0;
 
         // Spawn smoke/flame particles only (Explosion emitter)
@@ -392,7 +410,15 @@ pub fn debug_warfx_test_system(
     if keyboard_input.just_pressed(KeyCode::Digit3) {
         info!("💨 DEBUG: War FX smoke hotkey (3) pressed! Spawning smoke emitter...");
 
-        let position = Vec3::new(0.0, 10.0, 0.0);
+        // On Firebase Delta, spawn at offset position (same as UE ground explosion); on other maps spawn at Y=10
+        let position = if terrain_config.current_map == crate::terrain::MapPreset::FirebaseDelta {
+            let offset_x = 40.0;
+            let offset_z = 30.0;
+            let terrain_y = heightmap.sample_height(offset_x, offset_z);
+            Vec3::new(offset_x, terrain_y, offset_z)
+        } else {
+            Vec3::new(0.0, 10.0, 0.0)
+        };
         let scale = 2.0;
 
         // Spawn smoke emitter (delayed start, continuous emission)
@@ -413,7 +439,15 @@ pub fn debug_warfx_test_system(
     if keyboard_input.just_pressed(KeyCode::Digit4) {
         info!("✨ DEBUG: War FX sparkles hotkey (4) pressed! Spawning glow sparkles...");
 
-        let position = Vec3::new(0.0, 10.0, 0.0);
+        // On Firebase Delta, spawn at offset position (same as UE ground explosion); on other maps spawn at Y=10
+        let position = if terrain_config.current_map == crate::terrain::MapPreset::FirebaseDelta {
+            let offset_x = 40.0;
+            let offset_z = 30.0;
+            let terrain_y = heightmap.sample_height(offset_x, offset_z);
+            Vec3::new(offset_x, terrain_y, offset_z)
+        } else {
+            Vec3::new(0.0, 10.0, 0.0)
+        };
         let scale = 2.0;
 
         crate::wfx_spawn::spawn_glow_sparkles(
@@ -433,7 +467,15 @@ pub fn debug_warfx_test_system(
     if keyboard_input.just_pressed(KeyCode::Digit5) {
         info!("💥 DEBUG: War FX COMBINED explosion hotkey (5) pressed!");
 
-        let position = Vec3::new(0.0, 10.0, 0.0);
+        // On Firebase Delta, spawn at offset position (same as UE ground explosion); on other maps spawn at Y=10
+        let position = if terrain_config.current_map == crate::terrain::MapPreset::FirebaseDelta {
+            let offset_x = 40.0;
+            let offset_z = 30.0;
+            let terrain_y = heightmap.sample_height(offset_x, offset_z);
+            Vec3::new(offset_x, terrain_y, offset_z)
+        } else {
+            Vec3::new(0.0, 10.0, 0.0)
+        };
         let scale = 4.0; // Adjustable scale parameter
 
         crate::wfx_spawn::spawn_combined_explosion(
@@ -455,7 +497,15 @@ pub fn debug_warfx_test_system(
     if keyboard_input.just_pressed(KeyCode::Digit6) {
         info!("🔶 DEBUG: War FX dot sparkles hotkey (6) pressed!");
 
-        let position = Vec3::new(0.0, 10.0, 0.0);
+        // On Firebase Delta, spawn at offset position (same as UE ground explosion); on other maps spawn at Y=10
+        let position = if terrain_config.current_map == crate::terrain::MapPreset::FirebaseDelta {
+            let offset_x = 40.0;
+            let offset_z = 30.0;
+            let terrain_y = heightmap.sample_height(offset_x, offset_z);
+            Vec3::new(offset_x, terrain_y, offset_z)
+        } else {
+            Vec3::new(0.0, 10.0, 0.0)
+        };
         let scale = 2.0;
 
         // Regular dot sparkles (75 particles, gravity-affected)
@@ -487,7 +537,15 @@ pub fn debug_warfx_test_system(
     if keyboard_input.just_pressed(KeyCode::Digit7) {
         info!("💥 DEBUG: War FX TURRET explosion hotkey (7) pressed!");
 
-        let position = Vec3::new(0.0, 10.0, 0.0);
+        // On Firebase Delta, spawn at offset position (same as UE ground explosion); on other maps spawn at Y=10
+        let position = if terrain_config.current_map == crate::terrain::MapPreset::FirebaseDelta {
+            let offset_x = 40.0;
+            let offset_z = 30.0;
+            let terrain_y = heightmap.sample_height(offset_x, offset_z);
+            Vec3::new(offset_x, terrain_y, offset_z)
+        } else {
+            Vec3::new(0.0, 10.0, 0.0)
+        };
         let scale = 1.5; // Smaller scale for turret explosion
 
         crate::wfx_spawn::spawn_turret_wfx_explosion(
