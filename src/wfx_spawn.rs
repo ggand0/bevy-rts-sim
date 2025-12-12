@@ -186,15 +186,15 @@ pub fn spawn_glow_sparkles(
     ];
 
     // Tiny sparkle size (Unity: 0.05 to 0.1)
-    let base_size = 0.15 * scale; // Slightly larger for visibility
+    let base_size = 0.21 * scale; // 40% larger than original (0.15 * 1.4)
     let quad_mesh = meshes.add(Rectangle::new(base_size, base_size));
 
     for (delay, count) in bursts {
         for _ in 0..count {
-            // Random direction - wider spread (70°) for more horizontal spray
-            // phi measured from vertical (Y axis), so 70° gives good horizontal coverage
+            // Random direction - wide spread (90°) for strong horizontal spray
+            // phi measured from vertical (Y axis), so 90° gives full hemisphere coverage
             let theta = rng.gen_range(0.0..std::f32::consts::TAU); // Full circle around Y
-            let phi = rng.gen_range(0.0..(70.0_f32).to_radians()); // 70° cone from vertical
+            let phi = rng.gen_range(0.0..(90.0_f32).to_radians()); // 90° cone from vertical (full hemisphere)
             let dir = Vec3::new(
                 phi.sin() * theta.cos(),
                 phi.cos(), // Y component (upward bias decreases with larger phi)
@@ -204,12 +204,12 @@ pub fn spawn_glow_sparkles(
             // Small random offset from center (Unity radius: 2)
             let spawn_offset = dir * rng.gen_range(0.0..2.0) * scale;
 
-            // High initial velocity (Unity: speed 24)
-            let speed = 24.0 * scale * speed_mult;
+            // Velocity: 16.0 (Unity: 24.0, ~67% of original for slower scatter)
+            let speed = 16.0 * scale * speed_mult;
             let initial_velocity = dir * speed;
 
-            // Random lifetime (Unity: 0.25 to 0.35 seconds)
-            let lifetime = rng.gen_range(0.25..0.35) / speed_mult;
+            // Lifetime: 0.625-0.875s (Unity: 0.25-0.35s, 2.5x original for longer linger)
+            let lifetime = rng.gen_range(0.625..0.875) / speed_mult;
 
             // Random size multiplier (Unity: 0.05 to 0.1, normalized)
             let size_mult = rng.gen_range(0.5..1.0);
@@ -272,7 +272,7 @@ pub fn spawn_glow_sparkles(
                     alpha_curve,
                     color_curve,
                     velocity: initial_velocity,
-                    gravity: 4.0 * scale * speed_mult, // Unity gravity modifier: 4
+                    gravity: 9.8, // Constant gravity for drag-down effect (Unity original: 4.0 * scale * speed_mult)
                 },
                 Name::new("WFX_Sparkle"),
             ));
@@ -315,16 +315,16 @@ pub fn spawn_dot_sparkles(
         (0.25_f32 / speed_mult, 25_u32),
     ];
 
-    // Small dot size - slightly larger than Unity for visibility
-    let base_size = 0.2 * scale;
+    // Small dot size - 40% larger than original (0.2 * 1.4)
+    let base_size = 0.28 * scale;
     let quad_mesh = meshes.add(Rectangle::new(base_size, base_size));
 
     for (delay, count) in bursts {
         for _ in 0..count {
-            // Random direction - 25° cone (narrower than glow sparkles' 70°)
-            // But allow full hemisphere spread for more visible effect
+            // Random direction - wide spread (75°) for horizontal spray
+            // Much wider than Unity's 25° to match the overall explosion spread
             let theta = rng.gen_range(0.0..std::f32::consts::TAU);
-            let phi = rng.gen_range(0.0..(50.0_f32).to_radians()); // Wider than Unity's 25° for visibility
+            let phi = rng.gen_range(0.0..(75.0_f32).to_radians()); // Wide spread for visible horizontal effect
             let dir = Vec3::new(
                 phi.sin() * theta.cos(),
                 phi.cos(),
@@ -334,12 +334,12 @@ pub fn spawn_dot_sparkles(
             // Random offset from center (Unity radius: 1.6)
             let spawn_offset = dir * rng.gen_range(0.0..1.6) * scale;
 
-            // Random speed between 12-24 (creates varied spread)
-            let speed = rng.gen_range(12.0..24.0) * scale * speed_mult;
+            // Velocity: 8-16 (Unity: 12-24, ~67% of original for slower scatter)
+            let speed = rng.gen_range(8.0..16.0) * scale * speed_mult;
             let initial_velocity = dir * speed;
 
-            // Random lifetime (Unity: 0.2 to 0.3 seconds)
-            let lifetime = rng.gen_range(0.2..0.3) / speed_mult;
+            // Lifetime: 0.875-1.3125s (Unity: 0.2-0.3s, ~4.4x original for longer linger)
+            let lifetime = rng.gen_range(0.875..1.3125) / speed_mult;
 
             // Random size multiplier
             let size_mult = rng.gen_range(0.5..1.0);
@@ -400,7 +400,7 @@ pub fn spawn_dot_sparkles(
                     alpha_curve,
                     color_curve,
                     velocity: initial_velocity,
-                    gravity: 2.0 * scale * speed_mult, // Lower gravity than glow sparkles (2 vs 4)
+                    gravity: 9.8, // Constant gravity for drag-down effect (Unity original: 2.0 * scale * speed_mult)
                 },
                 Name::new("WFX_DotSparkle"),
             ));
@@ -443,8 +443,8 @@ pub fn spawn_dot_sparkles_vertical(
         (0.30_f32 / speed_mult, 5_u32),
     ];
 
-    // Small dot size - slightly larger than Unity for visibility
-    let base_size = 0.2 * scale;
+    // Small dot size - 40% larger than original (0.2 * 1.4)
+    let base_size = 0.28 * scale;
     let quad_mesh = meshes.add(Rectangle::new(base_size, base_size));
 
     for (delay, count) in bursts {
@@ -463,12 +463,12 @@ pub fn spawn_dot_sparkles_vertical(
                 rng.gen_range(-0.5..0.5) * scale,
             );
 
-            // Slower speed than regular dot sparkles (6-12 vs 12-24)
-            let speed = rng.gen_range(6.0..12.0) * scale * speed_mult;
+            // Velocity: 6-8 (Unity: 6-12, ~58% of original for slower upward float)
+            let speed = rng.gen_range(6.0..8.0) * scale * speed_mult;
             let initial_velocity = dir * speed;
 
-            // Very short lifetime (Unity: 0.1 to 0.3 seconds)
-            let lifetime = rng.gen_range(0.1..0.3) / speed_mult;
+            // Lifetime: 0.4375-1.3125s (Unity: 0.1-0.3s, ~3.3x original for longer linger)
+            let lifetime = rng.gen_range(0.4375..1.3125) / speed_mult;
 
             // Random size multiplier
             let size_mult = rng.gen_range(0.5..1.0);
@@ -529,7 +529,7 @@ pub fn spawn_dot_sparkles_vertical(
                     alpha_curve,
                     color_curve,
                     velocity: initial_velocity,
-                    gravity: 0.0, // No gravity - sparks float upward
+                    gravity: 9.8, // Constant gravity for drag-down effect (Unity original: 0.0)
                 },
                 Name::new("WFX_DotSparkleVertical"),
             ));
