@@ -950,14 +950,13 @@ pub fn spawn_explosion_flames(
 
             // Color over lifetime from Unity: grayscale multiplier applied to start color
             // Unity ColorOverLifetime multiplies the start color by these grayscale values:
-            // t=0%: 1.0 (full brightness), t=20%: 0.694, t=41%: 0.404, t=100%: 0.596
-            // This maintains the color hue while transitioning to a darker shade
+            // Unity: t=0%: 1.0, t=20%: 0.694, t=41%: 0.404, t=100%: 0.596
             let color_curve = ColorCurve {
                 keyframes: vec![
                     (0.0 / speed_mult, start_color),                        // Full brightness
-                    (0.2 / speed_mult, start_color * 0.694),                // 69.4% brightness
-                    (0.41 / speed_mult, start_color * 0.404),               // 40.4% brightness
-                    (1.0 / speed_mult, start_color * 0.596),                // 59.6% brightness (keeps hue)
+                    (0.20 / speed_mult, start_color * 0.694),               // 69.4% brightness at 20%
+                    (0.41 / speed_mult, start_color * 0.404),               // 40.4% brightness at 41% (darkest)
+                    (1.0 / speed_mult, start_color * 0.596),                // 59.6% brightness at 100% (final smoke color)
                 ],
             };
 
