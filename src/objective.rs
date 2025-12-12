@@ -563,16 +563,16 @@ pub fn debug_spawn_shield_system(
         info!("🛡️ DEBUG: Spawning test tower + shield at center...");
 
         let position = Vec3::new(0.0, 0.0, 0.0);
-        let shield_radius = 30.0;
-        let team = Team::A; // Team A so Team B droids will shoot at it
+        let shield_radius = 50.0; // Same radius as regular tower shields
+        let team = Team::B; // Team B (red) so Team A droids will shoot at it
 
         // Create tower mesh (same as spawn_uplink_towers)
         let tower_mesh = create_uplink_tower_mesh(&mut meshes);
 
-        // Team A tower material (cyan/blue sci-fi glow)
+        // Team B tower material (red/orange sci-fi glow)
         let tower_material = standard_materials.add(StandardMaterial {
-            base_color: Color::srgb(0.2, 0.6, 0.9),
-            emissive: Color::srgb(0.1, 0.3, 0.5).into(),
+            base_color: Color::srgb(0.9, 0.3, 0.2),
+            emissive: Color::srgb(0.6, 0.2, 0.1).into(),
             metallic: 0.8,
             perceptual_roughness: 0.2,
             ..default()
@@ -607,7 +607,7 @@ pub fn debug_spawn_shield_system(
             &shield_config,
         );
 
-        info!("🛡️ Test tower + shield spawned at center (0, 0, 0) with shield radius {}", shield_radius);
+        info!("🛡️ Test Team B tower + shield spawned at center (0, 0, 0) with shield radius {}", shield_radius);
     }
 }
 
