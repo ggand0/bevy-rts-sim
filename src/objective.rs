@@ -359,6 +359,7 @@ pub fn debug_warfx_test_system(
             &asset_server,
             position,
             scale,
+            1.5,
         );
 
         info!("💡 War FX glow spawned at center (0, 10, 0)");
@@ -380,6 +381,7 @@ pub fn debug_warfx_test_system(
             &asset_server,
             position,
             scale,
+            1.5,
         );
 
         info!("🔥 War FX complete explosion spawned at center (0, 10, 0)");
@@ -401,6 +403,7 @@ pub fn debug_warfx_test_system(
             &asset_server,
             position,
             scale,
+            1.5,
         );
 
         info!("💨 War FX smoke emitter spawned at center (0, 10, 0)");
@@ -420,6 +423,7 @@ pub fn debug_warfx_test_system(
             &asset_server,
             position,
             scale,
+            1.5,
         );
 
         info!("✨ War FX glow sparkles spawned at center (0, 10, 0)");
@@ -441,6 +445,7 @@ pub fn debug_warfx_test_system(
             &asset_server,
             position,
             scale,
+            1.5,
         );
 
         info!("💥 War FX COMBINED explosion spawned at center (0, 10, 0) with scale {}", scale);
@@ -461,6 +466,7 @@ pub fn debug_warfx_test_system(
             &asset_server,
             position,
             scale,
+            1.5,
         );
 
         // Vertical dot sparkles (15 particles, float upward)
@@ -471,6 +477,7 @@ pub fn debug_warfx_test_system(
             &asset_server,
             position,
             scale,
+            1.5,
         );
 
         info!("🔶 War FX dot sparkles (75 + 15) spawned at center (0, 10, 0)");
