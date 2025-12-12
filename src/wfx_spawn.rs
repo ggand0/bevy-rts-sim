@@ -730,15 +730,14 @@ pub fn spawn_smoke_emitter(
         // Staggered spawn delay: 0.5s base + 50ms per particle
         let spawn_delay = (0.5 + (i as f32 * 0.05)) / speed_mult;
 
-        // Random position within sphere (Unity: radius 1.6, angle 5°)
-        let radius = 1.6 * base_scale;
-        let angle = rng.gen_range(0.0..std::f32::consts::TAU);
-        let spread = rng.gen_range(0.0..0.087); // ~5 degrees in radians
-        let vertical_spread = rng.gen_range(-0.5..0.5) * spread;
+        // Random position on sphere surface - full spherical distribution (same as flame emitter)
+        let radius = rng.gen_range(1.5..3.5) * base_scale;
+        let theta = rng.gen_range(0.0..std::f32::consts::TAU); // Horizontal angle (0 to 360°)
+        let phi = rng.gen_range(0.3..std::f32::consts::PI); // Vertical angle (covers top to bottom)
         let offset = Vec3::new(
-            radius * spread * angle.cos(),
-            vertical_spread * radius,
-            radius * spread * angle.sin(),
+            radius * phi.sin() * theta.cos(),
+            radius * phi.cos(),
+            radius * phi.sin() * theta.sin(),
         );
 
         // Random lifetime (Unity: 3s to 4s)
@@ -770,9 +769,24 @@ pub fn spawn_smoke_emitter(
             ],
         };
 
-        // Color stays constant gray (Unity: Color Over Lifetime is white, no change)
-        // The gray comes from startColor (0.725) being multiplied
-        let color_curve = ColorCurve::constant(start_color);
+        // Color curve: constant color (Unity original - no color over lifetime)
+        // Commented out custom darkening curve to match Unity reference
+        // let color_curve = ColorCurve {
+        //     keyframes: vec![
+        //         (0.0 / speed_mult, start_color),                    // Full brightness (gray)
+        //         (0.30 / speed_mult, start_color),                   // Stay bright until 30%
+        //         (0.50 / speed_mult, start_color * 0.3),             // Darken to 30% at 50%
+        //         (1.0 / speed_mult, start_color * 0.3),              // Stay dark until end
+        //     ],
+        // };
+
+        // Use constant color throughout lifetime
+        let color_curve = ColorCurve {
+            keyframes: vec![
+                (0.0, start_color),
+                (1.0, start_color),
+            ],
+        };
 
         // Velocity: Y increases over time (Unity curve: 1.5→3.0 by 20%)
         // Simplified to constant approximation

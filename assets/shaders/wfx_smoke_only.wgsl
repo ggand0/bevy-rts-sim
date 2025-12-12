@@ -37,17 +37,9 @@ fn fragment(
     // Unity formula: mask = tex_alpha * vertex_alpha (for visibility)
     let mask = tex_alpha * particle_alpha;
 
-    // Lifetime-based darkening (similar to explosion shader)
-    // particle_alpha: 1.0 at spawn → 0.0 at death
-    // lifetime_t: 0.0 at spawn → 1.0 at death
-    let lifetime_t = 1.0 - particle_alpha;
-
-    // Darkening curve: starts at 1.0, gradually darkens to ~0.3 at end
-    // This makes smoke get darker as it dissipates
-    let lifetime_mult = mix(1.0, 0.3, lifetime_t);
-
-    // Apply lifetime darkening to tint color
-    let darkened_smoke = tint_color * lifetime_mult;
+    // NOTE: tint_color now contains the Color Over Lifetime result from Rust,
+    // so we apply it directly instead of calculating lifetime_mult here
+    let darkened_smoke = tint_color;
 
     // Unity's key formula: lerp(0.5, color, mask) for RGB
     // At mask=0 (edges): output 0.5 (neutral for multiply blend)
