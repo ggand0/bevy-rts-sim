@@ -12,7 +12,7 @@ pub fn animate_march(
     time: Res<Time>,
     squad_manager: Res<SquadManager>,
     heightmap: Option<Res<TerrainHeightmap>>,
-    mut query: Query<(&mut BattleDroid, &mut Transform, &SquadMember)>,
+    mut query: Query<(&mut BattleDroid, &mut Transform, &SquadMember), (Without<KnockbackState>, Without<RagdollDeath>)>,
 ) {
     let time_seconds = time.elapsed_secs();
     let delta_time = time.delta_secs();

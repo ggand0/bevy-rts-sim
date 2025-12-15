@@ -118,3 +118,30 @@ pub fn proximity_volume(distance: f32, max_volume: f32) -> f32 {
         max_volume - t * (max_volume - AUDIO_MIN_VOLUME)
     }
 }
+
+// ===== AREA DAMAGE SYSTEM =====
+
+/// Area damage zones (base radii, scaled by explosion scale parameter)
+pub const AREA_DAMAGE_CORE_RADIUS: f32 = 5.0;   // Instant death zone
+pub const AREA_DAMAGE_MID_RADIUS: f32 = 12.0;   // RNG death zone (probability decreases with distance)
+pub const AREA_DAMAGE_RIM_RADIUS: f32 = 20.0;   // Knockback only zone
+
+/// Knockback physics (for units in rim zone)
+pub const KNOCKBACK_BASE_SPEED: f32 = 15.0;     // Base launch velocity
+pub const KNOCKBACK_GRAVITY: f32 = -30.0;       // Gravity acceleration
+pub const KNOCKBACK_STUN_DURATION: f32 = 1.0;   // Post-landing stun (no move/shoot)
+
+/// Ragdoll death physics (50% of deaths in core/mid zones)
+pub const RAGDOLL_MIN_SPEED: f32 = 20.0;        // Min launch velocity
+pub const RAGDOLL_MAX_SPEED: f32 = 35.0;        // Max launch velocity
+pub const RAGDOLL_GRAVITY: f32 = -25.0;         // Slightly slower fall for visual effect
+
+// ===== ARTILLERY SYSTEM =====
+
+pub const ARTILLERY_SCATTER_RADIUS: f32 = 25.0;       // XZ scatter for scatter barrage
+pub const ARTILLERY_SHELL_COUNT_MIN: usize = 6;       // Min shells per scatter barrage
+pub const ARTILLERY_SHELL_COUNT_MAX: usize = 10;      // Max shells per scatter barrage
+pub const ARTILLERY_SHELL_DELAY_MIN: f32 = 0.3;       // Min delay between shells
+pub const ARTILLERY_SHELL_DELAY_MAX: f32 = 1.5;       // Max delay between shells
+pub const ARTILLERY_LINE_MAX_LENGTH: f32 = 100.0;     // Max line barrage length
+pub const ARTILLERY_LINE_SHELL_SPACING: f32 = 15.0;   // Spacing between shells on line

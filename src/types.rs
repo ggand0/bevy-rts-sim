@@ -415,7 +415,7 @@ impl GameState {
             Team::A => self.team_a_tower_destroyed = true,
             Team::B => self.team_b_tower_destroyed = true,
         }
-        
+
         if !self.game_ended {
             self.game_ended = true;
             // Winner is the opposing team
@@ -425,4 +425,33 @@ impl GameState {
             });
         }
     }
+}
+
+// ===== AREA DAMAGE & KNOCKBACK SYSTEM =====
+
+/// Unit knocked back by explosion (survives, just displaced)
+/// While this component exists, unit skips normal movement and targeting
+#[derive(Component)]
+pub struct KnockbackState {
+    pub velocity: Vec3,
+    pub gravity: f32,
+    pub ground_y: f32,
+    pub is_airborne: bool,
+    pub stun_timer: f32,  // Post-landing stun duration (no move/shoot)
+}
+
+/// Unit dying via ragdoll (flies away, despawns on ground contact)
+#[derive(Component)]
+pub struct RagdollDeath {
+    pub velocity: Vec3,
+    pub angular_velocity: Vec3,
+    pub gravity: f32,
+    pub ground_y: f32,
+}
+
+/// Event fired when explosion should deal area damage
+#[derive(Event)]
+pub struct AreaDamageEvent {
+    pub position: Vec3,
+    pub scale: f32,  // Multiplier for damage radii
 } 

@@ -21,6 +21,8 @@ mod shield;
 mod decals;
 mod scenario;
 mod ground_explosion;
+mod area_damage;
+mod artillery;
 use explosion_shader::ExplosionShaderPlugin;
 use particles::ParticleEffectsPlugin;
 use terrain::TerrainPlugin;
@@ -61,6 +63,8 @@ fn main() {
         .insert_resource(ExplosionDebugMode::default())
         .insert_resource(selection::SelectionState::default())
         .insert_resource(ground_explosion::GroundExplosionDebugMenu::default())
+        .insert_resource(artillery::ArtilleryState::default())
+        .add_event::<AreaDamageEvent>()
         .add_systems(Startup, (setup::setup_scene, spawn_uplink_towers, spawn_debug_mode_ui, setup_laser_assets, ground_explosion::setup_ground_explosion_assets, ground_explosion::setup_ground_explosion_debug_ui))
         // Army spawning runs after terrain is ready (terrain spawns in TerrainPlugin's Startup)
         .add_systems(Startup, setup::spawn_army_with_squads.after(terrain::spawn_initial_terrain))
@@ -203,6 +207,18 @@ fn main() {
             ground_explosion::cleanup_ground_explosions,
             ground_explosion::ground_explosion_debug_menu_system,
             ground_explosion::update_ground_explosion_debug_ui,
+        ))
+        .add_systems(Update, (
+            // Artillery barrage system (F5/F6/F7 hotkeys)
+            artillery::artillery_input_system,
+            artillery::artillery_visual_system,
+            artillery::artillery_spawn_system,
+        ))
+        .add_systems(Update, (
+            // Area damage system (processes AreaDamageEvent from explosions)
+            area_damage::area_damage_system,
+            area_damage::knockback_physics_system,
+            area_damage::ragdoll_death_system,
         ))
         .run();
 }
