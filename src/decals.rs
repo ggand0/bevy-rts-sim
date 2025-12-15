@@ -5,18 +5,21 @@ use bevy::pbr::decal::clustered::ClusteredDecal;
 pub struct DecalPlugin;
 
 #[derive(Component)]
+#[allow(dead_code)]
 struct DecalsSpawned;
 
 impl Plugin for DecalPlugin {
     fn build(&self, app: &mut App) {
         // ClusteredDecalPlugin is already included in DefaultPlugins
-        app.add_systems(Startup, setup_decal_textures.before(crate::terrain::spawn_initial_terrain))
-            .add_systems(Update, spawn_test_decals);
+        app.add_systems(Startup, setup_decal_textures.before(crate::terrain::spawn_initial_terrain));
+            // Test decal spawning disabled - uncomment to re-enable:
+            // .add_systems(Update, spawn_test_decals);
     }
 }
 
 #[derive(Resource)]
 pub struct DecalTextures {
+    #[allow(dead_code)]
     pub bullet_hole: Handle<Image>,
     #[allow(dead_code)]
     pub selection_ring: Handle<Image>,
@@ -40,6 +43,7 @@ fn setup_decal_textures(
     info!("✅ Decal textures loaded!");
 }
 
+#[allow(dead_code)]
 fn spawn_test_decals(
     mut commands: Commands,
     decal_textures: Res<DecalTextures>,

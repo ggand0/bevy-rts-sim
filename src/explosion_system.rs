@@ -100,6 +100,7 @@ pub fn pending_explosion_system(
             &asset_server,
             position,
             4.0,
+            1.5,
         );
 
         commands.entity(entity).despawn();

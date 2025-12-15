@@ -325,6 +325,8 @@ pub fn debug_warfx_test_system(
     mut smoke_only_materials: ResMut<Assets<crate::wfx_materials::SmokeOnlyMaterial>>,
     asset_server: Res<AssetServer>,
     mut debug_mode: ResMut<ExplosionDebugMode>,
+    terrain_config: Res<crate::terrain::TerrainConfig>,
+    heightmap: Res<crate::terrain::TerrainHeightmap>,
 ) {
     // 0 key: Toggle explosion debug mode
     if keyboard_input.just_pressed(KeyCode::Digit0) {
@@ -339,16 +341,27 @@ pub fn debug_warfx_test_system(
         return;
     }
 
-    // Only process 1-6 keys when debug mode is active
+    // Only process 1-7 keys when debug mode is active
     if !debug_mode.explosion_mode {
         return;
     }
+
+    // Debug spawn position: Firebase Delta uses offset position at terrain height,
+    // other maps use fixed position at Y=10
+    let debug_spawn_pos = if terrain_config.current_map == crate::terrain::MapPreset::FirebaseDelta {
+        let offset_x = 40.0;
+        let offset_z = 30.0;
+        let terrain_y = heightmap.sample_height(offset_x, offset_z);
+        Vec3::new(offset_x, terrain_y, offset_z)
+    } else {
+        Vec3::new(0.0, 10.0, 0.0)
+    };
 
     // 1 key: Spawn center glow billboards
     if keyboard_input.just_pressed(KeyCode::Digit1) {
         info!("🎆 DEBUG: War FX test hotkey (1) pressed! Spawning glow...");
 
-        let position = Vec3::new(0.0, 10.0, 0.0);
+        let position = debug_spawn_pos;
         let scale = 2.0;
 
         // Spawn center glow billboards
@@ -359,6 +372,7 @@ pub fn debug_warfx_test_system(
             &asset_server,
             position,
             scale,
+            1.5,
         );
 
         info!("💡 War FX glow spawned at center (0, 10, 0)");
@@ -369,7 +383,7 @@ pub fn debug_warfx_test_system(
     if keyboard_input.just_pressed(KeyCode::Digit2) {
         info!("🔥 DEBUG: War FX explosion hotkey (2) pressed! Spawning complete explosion...");
 
-        let position = Vec3::new(0.0, 10.0, 0.0);
+        let position = debug_spawn_pos;
         let scale = 2.0;
 
         // Spawn smoke/flame particles only (Explosion emitter)
@@ -380,6 +394,7 @@ pub fn debug_warfx_test_system(
             &asset_server,
             position,
             scale,
+            1.5,
         );
 
         info!("🔥 War FX complete explosion spawned at center (0, 10, 0)");
@@ -390,7 +405,7 @@ pub fn debug_warfx_test_system(
     if keyboard_input.just_pressed(KeyCode::Digit3) {
         info!("💨 DEBUG: War FX smoke hotkey (3) pressed! Spawning smoke emitter...");
 
-        let position = Vec3::new(0.0, 10.0, 0.0);
+        let position = debug_spawn_pos;
         let scale = 2.0;
 
         // Spawn smoke emitter (delayed start, continuous emission)
@@ -401,6 +416,7 @@ pub fn debug_warfx_test_system(
             &asset_server,
             position,
             scale,
+            1.5,
         );
 
         info!("💨 War FX smoke emitter spawned at center (0, 10, 0)");
@@ -410,7 +426,7 @@ pub fn debug_warfx_test_system(
     if keyboard_input.just_pressed(KeyCode::Digit4) {
         info!("✨ DEBUG: War FX sparkles hotkey (4) pressed! Spawning glow sparkles...");
 
-        let position = Vec3::new(0.0, 10.0, 0.0);
+        let position = debug_spawn_pos;
         let scale = 2.0;
 
         crate::wfx_spawn::spawn_glow_sparkles(
@@ -420,6 +436,7 @@ pub fn debug_warfx_test_system(
             &asset_server,
             position,
             scale,
+            1.5,
         );
 
         info!("✨ War FX glow sparkles spawned at center (0, 10, 0)");
@@ -429,7 +446,7 @@ pub fn debug_warfx_test_system(
     if keyboard_input.just_pressed(KeyCode::Digit5) {
         info!("💥 DEBUG: War FX COMBINED explosion hotkey (5) pressed!");
 
-        let position = Vec3::new(0.0, 10.0, 0.0);
+        let position = debug_spawn_pos;
         let scale = 4.0; // Adjustable scale parameter
 
         crate::wfx_spawn::spawn_combined_explosion(
@@ -441,6 +458,7 @@ pub fn debug_warfx_test_system(
             &asset_server,
             position,
             scale,
+            1.5,
         );
 
         info!("💥 War FX COMBINED explosion spawned at center (0, 10, 0) with scale {}", scale);
@@ -450,7 +468,7 @@ pub fn debug_warfx_test_system(
     if keyboard_input.just_pressed(KeyCode::Digit6) {
         info!("🔶 DEBUG: War FX dot sparkles hotkey (6) pressed!");
 
-        let position = Vec3::new(0.0, 10.0, 0.0);
+        let position = debug_spawn_pos;
         let scale = 2.0;
 
         // Regular dot sparkles (75 particles, gravity-affected)
@@ -461,6 +479,7 @@ pub fn debug_warfx_test_system(
             &asset_server,
             position,
             scale,
+            1.5,
         );
 
         // Vertical dot sparkles (15 particles, float upward)
@@ -471,6 +490,7 @@ pub fn debug_warfx_test_system(
             &asset_server,
             position,
             scale,
+            1.5,
         );
 
         info!("🔶 War FX dot sparkles (75 + 15) spawned at center (0, 10, 0)");
@@ -480,7 +500,7 @@ pub fn debug_warfx_test_system(
     if keyboard_input.just_pressed(KeyCode::Digit7) {
         info!("💥 DEBUG: War FX TURRET explosion hotkey (7) pressed!");
 
-        let position = Vec3::new(0.0, 10.0, 0.0);
+        let position = debug_spawn_pos;
         let scale = 1.5; // Smaller scale for turret explosion
 
         crate::wfx_spawn::spawn_turret_wfx_explosion(
@@ -563,16 +583,16 @@ pub fn debug_spawn_shield_system(
         info!("🛡️ DEBUG: Spawning test tower + shield at center...");
 
         let position = Vec3::new(0.0, 0.0, 0.0);
-        let shield_radius = 30.0;
-        let team = Team::A; // Team A so Team B droids will shoot at it
+        let shield_radius = 50.0; // Same radius as regular tower shields
+        let team = Team::B; // Team B (red) so Team A droids will shoot at it
 
         // Create tower mesh (same as spawn_uplink_towers)
         let tower_mesh = create_uplink_tower_mesh(&mut meshes);
 
-        // Team A tower material (cyan/blue sci-fi glow)
+        // Team B tower material (red/orange sci-fi glow)
         let tower_material = standard_materials.add(StandardMaterial {
-            base_color: Color::srgb(0.2, 0.6, 0.9),
-            emissive: Color::srgb(0.1, 0.3, 0.5).into(),
+            base_color: Color::srgb(0.9, 0.3, 0.2),
+            emissive: Color::srgb(0.6, 0.2, 0.1).into(),
             metallic: 0.8,
             perceptual_roughness: 0.2,
             ..default()
@@ -607,7 +627,7 @@ pub fn debug_spawn_shield_system(
             &shield_config,
         );
 
-        info!("🛡️ Test tower + shield spawned at center (0, 0, 0) with shield radius {}", shield_radius);
+        info!("🛡️ Test Team B tower + shield spawned at center (0, 0, 0) with shield radius {}", shield_radius);
     }
 }
 

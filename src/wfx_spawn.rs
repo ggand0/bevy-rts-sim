@@ -48,6 +48,7 @@ pub fn spawn_warfx_center_glow(
     asset_server: &Res<AssetServer>,
     position: Vec3,
     scale: f32,
+    speed_mult: f32,
 ) {
     let glow_texture = asset_server.load("textures/wfx/WFX_T_GlowCircle A8.png");
 
@@ -73,7 +74,7 @@ pub fn spawn_warfx_center_glow(
         let quad_mesh = meshes.add(Rectangle::new(quad_size, quad_size));
 
         // Unity WFX_ExplosiveSmoke_Big2 lifetime: 0.7s constant
-        let lifetime = 0.7;
+        let lifetime = 0.7 / speed_mult;
 
         // Glow stays centered at explosion origin (no drift)
         let velocity = Vec3::ZERO;
@@ -88,14 +89,14 @@ pub fn spawn_warfx_center_glow(
         // - Steep shrink at end (steep -3.32 tangent)
         let scale_curve = AnimationCurve {
             keyframes: vec![
-                (0.0, 0.3),    // Start small (30%)
-                (0.10, 0.5),   // Quick initial growth
-                (0.20, 0.7),   // Continue growing
-                (0.50, 0.95),  // Near peak
-                (0.60, 1.0),   // Peak at full size
-                (0.75, 0.8),   // Start shrinking
-                (0.90, 0.6),   // Continue shrinking (steep)
-                (1.0, 0.5),    // End at 50%
+                (0.0 / speed_mult, 0.3),    // Start small (30%)
+                (0.10 / speed_mult, 0.5),   // Quick initial growth
+                (0.20 / speed_mult, 0.7),   // Continue growing
+                (0.50 / speed_mult, 0.95),  // Near peak
+                (0.60 / speed_mult, 1.0),   // Peak at full size
+                (0.75 / speed_mult, 0.8),   // Start shrinking
+                (0.90 / speed_mult, 0.6),   // Continue shrinking (steep)
+                (1.0 / speed_mult, 0.5),    // End at 50%
             ],
         };
 
@@ -105,11 +106,11 @@ pub fn spawn_warfx_center_glow(
         // End at 98% to ensure fade completes before despawn at 100%
         let alpha_curve = AnimationCurve {
             keyframes: vec![
-                (0.0, 0.0),    // Start invisible
-                (0.10, 1.0),   // Fade in by 10%
-                (0.25, 1.0),   // Hold bright until 25%
-                (0.98, 0.0),   // Fade out to 0 just before end
-                (1.0, 0.0),    // Stay at 0
+                (0.0 / speed_mult, 0.0),    // Start invisible
+                (0.10 / speed_mult, 1.0),   // Fade in by 10%
+                (0.25 / speed_mult, 1.0),   // Hold bright until 25%
+                (0.98 / speed_mult, 0.0),   // Fade out to 0 just before end
+                (1.0 / speed_mult, 0.0),    // Stay at 0
             ],
         };
 
@@ -118,9 +119,9 @@ pub fn spawn_warfx_center_glow(
         // t=50%: rgb(1.0, 0.478, 0.478) - Salmon/red (holds to end)
         let color_curve = ColorCurve {
             keyframes: vec![
-                (0.0, Vec3::new(0.976, 0.753, 0.714)),  // Pink/coral - warm heat
-                (0.5, Vec3::new(1.0, 0.478, 0.478)),    // Salmon - saturated red
-                (1.0, Vec3::new(1.0, 0.478, 0.478)),    // Hold salmon to end
+                (0.0 / speed_mult, Vec3::new(0.976, 0.753, 0.714)),  // Pink/coral - warm heat
+                (0.5 / speed_mult, Vec3::new(1.0, 0.478, 0.478)),    // Salmon - saturated red
+                (1.0 / speed_mult, Vec3::new(1.0, 0.478, 0.478)),    // Hold salmon to end
             ],
         };
 
@@ -168,6 +169,7 @@ pub fn spawn_glow_sparkles(
     asset_server: &Res<AssetServer>,
     position: Vec3,
     scale: f32,
+    speed_mult: f32,
 ) {
     let glow_texture = asset_server.load("textures/wfx/WFX_T_GlowCircle A8.png");
 
@@ -178,21 +180,21 @@ pub fn spawn_glow_sparkles(
     // Burst configuration from Unity: (delay_seconds, particle_count)
     // Front-loaded: 20+10+5 = 35 particles over 0.1 seconds
     let bursts = [
-        (0.00_f32, 20_u32),
-        (0.05_f32, 10_u32),
-        (0.10_f32, 5_u32),
+        (0.00_f32 / speed_mult, 20_u32),
+        (0.05_f32 / speed_mult, 10_u32),
+        (0.10_f32 / speed_mult, 5_u32),
     ];
 
     // Tiny sparkle size (Unity: 0.05 to 0.1)
-    let base_size = 0.15 * scale; // Slightly larger for visibility
+    let base_size = 0.21 * scale; // 40% larger than original (0.15 * 1.4)
     let quad_mesh = meshes.add(Rectangle::new(base_size, base_size));
 
     for (delay, count) in bursts {
         for _ in 0..count {
-            // Random direction - wider spread (70°) for more horizontal spray
-            // phi measured from vertical (Y axis), so 70° gives good horizontal coverage
+            // Random direction - wide spread (90°) for strong horizontal spray
+            // phi measured from vertical (Y axis), so 90° gives full hemisphere coverage
             let theta = rng.gen_range(0.0..std::f32::consts::TAU); // Full circle around Y
-            let phi = rng.gen_range(0.0..(70.0_f32).to_radians()); // 70° cone from vertical
+            let phi = rng.gen_range(0.0..(90.0_f32).to_radians()); // 90° cone from vertical (full hemisphere)
             let dir = Vec3::new(
                 phi.sin() * theta.cos(),
                 phi.cos(), // Y component (upward bias decreases with larger phi)
@@ -202,12 +204,12 @@ pub fn spawn_glow_sparkles(
             // Small random offset from center (Unity radius: 2)
             let spawn_offset = dir * rng.gen_range(0.0..2.0) * scale;
 
-            // High initial velocity (Unity: speed 24)
-            let speed = 24.0 * scale;
+            // Velocity: 16.0 (Unity: 24.0, ~67% of original for slower scatter)
+            let speed = 16.0 * scale * speed_mult;
             let initial_velocity = dir * speed;
 
-            // Random lifetime (Unity: 0.25 to 0.35 seconds)
-            let lifetime = rng.gen_range(0.25..0.35);
+            // Lifetime: 0.625-0.875s (Unity: 0.25-0.35s, 2.5x original for longer linger)
+            let lifetime = rng.gen_range(0.625..0.875) / speed_mult;
 
             // Random size multiplier (Unity: 0.05 to 0.1, normalized)
             let size_mult = rng.gen_range(0.5..1.0);
@@ -216,29 +218,29 @@ pub fn spawn_glow_sparkles(
             // Include global scale factor so sparkles scale with explosion
             let scale_curve = AnimationCurve {
                 keyframes: vec![
-                    (0.0, 0.399 * size_mult * scale),
-                    (0.347, 0.764 * size_mult * scale),
-                    (1.0, 0.990 * size_mult * scale),
+                    (0.0 / speed_mult, 0.399 * size_mult * scale),
+                    (0.347 / speed_mult, 0.764 * size_mult * scale),
+                    (1.0 / speed_mult, 0.990 * size_mult * scale),
                 ],
             };
 
             // Alpha curve: stay bright, quick fade at end
             let alpha_curve = AnimationCurve {
                 keyframes: vec![
-                    (0.0, 1.0),
-                    (0.8, 1.0),
-                    (1.0, 0.0),
+                    (0.0 / speed_mult, 1.0),
+                    (0.8 / speed_mult, 1.0),
+                    (1.0 / speed_mult, 0.0),
                 ],
             };
 
             // Color gradient: white → yellow → orange → dark red
             let color_curve = ColorCurve {
                 keyframes: vec![
-                    (0.0, Vec3::new(1.0, 1.0, 1.0)),           // White (hottest)
-                    (0.076, Vec3::new(1.0, 0.973, 0.843)),     // Warm white
-                    (0.25, Vec3::new(1.0, 0.945, 0.471)),      // Yellow
-                    (0.515, Vec3::new(1.0, 0.796, 0.420)),     // Orange
-                    (0.779, Vec3::new(0.718, 0.196, 0.0)),     // Dark red/ember
+                    (0.0 / speed_mult, Vec3::new(1.0, 1.0, 1.0)),           // White (hottest)
+                    (0.076 / speed_mult, Vec3::new(1.0, 0.973, 0.843)),     // Warm white
+                    (0.25 / speed_mult, Vec3::new(1.0, 0.945, 0.471)),      // Yellow
+                    (0.515 / speed_mult, Vec3::new(1.0, 0.796, 0.420)),     // Orange
+                    (0.779 / speed_mult, Vec3::new(0.718, 0.196, 0.0)),     // Dark red/ember
                 ],
             };
 
@@ -270,7 +272,7 @@ pub fn spawn_glow_sparkles(
                     alpha_curve,
                     color_curve,
                     velocity: initial_velocity,
-                    gravity: 4.0 * scale, // Unity gravity modifier: 4
+                    gravity: 9.8, // Constant gravity for drag-down effect (Unity original: 4.0 * scale * speed_mult)
                 },
                 Name::new("WFX_Sparkle"),
             ));
@@ -297,6 +299,7 @@ pub fn spawn_dot_sparkles(
     asset_server: &Res<AssetServer>,
     position: Vec3,
     scale: f32,
+    speed_mult: f32,
 ) {
     // Use GlowCircle instead of SmallDots - SmallDots is a multi-dot atlas that doesn't work well
     let dot_texture = asset_server.load("textures/wfx/WFX_T_GlowCircle A8.png");
@@ -307,21 +310,21 @@ pub fn spawn_dot_sparkles(
 
     // Burst configuration: 75 particles total in 3 equal bursts
     let bursts = [
-        (0.00_f32, 25_u32),
-        (0.12_f32, 25_u32),
-        (0.25_f32, 25_u32),
+        (0.00_f32 / speed_mult, 25_u32),
+        (0.12_f32 / speed_mult, 25_u32),
+        (0.25_f32 / speed_mult, 25_u32),
     ];
 
-    // Small dot size - slightly larger than Unity for visibility
-    let base_size = 0.2 * scale;
+    // Small dot size - 40% larger than original (0.2 * 1.4)
+    let base_size = 0.28 * scale;
     let quad_mesh = meshes.add(Rectangle::new(base_size, base_size));
 
     for (delay, count) in bursts {
         for _ in 0..count {
-            // Random direction - 25° cone (narrower than glow sparkles' 70°)
-            // But allow full hemisphere spread for more visible effect
+            // Random direction - wide spread (75°) for horizontal spray
+            // Much wider than Unity's 25° to match the overall explosion spread
             let theta = rng.gen_range(0.0..std::f32::consts::TAU);
-            let phi = rng.gen_range(0.0..(50.0_f32).to_radians()); // Wider than Unity's 25° for visibility
+            let phi = rng.gen_range(0.0..(75.0_f32).to_radians()); // Wide spread for visible horizontal effect
             let dir = Vec3::new(
                 phi.sin() * theta.cos(),
                 phi.cos(),
@@ -331,12 +334,12 @@ pub fn spawn_dot_sparkles(
             // Random offset from center (Unity radius: 1.6)
             let spawn_offset = dir * rng.gen_range(0.0..1.6) * scale;
 
-            // Random speed between 12-24 (creates varied spread)
-            let speed = rng.gen_range(12.0..24.0) * scale;
+            // Velocity: 8-16 (Unity: 12-24, ~67% of original for slower scatter)
+            let speed = rng.gen_range(8.0..16.0) * scale * speed_mult;
             let initial_velocity = dir * speed;
 
-            // Random lifetime (Unity: 0.2 to 0.3 seconds)
-            let lifetime = rng.gen_range(0.2..0.3);
+            // Lifetime: 0.875-1.3125s (Unity: 0.2-0.3s, ~4.4x original for longer linger)
+            let lifetime = rng.gen_range(0.875..1.3125) / speed_mult;
 
             // Random size multiplier
             let size_mult = rng.gen_range(0.5..1.0);
@@ -344,29 +347,29 @@ pub fn spawn_dot_sparkles(
             // Size curve: grow from 40% to full size
             let scale_curve = AnimationCurve {
                 keyframes: vec![
-                    (0.0, 0.399 * size_mult * scale),
-                    (0.347, 0.764 * size_mult * scale),
-                    (1.0, 0.990 * size_mult * scale),
+                    (0.0 / speed_mult, 0.399 * size_mult * scale),
+                    (0.347 / speed_mult, 0.764 * size_mult * scale),
+                    (1.0 / speed_mult, 0.990 * size_mult * scale),
                 ],
             };
 
             // Alpha curve: stay bright for 60%, then fade
             let alpha_curve = AnimationCurve {
                 keyframes: vec![
-                    (0.0, 1.0),
-                    (0.6, 1.0),
-                    (1.0, 0.0),
+                    (0.0 / speed_mult, 1.0),
+                    (0.6 / speed_mult, 1.0),
+                    (1.0 / speed_mult, 0.0),
                 ],
             };
 
             // Fire color gradient (same as glow sparkles)
             let color_curve = ColorCurve {
                 keyframes: vec![
-                    (0.0, Vec3::new(1.0, 1.0, 1.0)),           // White
-                    (0.20, Vec3::new(1.0, 0.984, 0.843)),      // Warm white
-                    (0.40, Vec3::new(1.0, 0.945, 0.471)),      // Yellow
-                    (0.50, Vec3::new(1.0, 0.796, 0.420)),      // Orange
-                    (0.75, Vec3::new(0.718, 0.196, 0.0)),      // Dark red
+                    (0.0 / speed_mult, Vec3::new(1.0, 1.0, 1.0)),           // White
+                    (0.20 / speed_mult, Vec3::new(1.0, 0.984, 0.843)),      // Warm white
+                    (0.40 / speed_mult, Vec3::new(1.0, 0.945, 0.471)),      // Yellow
+                    (0.50 / speed_mult, Vec3::new(1.0, 0.796, 0.420)),      // Orange
+                    (0.75 / speed_mult, Vec3::new(0.718, 0.196, 0.0)),      // Dark red
                 ],
             };
 
@@ -397,7 +400,7 @@ pub fn spawn_dot_sparkles(
                     alpha_curve,
                     color_curve,
                     velocity: initial_velocity,
-                    gravity: 2.0 * scale, // Lower gravity than glow sparkles (2 vs 4)
+                    gravity: 9.8, // Constant gravity for drag-down effect (Unity original: 2.0 * scale * speed_mult)
                 },
                 Name::new("WFX_DotSparkle"),
             ));
@@ -424,6 +427,7 @@ pub fn spawn_dot_sparkles_vertical(
     asset_server: &Res<AssetServer>,
     position: Vec3,
     scale: f32,
+    speed_mult: f32,
 ) {
     // Use GlowCircle instead of SmallDots - SmallDots is a multi-dot atlas that doesn't work well
     let dot_texture = asset_server.load("textures/wfx/WFX_T_GlowCircle A8.png");
@@ -434,13 +438,13 @@ pub fn spawn_dot_sparkles_vertical(
 
     // Burst configuration: 15 particles total in 3 small bursts
     let bursts = [
-        (0.00_f32, 5_u32),
-        (0.15_f32, 5_u32),
-        (0.30_f32, 5_u32),
+        (0.00_f32 / speed_mult, 5_u32),
+        (0.15_f32 / speed_mult, 5_u32),
+        (0.30_f32 / speed_mult, 5_u32),
     ];
 
-    // Small dot size - slightly larger than Unity for visibility
-    let base_size = 0.2 * scale;
+    // Small dot size - 40% larger than original (0.2 * 1.4)
+    let base_size = 0.28 * scale;
     let quad_mesh = meshes.add(Rectangle::new(base_size, base_size));
 
     for (delay, count) in bursts {
@@ -459,12 +463,12 @@ pub fn spawn_dot_sparkles_vertical(
                 rng.gen_range(-0.5..0.5) * scale,
             );
 
-            // Slower speed than regular dot sparkles (6-12 vs 12-24)
-            let speed = rng.gen_range(6.0..12.0) * scale;
+            // Velocity: 6-8 (Unity: 6-12, ~58% of original for slower upward float)
+            let speed = rng.gen_range(6.0..8.0) * scale * speed_mult;
             let initial_velocity = dir * speed;
 
-            // Very short lifetime (Unity: 0.1 to 0.3 seconds)
-            let lifetime = rng.gen_range(0.1..0.3);
+            // Lifetime: 0.4375-1.3125s (Unity: 0.1-0.3s, ~3.3x original for longer linger)
+            let lifetime = rng.gen_range(0.4375..1.3125) / speed_mult;
 
             // Random size multiplier
             let size_mult = rng.gen_range(0.5..1.0);
@@ -472,29 +476,29 @@ pub fn spawn_dot_sparkles_vertical(
             // Size curve: grow from 40% to full size
             let scale_curve = AnimationCurve {
                 keyframes: vec![
-                    (0.0, 0.399 * size_mult * scale),
-                    (0.347, 0.764 * size_mult * scale),
-                    (1.0, 0.990 * size_mult * scale),
+                    (0.0 / speed_mult, 0.399 * size_mult * scale),
+                    (0.347 / speed_mult, 0.764 * size_mult * scale),
+                    (1.0 / speed_mult, 0.990 * size_mult * scale),
                 ],
             };
 
             // Alpha curve: stay bright for 60%, then fade
             let alpha_curve = AnimationCurve {
                 keyframes: vec![
-                    (0.0, 1.0),
-                    (0.6, 1.0),
-                    (1.0, 0.0),
+                    (0.0 / speed_mult, 1.0),
+                    (0.6 / speed_mult, 1.0),
+                    (1.0 / speed_mult, 0.0),
                 ],
             };
 
             // Fire color gradient (same as other sparkles)
             let color_curve = ColorCurve {
                 keyframes: vec![
-                    (0.0, Vec3::new(1.0, 1.0, 1.0)),           // White
-                    (0.20, Vec3::new(1.0, 0.984, 0.843)),      // Warm white
-                    (0.40, Vec3::new(1.0, 0.945, 0.471)),      // Yellow
-                    (0.50, Vec3::new(1.0, 0.796, 0.420)),      // Orange
-                    (0.75, Vec3::new(0.718, 0.196, 0.0)),      // Dark red
+                    (0.0 / speed_mult, Vec3::new(1.0, 1.0, 1.0)),           // White
+                    (0.20 / speed_mult, Vec3::new(1.0, 0.984, 0.843)),      // Warm white
+                    (0.40 / speed_mult, Vec3::new(1.0, 0.945, 0.471)),      // Yellow
+                    (0.50 / speed_mult, Vec3::new(1.0, 0.796, 0.420)),      // Orange
+                    (0.75 / speed_mult, Vec3::new(0.718, 0.196, 0.0)),      // Dark red
                 ],
             };
 
@@ -525,7 +529,7 @@ pub fn spawn_dot_sparkles_vertical(
                     alpha_curve,
                     color_curve,
                     velocity: initial_velocity,
-                    gravity: 0.0, // No gravity - sparks float upward
+                    gravity: 9.8, // Constant gravity for drag-down effect (Unity original: 0.0)
                 },
                 Name::new("WFX_DotSparkleVertical"),
             ));
@@ -611,8 +615,9 @@ pub fn spawn_combined_explosion(
     asset_server: &Res<AssetServer>,
     position: Vec3,
     scale: f32,
+    speed_mult: f32,
 ) {
-    info!("💥 WAR FX: Spawning COMBINED explosion at {:?} (scale: {})", position, scale);
+    info!("💥 WAR FX: Spawning COMBINED explosion at {:?} (scale: {}, speed_mult: {})", position, scale, speed_mult);
 
     // 1. Central glow flash (instant, 0.7s lifetime)
     spawn_warfx_center_glow(
@@ -622,6 +627,7 @@ pub fn spawn_combined_explosion(
         asset_server,
         position,
         scale,
+        speed_mult,
     );
 
     // 2. Explosion flames/smoke billboards (57 particles in bursts)
@@ -632,6 +638,7 @@ pub fn spawn_combined_explosion(
         asset_server,
         position,
         scale,
+        speed_mult,
     );
 
     // 3. Smoke emitter (30 particles, delayed 0.5s start)
@@ -642,6 +649,7 @@ pub fn spawn_combined_explosion(
         asset_server,
         position,
         scale,
+        speed_mult,
     );
 
     // 4. Glow sparkles (35 fast-moving embers with gravity)
@@ -652,6 +660,7 @@ pub fn spawn_combined_explosion(
         asset_server,
         position,
         scale,
+        speed_mult,
     );
 
     // 5. Dot sparkles (75 dense sparks with moderate gravity)
@@ -662,6 +671,7 @@ pub fn spawn_combined_explosion(
         asset_server,
         position,
         scale,
+        speed_mult,
     );
 
     // 6. Dot sparkles vertical (15 upward-floating sparks)
@@ -672,6 +682,7 @@ pub fn spawn_combined_explosion(
         asset_server,
         position,
         scale,
+        speed_mult,
     );
 
     info!("✅ WAR FX: Combined explosion complete - 6 emitters spawned");
@@ -693,6 +704,7 @@ pub fn spawn_smoke_emitter(
     asset_server: &Res<AssetServer>,
     position: Vec3,
     base_scale: f32,
+    speed_mult: f32,
 ) {
     // Use same smoke texture with UV scrolling
     let smoke_texture = asset_server.load("textures/wfx/WFX_T_SmokeLoopAlpha.tga");
@@ -716,21 +728,20 @@ pub fn spawn_smoke_emitter(
 
     for i in 0..particle_count {
         // Staggered spawn delay: 0.5s base + 50ms per particle
-        let spawn_delay = 0.5 + (i as f32 * 0.05);
+        let spawn_delay = (0.5 + (i as f32 * 0.05)) / speed_mult;
 
-        // Random position within sphere (Unity: radius 1.6, angle 5°)
-        let radius = 1.6 * base_scale;
-        let angle = rng.gen_range(0.0..std::f32::consts::TAU);
-        let spread = rng.gen_range(0.0..0.087); // ~5 degrees in radians
-        let vertical_spread = rng.gen_range(-0.5..0.5) * spread;
+        // Random position on sphere surface - full spherical distribution (same as flame emitter)
+        let radius = rng.gen_range(1.5..3.5) * base_scale;
+        let theta = rng.gen_range(0.0..std::f32::consts::TAU); // Horizontal angle (0 to 360°)
+        let phi = rng.gen_range(0.3..std::f32::consts::PI); // Vertical angle (covers top to bottom)
         let offset = Vec3::new(
-            radius * spread * angle.cos(),
-            vertical_spread * radius,
-            radius * spread * angle.sin(),
+            radius * phi.sin() * theta.cos(),
+            radius * phi.cos(),
+            radius * phi.sin() * theta.sin(),
         );
 
         // Random lifetime (Unity: 3s to 4s)
-        let lifetime = rng.gen_range(3.0..4.0);
+        let lifetime = rng.gen_range(3.0..4.0) / speed_mult;
 
         // Random initial rotation (Unity: 0° to 360°)
         let initial_rotation = rng.gen_range(0.0..std::f32::consts::TAU);
@@ -742,10 +753,10 @@ pub fn spawn_smoke_emitter(
         // Unity: 0%→0, 15%→1, 33%→1, 100%→0
         let alpha_curve = AnimationCurve {
             keyframes: vec![
-                (0.0, 0.0),    // Start transparent (fade in)
-                (0.15, 1.0),   // Fully opaque
-                (0.33, 1.0),   // Stay opaque
-                (1.0, 0.0),    // Fade out
+                (0.0 / speed_mult, 0.0),    // Start transparent (fade in)
+                (0.15 / speed_mult, 1.0),   // Fully opaque
+                (0.33 / speed_mult, 1.0),   // Stay opaque
+                (1.0 / speed_mult, 0.0),    // Fade out
             ],
         };
 
@@ -753,14 +764,29 @@ pub fn spawn_smoke_emitter(
         // Unity: 0%→0.414, 100%→1.0
         let scale_curve = AnimationCurve {
             keyframes: vec![
-                (0.0, 0.414 * size_mult),
-                (1.0, 1.0 * size_mult),
+                (0.0 / speed_mult, 0.414 * size_mult),
+                (1.0 / speed_mult, 1.0 * size_mult),
             ],
         };
 
-        // Color stays constant gray (Unity: Color Over Lifetime is white, no change)
-        // The gray comes from startColor (0.725) being multiplied
-        let color_curve = ColorCurve::constant(start_color);
+        // Color curve: constant color (Unity original - no color over lifetime)
+        // Commented out custom darkening curve to match Unity reference
+        // let color_curve = ColorCurve {
+        //     keyframes: vec![
+        //         (0.0 / speed_mult, start_color),                    // Full brightness (gray)
+        //         (0.30 / speed_mult, start_color),                   // Stay bright until 30%
+        //         (0.50 / speed_mult, start_color * 0.3),             // Darken to 30% at 50%
+        //         (1.0 / speed_mult, start_color * 0.3),              // Stay dark until end
+        //     ],
+        // };
+
+        // Use constant color throughout lifetime
+        let color_curve = ColorCurve {
+            keyframes: vec![
+                (0.0, start_color),
+                (1.0, start_color),
+            ],
+        };
 
         // Velocity: Y increases over time (Unity curve: 1.5→3.0 by 20%)
         // Simplified to constant approximation
@@ -768,15 +794,15 @@ pub fn spawn_smoke_emitter(
             rng.gen_range(-0.5..0.5),   // X: minimal spread
             rng.gen_range(2.0..3.0),    // Y: upward drift
             rng.gen_range(-0.5..0.5),   // Z: minimal spread
-        ) * base_scale;
+        ) * base_scale * speed_mult;
 
         // Rotation: 70-90°/sec (1.22-1.57 rad/s) - slower than Explosion
-        let rotation_speed = rng.gen_range(1.22..1.57);
+        let rotation_speed = rng.gen_range(1.22..1.57) * speed_mult;
 
         // Create smoke-only material with gray color (no flame blending)
         // scroll_speed = 10.0 (from Unity .mat file)
         // W component packs scroll_speed (integer) + alpha (decimal)
-        let scroll_speed = 10.0_f32;
+        let scroll_speed = 10.0_f32 * speed_mult;
         let packed_w = scroll_speed + start_alpha.min(0.999);
         let smoke_material = smoke_only_materials.add(SmokeOnlyMaterial {
             tint_color_and_speed: Vec4::new(
@@ -836,6 +862,7 @@ pub fn spawn_explosion_flames(
     asset_server: &Res<AssetServer>,
     position: Vec3,
     base_scale: f32,
+    speed_mult: f32,
 ) {
     // Use smoke texture with UV scrolling (creates morphing appearance)
     let smoke_texture = asset_server.load("textures/wfx/WFX_T_SmokeLoopAlpha.tga");
@@ -847,10 +874,10 @@ pub fn spawn_explosion_flames(
     // Burst configuration: 57 particles total (1.5x Unity's 38)
     // Front-loaded to create initial impact
     let bursts = [
-        (0.00_f32, 23_u32),  // 15 * 1.5
-        (0.10_f32, 15_u32),  // 10 * 1.5
-        (0.20_f32, 12_u32),  // 8 * 1.5
-        (0.30_f32, 7_u32),   // 5 * 1.5
+        (0.00_f32 / speed_mult, 23_u32),  // 15 * 1.5
+        (0.10_f32 / speed_mult, 15_u32),  // 10 * 1.5
+        (0.20_f32 / speed_mult, 12_u32),  // 8 * 1.5
+        (0.30_f32 / speed_mult, 7_u32),   // 5 * 1.5
     ];
 
     // Start color gradient from Unity (particles spawn with random color from this gradient)
@@ -885,7 +912,7 @@ pub fn spawn_explosion_flames(
             );
 
             // Random lifetime (Unity: 3s to 4s)
-            let lifetime = rng.gen_range(3.0..4.0);
+            let lifetime = rng.gen_range(3.0..4.0) / speed_mult;
 
             // Random initial rotation (Unity: 0° to 360°)
             let initial_rotation = rng.gen_range(0.0..std::f32::consts::TAU);
@@ -902,7 +929,7 @@ pub fn spawn_explosion_flames(
             // scroll_speed = 10.0 (from Unity .mat file)
             // W component packs scroll_speed (integer) + alpha (decimal): 10.0 + 0.999 = 10.999
             // Initial alpha = 0.999 (nearly 1.0, clamped to avoid floor collision)
-            let scroll_speed = 10.0_f32;
+            let scroll_speed = 10.0_f32 * speed_mult;
             let initial_alpha = 0.999_f32; // Start fully opaque
             let packed_w = scroll_speed + initial_alpha;
             let smoke_material = smoke_materials.add(SmokeScrollMaterial {
@@ -919,32 +946,31 @@ pub fn spawn_explosion_flames(
             // t=0.0: 0.396, t=0.046: 0.814 (rapid expand), t=1.0: 1.0 (slow grow)
             let scale_curve = AnimationCurve {
                 keyframes: vec![
-                    (0.0, 0.396 * size_mult),
-                    (0.046, 0.814 * size_mult),  // Rapid pop in first 5%
-                    (1.0, 1.0 * size_mult),
+                    (0.0 / speed_mult, 0.396 * size_mult),
+                    (0.046 / speed_mult, 0.814 * size_mult),  // Rapid pop in first 5%
+                    (1.0 / speed_mult, 1.0 * size_mult),
                 ],
             };
 
             // Alpha curve from Unity: 100%→100%→57.6%→0%
             let alpha_curve = AnimationCurve {
                 keyframes: vec![
-                    (0.0, 1.0),    // Full opacity
-                    (0.3, 1.0),    // Stay opaque
-                    (0.6, 0.576),  // Start fading
-                    (1.0, 0.0),    // Fully transparent
+                    (0.0 / speed_mult, 1.0),    // Full opacity
+                    (0.3 / speed_mult, 1.0),    // Stay opaque
+                    (0.6 / speed_mult, 0.576),  // Start fading
+                    (1.0 / speed_mult, 0.0),    // Fully transparent
                 ],
             };
 
             // Color over lifetime from Unity: grayscale multiplier applied to start color
             // Unity ColorOverLifetime multiplies the start color by these grayscale values:
-            // t=0%: 1.0 (full brightness), t=20%: 0.694, t=41%: 0.404, t=100%: 0.596
-            // This maintains the color hue while transitioning to a darker shade
+            // Unity: t=0%: 1.0, t=20%: 0.694, t=41%: 0.404, t=100%: 0.596
             let color_curve = ColorCurve {
                 keyframes: vec![
-                    (0.0, start_color),                        // Full brightness
-                    (0.2, start_color * 0.694),                // 69.4% brightness
-                    (0.41, start_color * 0.404),               // 40.4% brightness
-                    (1.0, start_color * 0.596),                // 59.6% brightness (keeps hue)
+                    (0.0 / speed_mult, start_color),                        // Full brightness
+                    (0.20 / speed_mult, start_color * 0.694),               // 69.4% brightness at 20%
+                    (0.41 / speed_mult, start_color * 0.404),               // 40.4% brightness at 41% (darkest)
+                    (1.0 / speed_mult, start_color * 0.596),                // 59.6% brightness at 100% (final smoke color)
                 ],
             };
 
@@ -953,10 +979,10 @@ pub fn spawn_explosion_flames(
                 rng.gen_range(-4.0..4.0),   // X: random spread
                 rng.gen_range(4.0..8.0),    // Y: upward (Unity: 8)
                 rng.gen_range(-4.0..4.0),   // Z: random spread
-            ) * base_scale * 0.5;  // Scale down velocity for longer lifetime
+            ) * base_scale * 0.5 * speed_mult;  // Scale down velocity for longer lifetime
 
             // Rotation speed (Unity: 90°/sec = 1.5707963 rad/s)
-            let rotation_speed = rng.gen_range(-1.57..1.57);
+            let rotation_speed = rng.gen_range(-1.57..1.57) * speed_mult;
 
             // Determine if this particle is active immediately or delayed
             let is_active = delay == 0.0;
@@ -1215,6 +1241,7 @@ impl ColorCurve {
     }
 
     /// Create a constant color curve
+    #[allow(dead_code)]
     pub fn constant(color: Vec3) -> Self {
         Self {
             keyframes: vec![(0.0, color), (1.0, color)],
