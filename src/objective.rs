@@ -341,24 +341,27 @@ pub fn debug_warfx_test_system(
         return;
     }
 
-    // Only process 1-6 keys when debug mode is active
+    // Only process 1-7 keys when debug mode is active
     if !debug_mode.explosion_mode {
         return;
     }
+
+    // Debug spawn position: Firebase Delta uses offset position at terrain height,
+    // other maps use fixed position at Y=10
+    let debug_spawn_pos = if terrain_config.current_map == crate::terrain::MapPreset::FirebaseDelta {
+        let offset_x = 40.0;
+        let offset_z = 30.0;
+        let terrain_y = heightmap.sample_height(offset_x, offset_z);
+        Vec3::new(offset_x, terrain_y, offset_z)
+    } else {
+        Vec3::new(0.0, 10.0, 0.0)
+    };
 
     // 1 key: Spawn center glow billboards
     if keyboard_input.just_pressed(KeyCode::Digit1) {
         info!("🎆 DEBUG: War FX test hotkey (1) pressed! Spawning glow...");
 
-        // On Firebase Delta, spawn at offset position (same as UE ground explosion); on other maps spawn at Y=10
-        let position = if terrain_config.current_map == crate::terrain::MapPreset::FirebaseDelta {
-            let offset_x = 40.0;
-            let offset_z = 30.0;
-            let terrain_y = heightmap.sample_height(offset_x, offset_z);
-            Vec3::new(offset_x, terrain_y, offset_z)
-        } else {
-            Vec3::new(0.0, 10.0, 0.0)
-        };
+        let position = debug_spawn_pos;
         let scale = 2.0;
 
         // Spawn center glow billboards
@@ -380,15 +383,7 @@ pub fn debug_warfx_test_system(
     if keyboard_input.just_pressed(KeyCode::Digit2) {
         info!("🔥 DEBUG: War FX explosion hotkey (2) pressed! Spawning complete explosion...");
 
-        // On Firebase Delta, spawn at offset position (same as UE ground explosion); on other maps spawn at Y=10
-        let position = if terrain_config.current_map == crate::terrain::MapPreset::FirebaseDelta {
-            let offset_x = 40.0;
-            let offset_z = 30.0;
-            let terrain_y = heightmap.sample_height(offset_x, offset_z);
-            Vec3::new(offset_x, terrain_y, offset_z)
-        } else {
-            Vec3::new(0.0, 10.0, 0.0)
-        };
+        let position = debug_spawn_pos;
         let scale = 2.0;
 
         // Spawn smoke/flame particles only (Explosion emitter)
@@ -410,15 +405,7 @@ pub fn debug_warfx_test_system(
     if keyboard_input.just_pressed(KeyCode::Digit3) {
         info!("💨 DEBUG: War FX smoke hotkey (3) pressed! Spawning smoke emitter...");
 
-        // On Firebase Delta, spawn at offset position (same as UE ground explosion); on other maps spawn at Y=10
-        let position = if terrain_config.current_map == crate::terrain::MapPreset::FirebaseDelta {
-            let offset_x = 40.0;
-            let offset_z = 30.0;
-            let terrain_y = heightmap.sample_height(offset_x, offset_z);
-            Vec3::new(offset_x, terrain_y, offset_z)
-        } else {
-            Vec3::new(0.0, 10.0, 0.0)
-        };
+        let position = debug_spawn_pos;
         let scale = 2.0;
 
         // Spawn smoke emitter (delayed start, continuous emission)
@@ -439,15 +426,7 @@ pub fn debug_warfx_test_system(
     if keyboard_input.just_pressed(KeyCode::Digit4) {
         info!("✨ DEBUG: War FX sparkles hotkey (4) pressed! Spawning glow sparkles...");
 
-        // On Firebase Delta, spawn at offset position (same as UE ground explosion); on other maps spawn at Y=10
-        let position = if terrain_config.current_map == crate::terrain::MapPreset::FirebaseDelta {
-            let offset_x = 40.0;
-            let offset_z = 30.0;
-            let terrain_y = heightmap.sample_height(offset_x, offset_z);
-            Vec3::new(offset_x, terrain_y, offset_z)
-        } else {
-            Vec3::new(0.0, 10.0, 0.0)
-        };
+        let position = debug_spawn_pos;
         let scale = 2.0;
 
         crate::wfx_spawn::spawn_glow_sparkles(
@@ -467,15 +446,7 @@ pub fn debug_warfx_test_system(
     if keyboard_input.just_pressed(KeyCode::Digit5) {
         info!("💥 DEBUG: War FX COMBINED explosion hotkey (5) pressed!");
 
-        // On Firebase Delta, spawn at offset position (same as UE ground explosion); on other maps spawn at Y=10
-        let position = if terrain_config.current_map == crate::terrain::MapPreset::FirebaseDelta {
-            let offset_x = 40.0;
-            let offset_z = 30.0;
-            let terrain_y = heightmap.sample_height(offset_x, offset_z);
-            Vec3::new(offset_x, terrain_y, offset_z)
-        } else {
-            Vec3::new(0.0, 10.0, 0.0)
-        };
+        let position = debug_spawn_pos;
         let scale = 4.0; // Adjustable scale parameter
 
         crate::wfx_spawn::spawn_combined_explosion(
@@ -497,15 +468,7 @@ pub fn debug_warfx_test_system(
     if keyboard_input.just_pressed(KeyCode::Digit6) {
         info!("🔶 DEBUG: War FX dot sparkles hotkey (6) pressed!");
 
-        // On Firebase Delta, spawn at offset position (same as UE ground explosion); on other maps spawn at Y=10
-        let position = if terrain_config.current_map == crate::terrain::MapPreset::FirebaseDelta {
-            let offset_x = 40.0;
-            let offset_z = 30.0;
-            let terrain_y = heightmap.sample_height(offset_x, offset_z);
-            Vec3::new(offset_x, terrain_y, offset_z)
-        } else {
-            Vec3::new(0.0, 10.0, 0.0)
-        };
+        let position = debug_spawn_pos;
         let scale = 2.0;
 
         // Regular dot sparkles (75 particles, gravity-affected)
@@ -537,15 +500,7 @@ pub fn debug_warfx_test_system(
     if keyboard_input.just_pressed(KeyCode::Digit7) {
         info!("💥 DEBUG: War FX TURRET explosion hotkey (7) pressed!");
 
-        // On Firebase Delta, spawn at offset position (same as UE ground explosion); on other maps spawn at Y=10
-        let position = if terrain_config.current_map == crate::terrain::MapPreset::FirebaseDelta {
-            let offset_x = 40.0;
-            let offset_z = 30.0;
-            let terrain_y = heightmap.sample_height(offset_x, offset_z);
-            Vec3::new(offset_x, terrain_y, offset_z)
-        } else {
-            Vec3::new(0.0, 10.0, 0.0)
-        };
+        let position = debug_spawn_pos;
         let scale = 1.5; // Smaller scale for turret explosion
 
         crate::wfx_spawn::spawn_turret_wfx_explosion(

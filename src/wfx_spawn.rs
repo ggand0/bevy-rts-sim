@@ -1241,6 +1241,7 @@ impl ColorCurve {
     }
 
     /// Create a constant color curve
+    #[allow(dead_code)]
     pub fn constant(color: Vec3) -> Self {
         Self {
             keyframes: vec![(0.0, color), (1.0, color)],

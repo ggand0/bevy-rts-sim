@@ -5,6 +5,7 @@ use bevy::pbr::decal::clustered::ClusteredDecal;
 pub struct DecalPlugin;
 
 #[derive(Component)]
+#[allow(dead_code)]
 struct DecalsSpawned;
 
 impl Plugin for DecalPlugin {
@@ -18,6 +19,7 @@ impl Plugin for DecalPlugin {
 
 #[derive(Resource)]
 pub struct DecalTextures {
+    #[allow(dead_code)]
     pub bullet_hole: Handle<Image>,
     #[allow(dead_code)]
     pub selection_ring: Handle<Image>,
@@ -41,6 +43,7 @@ fn setup_decal_textures(
     info!("✅ Decal textures loaded!");
 }
 
+#[allow(dead_code)]
 fn spawn_test_decals(
     mut commands: Commands,
     decal_textures: Res<DecalTextures>,
