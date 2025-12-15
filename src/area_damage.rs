@@ -102,6 +102,7 @@ pub fn area_damage_system(
                         direction,
                         ground_y,
                         event.scale,
+                        transform.rotation,
                         &mut rng,
                     );
                 }
@@ -113,6 +114,7 @@ pub fn area_damage_system(
                     direction,
                     ground_y,
                     event.scale,
+                    transform.rotation,
                     &mut rng,
                 );
             }
@@ -193,6 +195,7 @@ fn apply_knockback(
     direction: Vec3,
     ground_y: f32,
     scale: f32,
+    original_rotation: Quat,
     rng: &mut impl Rng,
 ) {
     let speed = KNOCKBACK_BASE_SPEED * scale * rng.gen_range(0.8..1.2);
@@ -212,6 +215,8 @@ fn apply_knockback(
         ground_y,
         is_airborne: true,
         stun_timer: KNOCKBACK_STUN_DURATION,
+        original_rotation,
+        tilt_angle: 0.0,
     });
 }
 
@@ -264,6 +269,12 @@ pub fn knockback_physics_system(
     let dt = time.delta_secs();
 
     for (entity, mut transform, mut knockback) in query.iter_mut() {
+        // Get current terrain height (mesh origin is at feet, so this is the ground level)
+        let ground_y = heightmap
+            .as_ref()
+            .map(|hm| hm.sample_height(transform.translation.x, transform.translation.z))
+            .unwrap_or(knockback.ground_y);
+
         if knockback.is_airborne {
             // Apply velocity
             transform.translation += knockback.velocity * dt;
@@ -271,27 +282,36 @@ pub fn knockback_physics_system(
             // Apply gravity
             knockback.velocity.y += knockback.gravity * dt;
 
-            // Update ground height at current position
-            let current_ground_y = heightmap
-                .as_ref()
-                .map(|hm| hm.sample_height(transform.translation.x, transform.translation.z))
-                .unwrap_or(knockback.ground_y);
+            // Increase tilt while airborne (tilting backward)
+            knockback.tilt_angle = (knockback.tilt_angle + KNOCKBACK_TILT_SPEED * dt)
+                .min(KNOCKBACK_TILT_MAX);
 
             // Check ground collision
-            if transform.translation.y <= current_ground_y {
+            if transform.translation.y <= ground_y {
                 // Landed - snap to ground, start stun timer
-                transform.translation.y = current_ground_y;
+                transform.translation.y = ground_y;
                 knockback.is_airborne = false;
                 knockback.velocity = Vec3::ZERO;
             }
         } else {
-            // On ground - count down stun timer
+            // On ground - count down stun timer and recover tilt
             knockback.stun_timer -= dt;
 
+            // Gradually recover to upright during stun
+            knockback.tilt_angle = (knockback.tilt_angle - KNOCKBACK_RECOVER_SPEED * dt).max(0.0);
+
+            // Keep at ground level
+            transform.translation.y = ground_y;
+
             if knockback.stun_timer <= 0.0 {
-                // Stun over - remove component, unit resumes normal behavior
+                // Stun over - reset rotation and remove component
+                transform.rotation = knockback.original_rotation;
                 commands.entity(entity).remove::<KnockbackState>();
             }
         }
+
+        // Apply backward tilt rotation
+        let pitch = Quat::from_rotation_x(-knockback.tilt_angle);
+        transform.rotation = knockback.original_rotation * pitch;
     }
 }

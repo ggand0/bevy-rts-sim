@@ -437,7 +437,9 @@ pub struct KnockbackState {
     pub gravity: f32,
     pub ground_y: f32,
     pub is_airborne: bool,
-    pub stun_timer: f32,  // Post-landing stun duration (no move/shoot)
+    pub stun_timer: f32,       // Post-landing stun duration (no move/shoot)
+    pub original_rotation: Quat, // Store original facing direction
+    pub tilt_angle: f32,       // Current backward tilt angle in radians (pitch)
 }
 
 /// Unit dying via ragdoll (flies away, despawns on ground contact)

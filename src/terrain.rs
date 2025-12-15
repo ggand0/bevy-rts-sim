@@ -738,10 +738,7 @@ fn handle_pending_heightmap(
     map_switch_events.write(MapSwitchEvent { new_map: pending_map });
 }
 
-/// Unit Y offset above terrain (mesh feet are at Y=-1.6, scaled by 0.8 = -1.28)
-/// For flat ground at Y=-1.0, this gives spawn at Y=0.28
-/// For procedural terrain at Y=0+, this gives spawn at terrain_y + 1.28
-const UNIT_TERRAIN_OFFSET: f32 = 1.28;
+/// Unit Y offset above terrain (mesh origin is now at feet, so no offset needed)
 
 /// System to reposition units, towers, and reset game state when map is switched
 pub fn handle_map_switch_units(
@@ -802,13 +799,12 @@ pub fn handle_map_switch_units(
             let z = transform.translation.z;
             let terrain_y = heightmap.sample_height(x, z);
 
-            // Update unit position with proper offset for feet placement
-            let new_y = terrain_y + UNIT_TERRAIN_OFFSET;
-            transform.translation.y = new_y;
+            // Update unit position (mesh origin is at feet)
+            transform.translation.y = terrain_y;
 
             // Update spawn position so retreat works correctly
-            droid.spawn_position.y = new_y;
-            droid.target_position.y = new_y;
+            droid.spawn_position.y = terrain_y;
+            droid.target_position.y = terrain_y;
 
             // Reset march animation to prevent units from appearing buried/floating
             // The animate_march system will recalculate the bob based on the new terrain height
@@ -818,8 +814,8 @@ pub fn handle_map_switch_units(
         // Update squad center positions
         for (_squad_id, squad) in squad_manager.squads.iter_mut() {
             let terrain_y = heightmap.sample_height(squad.center_position.x, squad.center_position.z);
-            squad.center_position.y = terrain_y + UNIT_TERRAIN_OFFSET;
-            squad.target_position.y = terrain_y + UNIT_TERRAIN_OFFSET;
+            squad.center_position.y = terrain_y;
+            squad.target_position.y = terrain_y;
         }
 
         // Reposition towers and reset health

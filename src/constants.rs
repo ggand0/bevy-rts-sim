@@ -130,6 +130,9 @@ pub const AREA_DAMAGE_RIM_RADIUS: f32 = 20.0;   // Knockback only zone
 pub const KNOCKBACK_BASE_SPEED: f32 = 15.0;     // Base launch velocity
 pub const KNOCKBACK_GRAVITY: f32 = -30.0;       // Gravity acceleration
 pub const KNOCKBACK_STUN_DURATION: f32 = 1.0;   // Post-landing stun (no move/shoot)
+pub const KNOCKBACK_TILT_MAX: f32 = 0.6;        // Max tilt angle in radians (~35 degrees)
+pub const KNOCKBACK_TILT_SPEED: f32 = 8.0;      // How fast to reach max tilt while airborne
+pub const KNOCKBACK_RECOVER_SPEED: f32 = 3.0;   // How fast to recover to upright during stun
 
 /// Ragdoll death physics (50% of deaths in core/mid zones)
 pub const RAGDOLL_MIN_SPEED: f32 = 20.0;        // Min launch velocity
