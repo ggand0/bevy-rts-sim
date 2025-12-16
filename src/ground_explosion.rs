@@ -511,7 +511,6 @@ pub fn spawn_ground_explosion(
         // Fallback to CPU particles
         spawn_sparks(commands, assets, additive_materials, position, scale, &mut rng);
         spawn_flash_sparks(commands, assets, additive_materials, position, scale, &mut rng);
-        // Parts debris (3D mesh, gravity, bounce) - CPU only
         spawn_parts(commands, assets, position, scale, &mut rng);
     }
 
