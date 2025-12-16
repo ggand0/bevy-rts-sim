@@ -377,50 +377,64 @@ fn setup_particle_effects(
 
     // === GROUND EXPLOSION GPU SPARKS ===
     // Replaces CPU spark entities (30-60 per explosion) with single GPU effect
-    // CPU spec: 90° upward cone (hemisphere), speed 15-37.5 m/s, gravity 9.8 m/s²
-    // HDR color: (50/27/7.6) → (1/0.05/0) over 55%, then fades
-    // Size: 0.8-1.8m
+    // UE5 spec: 90° upward cone, gravity 9.8 m/s², HDR color curve cooling
+    //
+    // CPU color curve (from update_spark_color):
+    //   t=0.0:  (12.5, 6.75, 1.9, 1.0)   - Hot HDR orange-yellow
+    //   t=0.55: (0.25, 0.0125, 0.0, 0.5) - Cooled to dim red, half alpha
+    //   t=1.0:  (0.125, 0.005, 0.0, 0.0) - Fully faded
     let mut spark_color_gradient = bevy_hanabi::Gradient::new();
-    // HDR orange → dim red → fade (values pre-divided for shader's 4× brightness)
-    spark_color_gradient.add_key(0.0, Vec4::new(12.5, 6.75, 1.9, 1.0));   // Hot HDR orange
-    spark_color_gradient.add_key(0.55, Vec4::new(0.25, 0.0125, 0.0, 0.5)); // Cooling to dim red
-    spark_color_gradient.add_key(1.0, Vec4::new(0.125, 0.006, 0.0, 0.0));  // Fade out
+    // Match CPU's linear interpolation from hot orange-yellow to cooled red
+    spark_color_gradient.add_key(0.0, Vec4::new(12.5, 6.75, 1.9, 1.0));    // Hot HDR orange-yellow
+    spark_color_gradient.add_key(0.2, Vec4::new(8.0, 4.3, 1.2, 0.9));      // Still hot
+    spark_color_gradient.add_key(0.4, Vec4::new(3.5, 1.8, 0.5, 0.75));     // Cooling
+    spark_color_gradient.add_key(0.55, Vec4::new(0.25, 0.0125, 0.0, 0.5)); // Cooled to dim red
+    spark_color_gradient.add_key(0.75, Vec4::new(0.18, 0.008, 0.0, 0.25)); // Fading
+    spark_color_gradient.add_key(1.0, Vec4::new(0.125, 0.005, 0.0, 0.0));  // Gone
 
-    // Size stays roughly constant (CPU shrinks slightly)
     let mut spark_size_gradient = bevy_hanabi::Gradient::new();
     spark_size_gradient.add_key(0.0, Vec3::splat(1.0));
-    spark_size_gradient.add_key(1.0, Vec3::splat(0.8));
+    spark_size_gradient.add_key(1.0, Vec3::splat(0.3));
 
     let writer_spark = ExprWriter::new();
 
-    // Spawn in upward cone shape (90° = hemisphere)
-    // Using Cone3d: height=1.0 upward, base_radius=1.0 (90° from vertical), top_radius=0
-    let spark_init_pos = SetPositionCone3dModifier {
-        height: writer_spark.lit(1.0).expr(),
-        base_radius: writer_spark.lit(1.0).expr(),  // 90° cone = tan(45°) * height = height
-        top_radius: writer_spark.lit(0.0).expr(),
-        dimension: ShapeDimension::Surface,
+    // Spawn at explosion center (CPU spawns at position, not offset)
+    let spark_init_pos = SetPositionSphereModifier {
+        center: writer_spark.lit(Vec3::ZERO).expr(),
+        radius: writer_spark.lit(0.1).expr(),  // Very small radius - CPU spawns at center
+        dimension: ShapeDimension::Volume,
     };
 
-    // Velocity: radial from center (0,0,0) through spawn position
-    // Speed: 15-37.5 m/s (CPU uses falloff, we use average range)
-    let spark_init_vel = SetVelocitySphereModifier {
-        center: writer_spark.lit(Vec3::ZERO).expr(),
-        speed: (writer_spark.lit(15.0) + writer_spark.rand(ScalarType::Float) * writer_spark.lit(22.5)).expr(),
-    };
+    // === VELOCITY: 90° upward hemisphere ===
+    // CPU uses spherical coordinates: phi in [0, PI/2], theta in [0, TAU]
+    // velocity = (sin(phi)*cos(theta), cos(phi), sin(phi)*sin(theta)) * speed
+    // This creates an upward hemisphere cone.
+    //
+    // GPU approach: Generate random direction in full sphere, then make Y positive
+    // to restrict to upper hemisphere.
+    let rand_dir = writer_spark.rand(VectorType::VEC3F) * writer_spark.lit(2.0) - writer_spark.lit(1.0);
+    let rand_dir_normalized = rand_dir.normalized();
+    // Force Y component positive (upward hemisphere)
+    let dir_x = rand_dir_normalized.clone().x();
+    let dir_y = rand_dir_normalized.clone().y().abs();  // abs() = upward only
+    let dir_z = rand_dir_normalized.z();
+    let hemisphere_dir = dir_x.vec3(dir_y, dir_z).normalized();
+    // Random speed 15-37.5 m/s (matching CPU's rng.gen_range(15.0..37.5))
+    let spark_speed = writer_spark.lit(15.0) + writer_spark.rand(ScalarType::Float) * writer_spark.lit(22.5);
+    let spark_velocity = hemisphere_dir * spark_speed;
+    let spark_init_vel = SetAttributeModifier::new(Attribute::VELOCITY, spark_velocity.expr());
 
     let spark_init_age = SetAttributeModifier::new(Attribute::AGE, writer_spark.lit(0.0).expr());
     let spark_init_lifetime = SetAttributeModifier::new(
         Attribute::LIFETIME,
         (writer_spark.lit(0.5) + writer_spark.rand(ScalarType::Float) * writer_spark.lit(1.5)).expr()
     );
-    // Size: 0.8-1.8 (matching CPU)
     let spark_init_size = SetAttributeModifier::new(
         Attribute::SIZE,
         (writer_spark.lit(0.8) + writer_spark.rand(ScalarType::Float) * writer_spark.lit(1.0)).expr()
     );
 
-    // Gravity: -9.8 m/s² (CPU uses 9.8)
+    // Gravity: -9.8 m/s² (matching CPU's VelocityAligned { gravity: 9.8 })
     let spark_update_accel = AccelModifier::new(writer_spark.lit(Vec3::new(0.0, -9.8, 0.0)).expr());
 
     // Texture slot for flare.png
@@ -432,7 +446,7 @@ fn setup_particle_effects(
     let ground_sparks_effect = effects.add(
         EffectAsset::new(512, SpawnerSettings::once(45.0.into()), spark_module)
             .with_name("ground_explosion_sparks")
-            .with_alpha_mode(bevy_hanabi::AlphaMode::Add)  // Additive blending like CPU AdditiveMaterial
+            .with_alpha_mode(bevy_hanabi::AlphaMode::Add)
             .init(spark_init_pos)
             .init(spark_init_vel)
             .init(spark_init_age)
@@ -442,64 +456,83 @@ fn setup_particle_effects(
             .render(OrientModifier::new(OrientMode::AlongVelocity))
             .render(ParticleTextureModifier {
                 texture_slot: spark_texture_slot,
-                sample_mapping: ImageSampleMapping::Modulate,  // Full texture modulation
+                sample_mapping: ImageSampleMapping::ModulateOpacityFromR,
             })
             .render(ColorOverLifetimeModifier::new(spark_color_gradient))
             .render(SizeOverLifetimeModifier { gradient: spark_size_gradient, screen_space_size: false })
     );
 
-    // === GROUND EXPLOSION GPU FLASH SPARKS (spark_l) ===
-    // Replaces CPU spark_l entities (20-50 per explosion) with single GPU effect
-    // CPU spec: Ring spawn at radius 0.5, 100° cone, speed 4-55 m/s
-    // Constant HDR orange (10/6.5/3.9), alpha fades linearly
-    // "Shooting star" XY scale: starts elongated (0.06×10), normalizes to (1×0.6)
-    // No gravity, uses drag for deceleration
+    // === GROUND EXPLOSION GPU FLASH SPARKS ===
+    // Replaces CPU flash spark entities (20-50 per explosion) with single GPU effect
+    // UE5 spec: Ring spawn, 100° cone, deceleration physics, "shooting star" elongation
+    //
+    // CPU behavior (from update_spark_l_color):
+    //   Color: Constant HDR orange (2.5, 1.625, 0.975), only alpha fades 1→0
+    //   Velocity: 100° cone (wider than 90° hemisphere), ring spawn at equator
+    //   Deceleration: (-0.25, -1.0, -0.5) * 10 = (-2.5, -10, -5) m/s²
     let mut flash_color_gradient = bevy_hanabi::Gradient::new();
-    // Constant HDR orange (pre-divided for shader's 4× brightness) with alpha fade
+    // Constant HDR orange, alpha fades linearly
     flash_color_gradient.add_key(0.0, Vec4::new(2.5, 1.625, 0.975, 1.0));
+    flash_color_gradient.add_key(0.3, Vec4::new(2.5, 1.625, 0.975, 0.7));
+    flash_color_gradient.add_key(0.6, Vec4::new(2.5, 1.625, 0.975, 0.4));
     flash_color_gradient.add_key(1.0, Vec4::new(2.5, 1.625, 0.975, 0.0));
 
-    // "Shooting star" effect - starts very elongated along velocity, normalizes
-    // For AlongVelocity orient mode: X = along velocity (length), Y = perpendicular (width)
-    // CPU: t=0: 0.06×10 → t=0.5: 1×0.6 → t=1.0: 1×0.6 (width×length)
-    // So for hanabi: (length, width, z) = (10, 0.06, 1) → (0.6, 1, 1)
+    // "Shooting star" effect: very elongated at start, normalizes over time
+    // CPU: t=0: tiny → t=0.05: 0.3×50 → t=0.5: 5×3 → t=1.0: 5×3
+    // In bevy_hanabi with AlongVelocity, X is perpendicular, Y is along velocity
     let mut flash_size_gradient = bevy_hanabi::Gradient::new();
-    flash_size_gradient.add_key(0.0, Vec3::new(10.0, 0.06, 1.0));   // Very elongated along velocity
-    flash_size_gradient.add_key(0.05, Vec3::new(10.0, 0.06, 1.0));  // Hold elongation briefly
-    flash_size_gradient.add_key(0.5, Vec3::new(0.6, 1.0, 1.0));     // Normalize
-    flash_size_gradient.add_key(1.0, Vec3::new(0.6, 1.0, 1.0));     // Final
+    flash_size_gradient.add_key(0.0, Vec3::new(0.06, 10.0, 1.0));  // Very elongated (shooting star)
+    flash_size_gradient.add_key(0.05, Vec3::new(0.06, 10.0, 1.0)); // Hold elongation briefly
+    flash_size_gradient.add_key(0.2, Vec3::new(0.3, 2.0, 1.0));    // Shrinking
+    flash_size_gradient.add_key(0.5, Vec3::new(1.0, 0.6, 1.0));    // Normalized
+    flash_size_gradient.add_key(1.0, Vec3::new(1.0, 0.6, 1.0));    // Hold
 
     let writer_flash = ExprWriter::new();
 
-    // Spawn in 100° upward cone (wider than hemisphere)
-    // 100° from vertical = base_radius/height = tan(50°) ≈ 1.19
-    let flash_init_pos = SetPositionCone3dModifier {
-        height: writer_flash.lit(1.0).expr(),
-        base_radius: writer_flash.lit(1.19).expr(),  // tan(50°) for 100° cone
-        top_radius: writer_flash.lit(0.0).expr(),
+    // Ring spawn on XZ plane (equator) - matches CPU's spawn_offset calculation
+    let flash_init_pos = SetPositionCircleModifier {
+        center: writer_flash.lit(Vec3::ZERO).expr(),
+        axis: writer_flash.lit(Vec3::Y).expr(),
+        radius: writer_flash.lit(0.5).expr(),
         dimension: ShapeDimension::Surface,
     };
 
-    // Velocity: radial from center through spawn position
-    // Speed: 4-55 m/s (very wide range)
-    let flash_init_vel = SetVelocitySphereModifier {
-        center: writer_flash.lit(Vec3::ZERO).expr(),
-        speed: (writer_flash.lit(4.0) + writer_flash.rand(ScalarType::Float) * writer_flash.lit(51.0)).expr(),
-    };
+    // === VELOCITY: 100° cone (wider than hemisphere) ===
+    // CPU uses phi in [0, 100°] where 90° = horizontal, 100° = slightly below
+    // velocity = (sin(phi)*cos(theta), cos(phi), sin(phi)*sin(theta)) * speed
+    // cos(100°) ≈ -0.17, so Y can be slightly negative
+    //
+    // GPU approach: Generate hemisphere direction, but allow slight downward bias
+    let rand_dir_f = writer_flash.rand(VectorType::VEC3F) * writer_flash.lit(2.0) - writer_flash.lit(1.0);
+    let rand_dir_norm_f = rand_dir_f.normalized();
+    // For 100° cone: Y can range from -0.17 to 1.0, so we clamp Y to be >= -0.2
+    // Simpler: just use abs(Y) * 0.9 + Y * 0.1 to bias upward but allow slight down
+    let dir_x_f = rand_dir_norm_f.clone().x();
+    let dir_y_raw = rand_dir_norm_f.clone().y();
+    // Mix abs(y) and raw y to allow ~100° cone: 80% upward bias, 20% raw
+    let dir_y_f = dir_y_raw.clone().abs() * writer_flash.lit(0.8) + dir_y_raw * writer_flash.lit(0.2);
+    let dir_z_f = rand_dir_norm_f.z();
+    let cone_dir = dir_x_f.vec3(dir_y_f, dir_z_f).normalized();
+    // Speed 4-55 m/s (matching CPU's rng.gen_range(4.0..55.0))
+    let flash_speed = writer_flash.lit(4.0) + writer_flash.rand(ScalarType::Float) * writer_flash.lit(51.0);
+    let flash_velocity = cone_dir * flash_speed;
+    let flash_init_vel = SetAttributeModifier::new(Attribute::VELOCITY, flash_velocity.expr());
 
     let flash_init_age = SetAttributeModifier::new(Attribute::AGE, writer_flash.lit(0.0).expr());
     let flash_init_lifetime = SetAttributeModifier::new(
         Attribute::LIFETIME,
         (writer_flash.lit(0.3) + writer_flash.rand(ScalarType::Float) * writer_flash.lit(0.7)).expr()
     );
-    // Size: 0.4-1.0 (matching CPU)
     let flash_init_size = SetAttributeModifier::new(
         Attribute::SIZE,
         (writer_flash.lit(0.4) + writer_flash.rand(ScalarType::Float) * writer_flash.lit(0.6)).expr()
     );
 
-    // Deceleration via drag (no gravity - CPU uses velocity decay)
-    let flash_update_drag = LinearDragModifier::new(writer_flash.lit(2.0).expr());
+    // CPU flash sparks: NO gravity (gravity: 0.0), only deceleration via update_spark_l_physics
+    // The deceleration gradually slows particles down, not constant downward acceleration.
+    // Use LINEAR DRAG to approximate the velocity-dependent slowdown behavior.
+    // Higher drag = faster slowdown. CPU multiplies velocity by decel * dt * 10 = small reduction each frame.
+    let flash_update_drag = LinearDragModifier::new(writer_flash.lit(4.0).expr());
 
     // Texture slot (same flare.png)
     let flash_texture_slot = writer_flash.lit(0u32).expr();
@@ -510,17 +543,18 @@ fn setup_particle_effects(
     let ground_flash_sparks_effect = effects.add(
         EffectAsset::new(256, SpawnerSettings::once(35.0.into()), flash_module)
             .with_name("ground_explosion_flash_sparks")
-            .with_alpha_mode(bevy_hanabi::AlphaMode::Add)  // Additive blending like CPU AdditiveMaterial
+            .with_alpha_mode(bevy_hanabi::AlphaMode::Add)
             .init(flash_init_pos)
             .init(flash_init_vel)
             .init(flash_init_age)
             .init(flash_init_lifetime)
             .init(flash_init_size)
             .update(flash_update_drag)
+            // No AccelModifier - CPU flash sparks have no gravity, only drag/deceleration
             .render(OrientModifier::new(OrientMode::AlongVelocity))
             .render(ParticleTextureModifier {
                 texture_slot: flash_texture_slot,
-                sample_mapping: ImageSampleMapping::Modulate,  // Full texture modulation
+                sample_mapping: ImageSampleMapping::ModulateOpacityFromR,
             })
             .render(ColorOverLifetimeModifier::new(flash_color_gradient))
             .render(SizeOverLifetimeModifier { gradient: flash_size_gradient, screen_space_size: false })
