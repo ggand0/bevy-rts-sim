@@ -502,14 +502,17 @@ pub fn spawn_ground_explosion(
     // Dust ring (4x1 flipbook, velocity aligned)
     spawn_dust_ring(commands, assets, flipbook_materials, position, scale, &mut rng);
 
-    // Sparks - use GPU if available, otherwise CPU
+    // Sparks and parts - use GPU if available, otherwise CPU
     if let (Some(effects), Some(time)) = (gpu_effects, current_time) {
-        // GPU sparks: 2 entities instead of 50-110 CPU entities
+        // GPU particles: 3 entities instead of 100-185 CPU entities
+        // (sparks: 30-60, flash_sparks: 20-50, parts: 50-75)
         spawn_ground_explosion_gpu_sparks(commands, effects, position, scale, time);
     } else {
-        // Fallback to CPU sparks
+        // Fallback to CPU particles
         spawn_sparks(commands, assets, additive_materials, position, scale, &mut rng);
         spawn_flash_sparks(commands, assets, additive_materials, position, scale, &mut rng);
+        // Parts debris (3D mesh, gravity, bounce) - CPU only
+        spawn_parts(commands, assets, position, scale, &mut rng);
     }
 
     // Impact ground flash - short duration for full explosion
@@ -521,11 +524,9 @@ pub fn spawn_ground_explosion(
     // Velocity-stretched dirt (single texture, velocity aligned)
     spawn_velocity_dirt(commands, assets, flipbook_materials, position, scale, &mut rng);
 
-    // Parts debris (3D mesh, gravity, bounce)
-    spawn_parts(commands, assets, position, scale, &mut rng);
-
     let spark_type = if gpu_effects.is_some() { "GPU" } else { "CPU" };
-    info!("✅ Ground explosion spawned with 11 emitters ({} sparks)", spark_type);
+    info!("✅ Ground explosion spawned with {} emitters ({} sparks+parts)",
+          if gpu_effects.is_some() { 10 } else { 11 }, spark_type);
 }
 
 // ===== EMITTER SPAWN FUNCTIONS =====
@@ -2721,7 +2722,7 @@ pub fn ground_explosion_debug_menu_system(
             info!("  4: dirt001    5: dust       6: wisp");
             info!("  7: smoke      8: spark      9: spark_l");
             info!("  0: parts");
-            info!("  Shift+8: spark(GPU)  Shift+9: spark_l(GPU)");
+            info!("  Shift+8/9/0: GPU versions");
             info!("  J: group 1-6  K: full explosion");
             info!("  P: close");
             info!("═══════════════════════════════════════");
@@ -2763,7 +2764,10 @@ pub fn ground_explosion_debug_menu_system(
     // Get camera transform for local-space velocity calculation
     let camera_transform = camera_query.iter().next();
 
-    // Individual emitter keys (1-9)
+    let shift_held = keyboard_input.pressed(KeyCode::ShiftLeft) || keyboard_input.pressed(KeyCode::ShiftRight);
+
+    // Individual emitter keys (1-7, 0 without shift for CPU parts)
+    // 8, 9, 0 with shift are handled separately for GPU versions
     let emitter = if keyboard_input.just_pressed(KeyCode::Digit1) {
         Some((EmitterType::MainFireball, "main"))
     } else if keyboard_input.just_pressed(KeyCode::Digit2) {
@@ -2778,7 +2782,8 @@ pub fn ground_explosion_debug_menu_system(
         Some((EmitterType::Wisp, "wisp"))
     } else if keyboard_input.just_pressed(KeyCode::Digit7) {
         Some((EmitterType::Smoke, "smoke"))
-    } else if keyboard_input.just_pressed(KeyCode::Digit0) {
+    } else if keyboard_input.just_pressed(KeyCode::Digit0) && !shift_held {
+        // CPU parts (only when shift is NOT held)
         Some((EmitterType::Parts, "parts"))
     } else {
         None
@@ -2797,8 +2802,6 @@ pub fn ground_explosion_debug_menu_system(
         );
         info!("[P] Spawned: {}", name);
     }
-
-    let shift_held = keyboard_input.pressed(KeyCode::ShiftLeft) || keyboard_input.pressed(KeyCode::ShiftRight);
 
     // 8: spark (CPU) or Shift+8: spark (GPU)
     if keyboard_input.just_pressed(KeyCode::Digit8) {
@@ -2888,6 +2891,34 @@ pub fn ground_explosion_debug_menu_system(
         }
     }
 
+    // 0: parts (CPU) or Shift+0: parts (GPU)
+    if keyboard_input.just_pressed(KeyCode::Digit0) && shift_held {
+        // GPU parts (replaces CPU spawn_parts / PartsPhysics)
+        if let Some(effects) = gpu_effects.as_ref() {
+            let current_time = time.elapsed_secs_f64();
+            let seed = (current_time * 1000000.0) as u32;
+            commands.spawn((
+                bevy_hanabi::ParticleEffect {
+                    handle: effects.ground_parts_effect.clone(),
+                    prng_seed: Some(seed),
+                },
+                bevy_hanabi::EffectMaterial {
+                    images: vec![effects.ground_parts_texture.clone()],
+                },
+                Transform::from_translation(position).with_scale(Vec3::splat(scale)),
+                Visibility::Visible,
+                crate::particles::ParticleEffectLifetime {
+                    spawn_time: current_time,
+                    duration: 2.0,
+                },
+                Name::new("GE_GPU_Parts_Debug"),
+            ));
+            info!("[P] Spawned: parts (GPU)");
+        } else {
+            warn!("[P] GPU effects not available!");
+        }
+    }
+
     // J: Emitter group 1-6 (main, main001, dirt, dirt001, dust, wisp)
     if keyboard_input.just_pressed(KeyCode::KeyJ) {
         for emitter_type in [
@@ -2934,7 +2965,7 @@ pub fn ground_explosion_debug_menu_system(
 /// Spawn the debug menu UI (hidden by default)
 pub fn setup_ground_explosion_debug_ui(mut commands: Commands) {
     commands.spawn((
-        Text::new("GROUND EXPLOSION [P]\n─────────────────────\n1: main    2: main001\n3: dirt    4: dirt001\n5: dust    6: wisp\n7: smoke   8: spark\n9: spark_l 0: parts\n─────────────────────\nShift+8/9: GPU version\nJ: group 1-6\nK: full explosion\nP: close"),
+        Text::new("GROUND EXPLOSION [P]\n─────────────────────\n1: main    2: main001\n3: dirt    4: dirt001\n5: dust    6: wisp\n7: smoke   8: spark\n9: spark_l 0: parts\n─────────────────────\nShift+8/9/0: GPU ver\nJ: group 1-6\nK: full explosion\nP: close"),
         TextFont {
             font_size: 16.0,
             ..default()

@@ -36,6 +36,9 @@ pub struct ExplosionParticleEffects {
     pub ground_sparks_effect: Handle<EffectAsset>,
     pub ground_flash_sparks_effect: Handle<EffectAsset>,
     pub ground_sparks_texture: Handle<Image>,
+    // Ground explosion GPU parts debris (replaces CPU mesh entities)
+    pub ground_parts_effect: Handle<EffectAsset>,
+    pub ground_parts_texture: Handle<Image>,
 }
 
 fn setup_particle_effects(
@@ -579,6 +582,101 @@ fn setup_particle_effects(
             .render(SizeOverLifetimeModifier { gradient: flash_size_gradient, screen_space_size: false })
     );
 
+    // === GROUND EXPLOSION GPU PARTS DEBRIS ===
+    // Replaces CPU parts entities (50-75 per explosion) with single GPU effect
+    // Uses baked sprite sheet of 3D debris meshes from multiple angles
+    // Sprite sheet: 8 columns (angles) × 3 rows (variants) = 24 frames
+    //
+    // CPU behavior (from spawn_parts):
+    //   Count: 50-75 particles
+    //   Size: 0.3-0.5m * scale
+    //   Velocity: X/Z: ±8m/s, Y: 5-25m/s (strong upward launch)
+    //   Lifetime: 0.5-1.5s
+    //   Gravity: 9.8 m/s²
+    //   Scale curve: grow-in (0-10%), hold (10-90%), shrink-out (90-100%)
+    let ground_parts_texture: Handle<Image> = asset_server.load("textures/generated/debris_sprites.png");
+
+    // Color gradient: white (texture provides color), alpha for fade in/out
+    let mut parts_color_gradient = bevy_hanabi::Gradient::new();
+    parts_color_gradient.add_key(0.0, Vec4::new(1.0, 1.0, 1.0, 0.0));   // Start invisible
+    parts_color_gradient.add_key(0.1, Vec4::new(1.0, 1.0, 1.0, 1.0));   // Fade in by 10%
+    parts_color_gradient.add_key(0.9, Vec4::new(1.0, 1.0, 1.0, 1.0));   // Hold visible
+    parts_color_gradient.add_key(1.0, Vec4::new(1.0, 1.0, 1.0, 0.0));   // Fade out at end
+
+    // Size gradient: grow-in, hold, shrink-out matching CPU scale curve
+    let mut parts_size_gradient = bevy_hanabi::Gradient::new();
+    parts_size_gradient.add_key(0.0, Vec3::splat(0.0));   // Start at 0
+    parts_size_gradient.add_key(0.1, Vec3::splat(1.0));   // Grow to full by 10%
+    parts_size_gradient.add_key(0.9, Vec3::splat(1.0));   // Hold at full
+    parts_size_gradient.add_key(1.0, Vec3::splat(0.0));   // Shrink to 0 at end
+
+    let writer_parts = ExprWriter::new();
+
+    // Spawn at explosion center
+    let parts_init_pos = SetPositionSphereModifier {
+        center: writer_parts.lit(Vec3::ZERO).expr(),
+        radius: writer_parts.lit(0.5).expr(),  // Small spawn radius
+        dimension: ShapeDimension::Volume,
+    };
+
+    // Box velocity: X/Z: ±8, Y: 5-25 (CPU's UniformRangedVector)
+    let parts_vel_x = writer_parts.rand(ScalarType::Float) * writer_parts.lit(16.0) - writer_parts.lit(8.0);
+    let parts_vel_y = writer_parts.lit(5.0) + writer_parts.rand(ScalarType::Float) * writer_parts.lit(20.0);
+    let parts_vel_z = writer_parts.rand(ScalarType::Float) * writer_parts.lit(16.0) - writer_parts.lit(8.0);
+    let parts_velocity = parts_vel_x.vec3(parts_vel_y, parts_vel_z);
+    let parts_init_vel = SetAttributeModifier::new(Attribute::VELOCITY, parts_velocity.expr());
+
+    let parts_init_age = SetAttributeModifier::new(Attribute::AGE, writer_parts.lit(0.0).expr());
+    // Lifetime: 0.5-1.5s (matching CPU)
+    let parts_init_lifetime = SetAttributeModifier::new(
+        Attribute::LIFETIME,
+        (writer_parts.lit(0.5) + writer_parts.rand(ScalarType::Float) * writer_parts.lit(1.0)).expr()
+    );
+    // Size: 0.3-0.5m (matching CPU's rng.gen_range(0.3..0.5))
+    let parts_init_size = SetAttributeModifier::new(
+        Attribute::SIZE,
+        (writer_parts.lit(0.3) + writer_parts.rand(ScalarType::Float) * writer_parts.lit(0.2)).expr()
+    );
+
+    // Random sprite index [0, 23] - picks one of 24 frames (3 variants × 8 angles)
+    // Each particle gets a fixed random frame at spawn (no animation)
+    let parts_init_sprite = SetAttributeModifier::new(
+        Attribute::SPRITE_INDEX,
+        (writer_parts.rand(ScalarType::Float) * writer_parts.lit(24.0))
+            .cast(ScalarType::Int)
+            .expr()
+    );
+
+    // Gravity: -9.8 m/s² (matching CPU)
+    let parts_update_accel = AccelModifier::new(writer_parts.lit(Vec3::new(0.0, -9.8, 0.0)).expr());
+
+    // Texture slot for the sprite sheet
+    let parts_texture_slot = writer_parts.lit(0u32).expr();
+
+    let mut parts_module = writer_parts.finish();
+    parts_module.add_texture_slot("debris_sprites");
+
+    let ground_parts_effect = effects.add(
+        EffectAsset::new(128, SpawnerSettings::once(60.0.into()), parts_module)
+            .with_name("ground_explosion_parts")
+            .with_alpha_mode(bevy_hanabi::AlphaMode::Blend)
+            .init(parts_init_pos)
+            .init(parts_init_vel)
+            .init(parts_init_age)
+            .init(parts_init_lifetime)
+            .init(parts_init_size)
+            .init(parts_init_sprite)
+            .update(parts_update_accel)
+            .render(OrientModifier::new(OrientMode::FaceCameraPosition))  // Billboard facing camera
+            .render(ParticleTextureModifier {
+                texture_slot: parts_texture_slot,
+                sample_mapping: ImageSampleMapping::Modulate,  // Texture provides both color and alpha
+            })
+            .render(FlipbookModifier { sprite_grid_size: UVec2::new(8, 3) })  // 8 columns × 3 rows
+            .render(ColorOverLifetimeModifier::new(parts_color_gradient))
+            .render(SizeOverLifetimeModifier { gradient: parts_size_gradient, screen_space_size: false })
+    );
+
     commands.insert_resource(ExplosionParticleEffects {
         debris_effect: debris_effect.clone(),
         sparks_effect: sparks_effect.clone(),
@@ -589,6 +687,8 @@ fn setup_particle_effects(
         ground_sparks_effect: ground_sparks_effect.clone(),
         ground_flash_sparks_effect: ground_flash_sparks_effect.clone(),
         ground_sparks_texture: ground_sparks_texture.clone(),
+        ground_parts_effect: ground_parts_effect.clone(),
+        ground_parts_texture: ground_parts_texture.clone(),
     });
 
     // Warmup: Spawn particles far below the map to prime the GPU pipeline
@@ -636,6 +736,16 @@ fn setup_particle_effects(
         Visibility::Visible,
         ParticleEffectLifetime { spawn_time: 0.0, duration: 0.5 },
         Name::new("WarmupGroundFlashSparks"),
+    ));
+    commands.spawn((
+        ParticleEffect::new(ground_parts_effect),
+        EffectMaterial {
+            images: vec![ground_parts_texture],
+        },
+        Transform::from_translation(warmup_pos).with_scale(Vec3::splat(0.001)),
+        Visibility::Visible,
+        ParticleEffectLifetime { spawn_time: 0.0, duration: 0.5 },
+        Name::new("WarmupGroundParts"),
     ));
 
     info!("✅ Particle effects ready (with warmup)");
@@ -916,8 +1026,12 @@ fn cleanup_finished_particle_effects(
     let _ = (start, entity_count); // suppress warnings
 }
 
-/// Spawns GPU-based sparks for ground explosions
-/// Replaces 30-60 CPU spark entities with 2 GPU particle effects
+/// Spawns GPU-based particles for ground explosions
+/// Replaces CPU spark and parts entities with 3 GPU particle effects:
+/// - Sparks: 30-60 CPU entities → 1 GPU effect
+/// - Flash Sparks: 20-50 CPU entities → 1 GPU effect
+/// - Parts Debris: 50-75 CPU entities → 1 GPU effect
+/// Total reduction: ~100-185 entities → 3 entities per explosion
 pub fn spawn_ground_explosion_gpu_sparks(
     commands: &mut Commands,
     particle_effects: &ExplosionParticleEffects,
@@ -963,5 +1077,24 @@ pub fn spawn_ground_explosion_gpu_sparks(
             duration: 2.0,
         },
         Name::new("GE_GPU_FlashSparks"),
+    ));
+
+    // GPU Parts Debris (replaces spawn_parts - 50-75 entities → 1 GPU effect)
+    // Uses sprite sheet of baked 3D debris meshes
+    commands.spawn((
+        ParticleEffect {
+            handle: particle_effects.ground_parts_effect.clone(),
+            prng_seed: Some(seed.wrapping_add(67890)),
+        },
+        EffectMaterial {
+            images: vec![particle_effects.ground_parts_texture.clone()],
+        },
+        Transform::from_translation(position).with_scale(Vec3::splat(scale)),
+        Visibility::Visible,
+        ParticleEffectLifetime {
+            spawn_time: current_time,
+            duration: 2.0,
+        },
+        Name::new("GE_GPU_Parts"),
     ));
 }
