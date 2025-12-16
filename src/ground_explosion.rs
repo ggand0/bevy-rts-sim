@@ -10,6 +10,7 @@ use bevy::asset::RenderAssetUsages;
 use rand::Rng;
 
 use crate::wfx_materials::AdditiveMaterial;
+use crate::particles::{ExplosionParticleEffects, spawn_ground_explosion_gpu_sparks};
 
 // ===== HELPER FUNCTIONS =====
 
@@ -460,6 +461,7 @@ pub fn setup_ground_explosion_assets(
 // ===== MAIN SPAWN FUNCTION =====
 
 /// Spawn a complete UE5-style ground explosion
+/// If `gpu_effects` and `current_time` are provided, uses GPU particles for sparks (better performance)
 pub fn spawn_ground_explosion(
     commands: &mut Commands,
     assets: &GroundExplosionAssets,
@@ -469,6 +471,8 @@ pub fn spawn_ground_explosion(
     scale: f32,
     camera_transform: Option<&GlobalTransform>,
     audio_assets: Option<&crate::types::AudioAssets>,
+    gpu_effects: Option<&ExplosionParticleEffects>,
+    current_time: Option<f64>,
 ) {
     info!("🌋 Spawning ground explosion at {:?} (scale: {})", position, scale);
 
@@ -498,11 +502,15 @@ pub fn spawn_ground_explosion(
     // Dust ring (4x1 flipbook, velocity aligned)
     spawn_dust_ring(commands, assets, flipbook_materials, position, scale, &mut rng);
 
-    // Sparks with gravity (single texture, velocity aligned)
-    spawn_sparks(commands, assets, additive_materials, position, scale, &mut rng);
-
-    // Bright flash sparks (single texture, velocity aligned)
-    spawn_flash_sparks(commands, assets, additive_materials, position, scale, &mut rng);
+    // Sparks - use GPU if available, otherwise CPU
+    if let (Some(effects), Some(time)) = (gpu_effects, current_time) {
+        // GPU sparks: 2 entities instead of 50-110 CPU entities
+        spawn_ground_explosion_gpu_sparks(commands, effects, position, scale, time);
+    } else {
+        // Fallback to CPU sparks
+        spawn_sparks(commands, assets, additive_materials, position, scale, &mut rng);
+        spawn_flash_sparks(commands, assets, additive_materials, position, scale, &mut rng);
+    }
 
     // Impact ground flash - short duration for full explosion
     spawn_impact_flash(commands, assets, flipbook_materials, additive_materials, position, scale, 0.1);
@@ -516,7 +524,8 @@ pub fn spawn_ground_explosion(
     // Parts debris (3D mesh, gravity, bounce)
     spawn_parts(commands, assets, position, scale, &mut rng);
 
-    info!("✅ Ground explosion spawned with 11 emitters");
+    let spark_type = if gpu_effects.is_some() { "GPU" } else { "CPU" };
+    info!("✅ Ground explosion spawned with 11 emitters ({} sparks)", spark_type);
 }
 
 // ===== EMITTER SPAWN FUNCTIONS =====
@@ -2698,6 +2707,8 @@ pub fn ground_explosion_debug_menu_system(
     terrain_config: Res<crate::terrain::TerrainConfig>,
     heightmap: Res<crate::terrain::TerrainHeightmap>,
     audio_assets: Res<crate::types::AudioAssets>,
+    gpu_effects: Option<Res<crate::particles::ExplosionParticleEffects>>,
+    time: Res<Time>,
 ) {
     // P key toggles the debug menu
     if keyboard_input.just_pressed(KeyCode::KeyP) {
@@ -2708,7 +2719,8 @@ pub fn ground_explosion_debug_menu_system(
             info!("═══════════════════════════════════════");
             info!("  1: main       2: main001    3: dirt");
             info!("  4: dirt001    5: dust       6: wisp");
-            info!("  7: smoke      8: sparks     9: parts");
+            info!("  7: smoke      8: sparks(CPU) 9: parts");
+            info!("  U: sparks(GPU) I: flash(GPU)");
             info!("  J: group 1-6  K: full explosion");
             info!("  P: close");
             info!("═══════════════════════════════════════");
@@ -2807,7 +2819,53 @@ pub fn ground_explosion_debug_menu_system(
             scale,
             camera_transform,
         );
-        info!("[P] Spawned: sparks (both)");
+        info!("[P] Spawned: sparks (both CPU)");
+    }
+
+    // U: GPU sparks only (for comparison with CPU key 8)
+    if keyboard_input.just_pressed(KeyCode::KeyU) {
+        if let Some(effects) = gpu_effects.as_ref() {
+            let current_time = time.elapsed_secs_f64();
+            commands.spawn((
+                bevy_hanabi::ParticleEffect::new(effects.ground_sparks_effect.clone()),
+                bevy_hanabi::EffectMaterial {
+                    images: vec![effects.ground_sparks_texture.clone()],
+                },
+                Transform::from_translation(position).with_scale(Vec3::splat(scale)),
+                Visibility::Visible,
+                crate::particles::ParticleEffectLifetime {
+                    spawn_time: current_time,
+                    duration: 3.0,
+                },
+                Name::new("GE_GPU_Sparks_Debug"),
+            ));
+            info!("[P] Spawned: sparks (GPU)");
+        } else {
+            warn!("[P] GPU effects not available!");
+        }
+    }
+
+    // I: GPU flash sparks only (for comparison with CPU key 8)
+    if keyboard_input.just_pressed(KeyCode::KeyI) {
+        if let Some(effects) = gpu_effects.as_ref() {
+            let current_time = time.elapsed_secs_f64();
+            commands.spawn((
+                bevy_hanabi::ParticleEffect::new(effects.ground_flash_sparks_effect.clone()),
+                bevy_hanabi::EffectMaterial {
+                    images: vec![effects.ground_sparks_texture.clone()],
+                },
+                Transform::from_translation(position).with_scale(Vec3::splat(scale)),
+                Visibility::Visible,
+                crate::particles::ParticleEffectLifetime {
+                    spawn_time: current_time,
+                    duration: 2.0,
+                },
+                Name::new("GE_GPU_FlashSparks_Debug"),
+            ));
+            info!("[P] Spawned: flash sparks (GPU)");
+        } else {
+            warn!("[P] GPU effects not available!");
+        }
     }
 
     // J: Emitter group 1-6 (main, main001, dirt, dirt001, dust, wisp)
@@ -2836,6 +2894,7 @@ pub fn ground_explosion_debug_menu_system(
 
     // K: Full explosion (all emitters)
     if keyboard_input.just_pressed(KeyCode::KeyK) {
+        let current_time = time.elapsed_secs_f64();
         spawn_ground_explosion(
             &mut commands,
             &assets,
@@ -2845,6 +2904,8 @@ pub fn ground_explosion_debug_menu_system(
             1.0,  // Default scale
             camera_transform,
             Some(&audio_assets),
+            gpu_effects.as_deref(),
+            Some(current_time),
         );
         info!("[P] Spawned: FULL EXPLOSION");
     }

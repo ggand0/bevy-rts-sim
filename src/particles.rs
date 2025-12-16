@@ -32,13 +32,21 @@ pub struct ExplosionParticleEffects {
     pub mass_explosion_effect: Handle<EffectAsset>,
     #[allow(dead_code)]
     pub unit_death_flash: Handle<EffectAsset>,
+    // Ground explosion GPU effects (replaces CPU spark entities)
+    pub ground_sparks_effect: Handle<EffectAsset>,
+    pub ground_flash_sparks_effect: Handle<EffectAsset>,
+    pub ground_sparks_texture: Handle<Image>,
 }
 
 fn setup_particle_effects(
     mut commands: Commands,
     mut effects: ResMut<Assets<EffectAsset>>,
+    asset_server: Res<AssetServer>,
 ) {
     info!("🎆 Setting up particle effects...");
+
+    // Load flare texture for ground explosion sparks
+    let ground_sparks_texture: Handle<Image> = asset_server.load("textures/premium/ground_explosion/flare.png");
 
     // === DEBRIS PARTICLES ===
     // Physical debris chunks that fly outward
@@ -367,6 +375,142 @@ fn setup_particle_effects(
             .render(SizeOverLifetimeModifier { gradient: size_gradient6, screen_space_size: false })
     );
 
+    // === GROUND EXPLOSION GPU SPARKS ===
+    // Replaces CPU spark entities (30-60 per explosion) with single GPU effect
+    // UE5 spec: 90° upward cone, gravity 9.8 m/s², HDR color curve cooling
+    let mut spark_color_gradient = bevy_hanabi::Gradient::new();
+    // HDR orange → dim red → fade (values pre-divided for shader)
+    spark_color_gradient.add_key(0.0, Vec4::new(12.5, 6.75, 1.9, 1.0));   // Hot HDR orange
+    spark_color_gradient.add_key(0.55, Vec4::new(0.25, 0.0125, 0.0, 0.5)); // Cooling to dim red
+    spark_color_gradient.add_key(1.0, Vec4::new(0.125, 0.006, 0.0, 0.0));  // Fade out
+
+    let mut spark_size_gradient = bevy_hanabi::Gradient::new();
+    spark_size_gradient.add_key(0.0, Vec3::splat(1.0));
+    spark_size_gradient.add_key(1.0, Vec3::splat(0.3));
+
+    let writer_spark = ExprWriter::new();
+
+    // Spawn in small sphere at explosion center
+    let spark_init_pos = SetPositionSphereModifier {
+        center: writer_spark.lit(Vec3::ZERO).expr(),
+        radius: writer_spark.lit(0.5).expr(),
+        dimension: ShapeDimension::Surface,
+    };
+
+    // Velocity: 90° upward hemisphere with speed 15-37.5 m/s
+    // Using sphere modifier with upward bias via position offset
+    let spark_init_vel = SetVelocitySphereModifier {
+        center: writer_spark.lit(Vec3::new(0.0, -0.5, 0.0)).expr(), // Bias upward
+        speed: (writer_spark.lit(15.0) + writer_spark.rand(ScalarType::Float) * writer_spark.lit(22.5)).expr(),
+    };
+
+    let spark_init_age = SetAttributeModifier::new(Attribute::AGE, writer_spark.lit(0.0).expr());
+    let spark_init_lifetime = SetAttributeModifier::new(
+        Attribute::LIFETIME,
+        (writer_spark.lit(0.5) + writer_spark.rand(ScalarType::Float) * writer_spark.lit(1.5)).expr()
+    );
+    let spark_init_size = SetAttributeModifier::new(
+        Attribute::SIZE,
+        (writer_spark.lit(0.8) + writer_spark.rand(ScalarType::Float) * writer_spark.lit(1.0)).expr()
+    );
+
+    // Gravity: -9.8 m/s²
+    let spark_update_accel = AccelModifier::new(writer_spark.lit(Vec3::new(0.0, -9.8, 0.0)).expr());
+
+    // Texture slot for flare.png
+    let spark_texture_slot = writer_spark.lit(0u32).expr();
+
+    let mut spark_module = writer_spark.finish();
+    spark_module.add_texture_slot("spark_texture");
+
+    let ground_sparks_effect = effects.add(
+        EffectAsset::new(512, SpawnerSettings::once(45.0.into()), spark_module)
+            .with_name("ground_explosion_sparks")
+            .init(spark_init_pos)
+            .init(spark_init_vel)
+            .init(spark_init_age)
+            .init(spark_init_lifetime)
+            .init(spark_init_size)
+            .update(spark_update_accel)
+            .render(OrientModifier::new(OrientMode::AlongVelocity))
+            .render(ParticleTextureModifier {
+                texture_slot: spark_texture_slot,
+                sample_mapping: ImageSampleMapping::ModulateOpacityFromR,
+            })
+            .render(ColorOverLifetimeModifier::new(spark_color_gradient))
+            .render(SizeOverLifetimeModifier { gradient: spark_size_gradient, screen_space_size: false })
+    );
+
+    // === GROUND EXPLOSION GPU FLASH SPARKS ===
+    // Replaces CPU flash spark entities (20-50 per explosion) with single GPU effect
+    // UE5 spec: Ring spawn, 100° cone, deceleration physics, "shooting star" elongation
+    let mut flash_color_gradient = bevy_hanabi::Gradient::new();
+    // Constant HDR orange with alpha fade
+    flash_color_gradient.add_key(0.0, Vec4::new(2.5, 1.625, 0.975, 1.0));
+    flash_color_gradient.add_key(1.0, Vec4::new(2.5, 1.625, 0.975, 0.0));
+
+    // "Shooting star" effect: start elongated, normalize over time
+    let mut flash_size_gradient = bevy_hanabi::Gradient::new();
+    flash_size_gradient.add_key(0.0, Vec3::new(0.1, 3.0, 1.0));   // Very elongated
+    flash_size_gradient.add_key(0.15, Vec3::new(0.3, 1.5, 1.0));  // Shrinking
+    flash_size_gradient.add_key(0.5, Vec3::new(0.5, 0.8, 1.0));   // Normalizing
+    flash_size_gradient.add_key(1.0, Vec3::new(0.4, 0.4, 1.0));   // Final
+
+    let writer_flash = ExprWriter::new();
+
+    // Ring spawn on XZ plane (equator)
+    let flash_init_pos = SetPositionCircleModifier {
+        center: writer_flash.lit(Vec3::ZERO).expr(),
+        axis: writer_flash.lit(Vec3::Y).expr(),
+        radius: writer_flash.lit(0.5).expr(),
+        dimension: ShapeDimension::Surface,
+    };
+
+    // Wide cone velocity (100°) with speed 4-55 m/s
+    let flash_init_vel = SetVelocitySphereModifier {
+        center: writer_flash.lit(Vec3::new(0.0, -0.3, 0.0)).expr(), // Slight upward bias
+        speed: (writer_flash.lit(4.0) + writer_flash.rand(ScalarType::Float) * writer_flash.lit(51.0)).expr(),
+    };
+
+    let flash_init_age = SetAttributeModifier::new(Attribute::AGE, writer_flash.lit(0.0).expr());
+    let flash_init_lifetime = SetAttributeModifier::new(
+        Attribute::LIFETIME,
+        (writer_flash.lit(0.3) + writer_flash.rand(ScalarType::Float) * writer_flash.lit(0.7)).expr()
+    );
+    let flash_init_size = SetAttributeModifier::new(
+        Attribute::SIZE,
+        (writer_flash.lit(0.4) + writer_flash.rand(ScalarType::Float) * writer_flash.lit(0.6)).expr()
+    );
+
+    // Deceleration via drag + slight downward acceleration
+    let flash_update_drag = LinearDragModifier::new(writer_flash.lit(3.0).expr());
+    let flash_update_accel = AccelModifier::new(writer_flash.lit(Vec3::new(0.0, -2.0, 0.0)).expr());
+
+    // Texture slot (same flare.png)
+    let flash_texture_slot = writer_flash.lit(0u32).expr();
+
+    let mut flash_module = writer_flash.finish();
+    flash_module.add_texture_slot("flash_spark_texture");
+
+    let ground_flash_sparks_effect = effects.add(
+        EffectAsset::new(256, SpawnerSettings::once(35.0.into()), flash_module)
+            .with_name("ground_explosion_flash_sparks")
+            .init(flash_init_pos)
+            .init(flash_init_vel)
+            .init(flash_init_age)
+            .init(flash_init_lifetime)
+            .init(flash_init_size)
+            .update(flash_update_drag)
+            .update(flash_update_accel)
+            .render(OrientModifier::new(OrientMode::AlongVelocity))
+            .render(ParticleTextureModifier {
+                texture_slot: flash_texture_slot,
+                sample_mapping: ImageSampleMapping::ModulateOpacityFromR,
+            })
+            .render(ColorOverLifetimeModifier::new(flash_color_gradient))
+            .render(SizeOverLifetimeModifier { gradient: flash_size_gradient, screen_space_size: false })
+    );
+
     commands.insert_resource(ExplosionParticleEffects {
         debris_effect: debris_effect.clone(),
         sparks_effect: sparks_effect.clone(),
@@ -374,6 +518,9 @@ fn setup_particle_effects(
         shield_impact_effect,
         mass_explosion_effect,
         unit_death_flash,
+        ground_sparks_effect: ground_sparks_effect.clone(),
+        ground_flash_sparks_effect: ground_flash_sparks_effect.clone(),
+        ground_sparks_texture: ground_sparks_texture.clone(),
     });
 
     // Warmup: Spawn particles far below the map to prime the GPU pipeline
@@ -400,6 +547,27 @@ fn setup_particle_effects(
         Visibility::Visible,  // Must be Visible for GPU compilation
         ParticleEffectLifetime { spawn_time: 0.0, duration: 0.5 },
         Name::new("WarmupSmoke"),
+    ));
+    // Warmup for ground explosion GPU sparks (with texture binding)
+    commands.spawn((
+        ParticleEffect::new(ground_sparks_effect),
+        EffectMaterial {
+            images: vec![ground_sparks_texture.clone()],
+        },
+        Transform::from_translation(warmup_pos).with_scale(Vec3::splat(0.001)),
+        Visibility::Visible,
+        ParticleEffectLifetime { spawn_time: 0.0, duration: 0.5 },
+        Name::new("WarmupGroundSparks"),
+    ));
+    commands.spawn((
+        ParticleEffect::new(ground_flash_sparks_effect),
+        EffectMaterial {
+            images: vec![ground_sparks_texture],
+        },
+        Transform::from_translation(warmup_pos).with_scale(Vec3::splat(0.001)),
+        Visibility::Visible,
+        ParticleEffectLifetime { spawn_time: 0.0, duration: 0.5 },
+        Name::new("WarmupGroundFlashSparks"),
     ));
 
     info!("✅ Particle effects ready (with warmup)");
@@ -678,4 +846,44 @@ fn cleanup_finished_particle_effects(
     //           entity_count, despawned, elapsed_ms, frame_time_ms, 1000.0 / frame_time_ms);
     // }
     let _ = (start, entity_count); // suppress warnings
+}
+
+/// Spawns GPU-based sparks for ground explosions
+/// Replaces 30-60 CPU spark entities with 2 GPU particle effects
+pub fn spawn_ground_explosion_gpu_sparks(
+    commands: &mut Commands,
+    particle_effects: &ExplosionParticleEffects,
+    position: Vec3,
+    scale: f32,
+    current_time: f64,
+) {
+    // GPU Sparks (replaces spawn_sparks - 30-60 entities → 1 GPU effect)
+    commands.spawn((
+        ParticleEffect::new(particle_effects.ground_sparks_effect.clone()),
+        EffectMaterial {
+            images: vec![particle_effects.ground_sparks_texture.clone()],
+        },
+        Transform::from_translation(position).with_scale(Vec3::splat(scale)),
+        Visibility::Visible,
+        ParticleEffectLifetime {
+            spawn_time: current_time,
+            duration: 3.0,
+        },
+        Name::new("GE_GPU_Sparks"),
+    ));
+
+    // GPU Flash Sparks (replaces spawn_flash_sparks - 20-50 entities → 1 GPU effect)
+    commands.spawn((
+        ParticleEffect::new(particle_effects.ground_flash_sparks_effect.clone()),
+        EffectMaterial {
+            images: vec![particle_effects.ground_sparks_texture.clone()],
+        },
+        Transform::from_translation(position).with_scale(Vec3::splat(scale)),
+        Visibility::Visible,
+        ParticleEffectLifetime {
+            spawn_time: current_time,
+            duration: 2.0,
+        },
+        Name::new("GE_GPU_FlashSparks"),
+    ));
 }

@@ -346,8 +346,10 @@ pub fn artillery_spawn_system(
     mut area_damage_events: EventWriter<AreaDamageEvent>,
     camera_query: Query<&GlobalTransform, With<RtsCamera>>,
     audio_assets: Option<Res<AudioAssets>>,
+    gpu_effects: Option<Res<crate::particles::ExplosionParticleEffects>>,
 ) {
     let dt = time.delta_secs();
+    let current_time = time.elapsed_secs_f64();
 
     // Update timers and collect ready shells
     let mut shells_to_spawn = Vec::new();
@@ -370,7 +372,7 @@ pub fn artillery_spawn_system(
         let camera_transform = camera_query.single().ok();
 
         for (position, scale) in shells_to_spawn {
-            // Spawn ground explosion
+            // Spawn ground explosion with GPU sparks if available
             spawn_ground_explosion(
                 &mut commands,
                 assets,
@@ -380,6 +382,8 @@ pub fn artillery_spawn_system(
                 scale,
                 camera_transform,
                 audio_assets.as_deref(),
+                gpu_effects.as_deref(),
+                Some(current_time),
             );
 
             // Fire area damage event
