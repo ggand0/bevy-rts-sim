@@ -47,6 +47,10 @@ pub struct PendingShell {
 #[derive(Component)]
 pub struct ArtilleryLineArrow;
 
+/// Marker for artillery cursor (ground crosshair)
+#[derive(Component)]
+pub struct ArtilleryCursor;
+
 // ===== SYSTEMS =====
 
 /// Handle artillery hotkeys and input
@@ -387,4 +391,133 @@ pub fn artillery_spawn_system(
             area_damage_events.write(AreaDamageEvent { position, scale });
         }
     }
+}
+
+/// Update artillery cursor - green crosshair on the ground at cursor position
+pub fn artillery_cursor_system(
+    mut commands: Commands,
+    artillery_state: Res<ArtilleryState>,
+    window_query: Query<&Window, With<PrimaryWindow>>,
+    camera_query: Query<(&Camera, &GlobalTransform), With<RtsCamera>>,
+    heightmap: Option<Res<TerrainHeightmap>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    cursor_query: Query<Entity, With<ArtilleryCursor>>,
+) {
+    // Remove cursor if artillery mode is off
+    if artillery_state.mode == ArtilleryMode::None {
+        for entity in cursor_query.iter() {
+            commands.entity(entity).despawn();
+        }
+        return;
+    }
+
+    // Get cursor world position
+    let Ok(window) = window_query.single() else { return };
+    let Ok((camera, camera_transform)) = camera_query.single() else { return };
+    let Some(cursor_pos) = window.cursor_position() else { return };
+
+    let hm = heightmap.as_ref().map(|h| h.as_ref());
+    let Some(world_pos) = screen_to_ground_with_heightmap(cursor_pos, camera, camera_transform, hm) else {
+        return;
+    };
+
+    // Remove old cursor
+    for entity in cursor_query.iter() {
+        commands.entity(entity).despawn();
+    }
+
+    // Create crosshair mesh (two perpendicular lines forming a +)
+    let size = 3.0;
+    let thickness = 0.3;
+    let y_offset = 0.2; // Slightly above ground to prevent z-fighting
+
+    // Horizontal bar
+    let h_mesh = meshes.add(Cuboid::new(size, 0.1, thickness));
+    // Vertical bar
+    let v_mesh = meshes.add(Cuboid::new(thickness, 0.1, size));
+    // Center circle (small)
+    let circle_mesh = meshes.add(Circle::new(0.8));
+
+    let green_material = materials.add(StandardMaterial {
+        base_color: Color::srgba(0.2, 1.0, 0.3, 0.9),
+        emissive: LinearRgba::new(0.1, 0.5, 0.15, 1.0),
+        unlit: true,
+        alpha_mode: AlphaMode::Blend,
+        cull_mode: None,
+        ..default()
+    });
+
+    // Red/orange material for lethal/scatter range indicator
+    let range_material = materials.add(StandardMaterial {
+        base_color: Color::srgba(1.0, 0.3, 0.1, 0.7),
+        emissive: LinearRgba::new(0.5, 0.15, 0.05, 1.0),
+        unlit: true,
+        alpha_mode: AlphaMode::Blend,
+        cull_mode: None,
+        ..default()
+    });
+
+    let cursor_pos_3d = Vec3::new(world_pos.x, world_pos.y + y_offset, world_pos.z);
+
+    // Spawn crosshair parent
+    commands.spawn((
+        Transform::from_translation(cursor_pos_3d),
+        Visibility::Visible,
+        ArtilleryCursor,
+        NotShadowCaster,
+        NotShadowReceiver,
+        Name::new("ArtilleryCursor"),
+    )).with_children(|parent| {
+        // Horizontal bar
+        parent.spawn((
+            Mesh3d(h_mesh),
+            MeshMaterial3d(green_material.clone()),
+            Transform::default(),
+        ));
+        // Vertical bar
+        parent.spawn((
+            Mesh3d(v_mesh),
+            MeshMaterial3d(green_material.clone()),
+            Transform::default(),
+        ));
+        // Center circle (rotated to face up)
+        parent.spawn((
+            Mesh3d(circle_mesh),
+            MeshMaterial3d(green_material),
+            Transform::from_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)),
+        ));
+
+        // Mode-specific range indicator
+        let ring_thickness = 0.2;
+        match artillery_state.mode {
+            ArtilleryMode::SingleShot => {
+                // Lethal range circle (core damage radius - instant death zone)
+                let lethal_range_mesh = meshes.add(Annulus::new(
+                    AREA_DAMAGE_CORE_RADIUS - ring_thickness,
+                    AREA_DAMAGE_CORE_RADIUS + ring_thickness,
+                ));
+                parent.spawn((
+                    Mesh3d(lethal_range_mesh),
+                    MeshMaterial3d(range_material),
+                    Transform::from_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)),
+                ));
+            }
+            ArtilleryMode::ScatterBarrage => {
+                // Scatter radius circle (area where shells will land)
+                let scatter_range_mesh = meshes.add(Annulus::new(
+                    ARTILLERY_SCATTER_RADIUS - ring_thickness,
+                    ARTILLERY_SCATTER_RADIUS + ring_thickness,
+                ));
+                parent.spawn((
+                    Mesh3d(scatter_range_mesh),
+                    MeshMaterial3d(range_material),
+                    Transform::from_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)),
+                ));
+            }
+            ArtilleryMode::LineBarrage | ArtilleryMode::None => {
+                // No range indicator for line barrage (uses arrow visual instead)
+            }
+        }
+    });
 }

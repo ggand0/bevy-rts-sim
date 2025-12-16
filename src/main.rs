@@ -209,10 +209,11 @@ fn main() {
             ground_explosion::update_ground_explosion_debug_ui,
         ))
         .add_systems(Update, (
-            // Artillery barrage system (F5/F6/F7 hotkeys)
+            // Artillery barrage system (V/B/N hotkeys)
             artillery::artillery_input_system,
             artillery::artillery_visual_system,
             artillery::artillery_spawn_system,
+            artillery::artillery_cursor_system,
         ))
         .add_systems(Update, (
             // Area damage system (processes AreaDamageEvent from explosions)
