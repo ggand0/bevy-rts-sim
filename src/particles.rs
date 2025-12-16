@@ -468,16 +468,16 @@ fn setup_particle_effects(
     // Replaces CPU flash spark entities (20-50 per explosion) with single GPU effect
     // UE5 spec: Ring spawn, 100° cone, deceleration physics, "shooting star" elongation
     //
-    // CPU behavior (from update_spark_l_color):
-    //   Color: Constant HDR orange (2.5, 1.625, 0.975), only alpha fades 1→0
+    // CPU behavior (from update_spark_l_physics):
+    //   Color: Constant HDR orange (2.5, 1.625, 0.975), only alpha fades 1→0 LINEAR
     //   Velocity: 100° cone (wider than 90° hemisphere), ring spawn at equator
-    //   Deceleration: (-0.25, -1.0, -0.5) * 10 = (-2.5, -10, -5) m/s²
+    //   Physics: CONSTANT DECELERATION (-2.5, -10, -5) m/s² - NOT drag!
+    //   Speed: 4-55 m/s * scale (scale typically 1.0)
     let mut flash_color_gradient = bevy_hanabi::Gradient::new();
-    // Constant HDR orange, alpha fades linearly
+    // Constant HDR orange, alpha fades LINEARLY (1.0 - t)
     // CPU shader applies 4x brightness: (2.5, 1.625, 0.975) * 4 = (10, 6.5, 3.9)
     flash_color_gradient.add_key(0.0, Vec4::new(10.0, 6.5, 3.9, 1.0));
-    flash_color_gradient.add_key(0.3, Vec4::new(10.0, 6.5, 3.9, 0.7));
-    flash_color_gradient.add_key(0.6, Vec4::new(10.0, 6.5, 3.9, 0.4));
+    flash_color_gradient.add_key(0.5, Vec4::new(10.0, 6.5, 3.9, 0.5));
     flash_color_gradient.add_key(1.0, Vec4::new(10.0, 6.5, 3.9, 0.0));
 
     // "Shooting star" effect with AlongVelocity: X is along velocity, Y is perpendicular
@@ -531,11 +531,12 @@ fn setup_particle_effects(
         (writer_flash.lit(0.4) + writer_flash.rand(ScalarType::Float) * writer_flash.lit(0.6)).expr()
     );
 
-    // CPU flash sparks: NO gravity (gravity: 0.0), only deceleration via update_spark_l_physics
-    // The deceleration gradually slows particles down, not constant downward acceleration.
-    // Use LINEAR DRAG to approximate the velocity-dependent slowdown behavior.
-    // Higher drag = faster slowdown. CPU multiplies velocity by decel * dt * 10 = small reduction each frame.
-    let flash_update_drag = LinearDragModifier::new(writer_flash.lit(4.0).expr());
+    // CPU flash sparks: CONSTANT DECELERATION, not gravity or drag!
+    // CPU update_spark_l_physics: velocity += deceleration * dt * 10.0
+    // deceleration = Vec3::new(-0.25, -1.0, -0.5) * 10 = (-2.5, -10, -5) m/s²
+    // This is constant acceleration (negative = deceleration), not velocity-proportional drag.
+    // AccelModifier applies: velocity += accel * dt, matching CPU behavior.
+    let flash_update_accel = AccelModifier::new(writer_flash.lit(Vec3::new(-2.5, -10.0, -5.0)).expr());
 
     // Texture slot (same flare.png)
     let flash_texture_slot = writer_flash.lit(0u32).expr();
@@ -552,8 +553,8 @@ fn setup_particle_effects(
             .init(flash_init_age)
             .init(flash_init_lifetime)
             .init(flash_init_size)
-            .update(flash_update_drag)
-            // No AccelModifier - CPU flash sparks have no gravity, only drag/deceleration
+            .update(flash_update_accel)
+            // CPU uses constant deceleration (-2.5, -10, -5) m/s², not drag
             // AlongVelocity: X-axis along velocity, Y perpendicular, faces camera
             .render(OrientModifier::new(OrientMode::AlongVelocity))
             .render(ParticleTextureModifier {
