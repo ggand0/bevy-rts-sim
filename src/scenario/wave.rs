@@ -357,7 +357,7 @@ pub fn wave_enemy_move_order_system(
         if let Some(squad) = squad_manager.get_squad(squad_member.squad_id) {
             // Calculate this unit's target position (squad target + formation offset)
             let target_xz = squad.target_position + formation_offset.local_offset;
-            let target_y = heightmap.sample_height(target_xz.x, target_xz.z) + 1.28;
+            let target_y = heightmap.sample_height(target_xz.x, target_xz.z);
             let unit_target = Vec3::new(target_xz.x, target_y, target_xz.z);
 
             droid.target_position = unit_target;

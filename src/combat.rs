@@ -685,7 +685,7 @@ pub fn hitscan_fire_system(
     mut squad_manager: ResMut<SquadManager>,
     mut combat_query: Query<
         (&GlobalTransform, &BattleDroid, &mut CombatUnit),
-        (Without<crate::types::TurretRotatingAssembly>, Without<HitscanTracer>)
+        (Without<crate::types::TurretRotatingAssembly>, Without<HitscanTracer>, Without<KnockbackState>, Without<RagdollDeath>)
     >,
     // all_droids_query combines target lookup + hitscan collision
     all_droids_query: Query<(Entity, &GlobalTransform, &BattleDroid), Without<HitscanTracer>>,

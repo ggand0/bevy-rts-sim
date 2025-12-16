@@ -243,7 +243,7 @@ fn execute_group_move(
                 // Calculate target position with formation offset
                 let target_xz = squad.target_position + new_offset;
                 let target_y = heightmap
-                    .map(|hm| hm.sample_height(target_xz.x, target_xz.z) + 1.28)
+                    .map(|hm| hm.sample_height(target_xz.x, target_xz.z))
                     .unwrap_or(droid.spawn_position.y);
                 let target_pos = Vec3::new(target_xz.x, target_y, target_xz.z);
 
@@ -389,7 +389,7 @@ fn execute_move_command(
                 // Calculate target position with formation offset
                 let target_xz = squad.target_position + new_offset;
                 let target_y = heightmap
-                    .map(|hm| hm.sample_height(target_xz.x, target_xz.z) + 1.28)
+                    .map(|hm| hm.sample_height(target_xz.x, target_xz.z))
                     .unwrap_or(droid.spawn_position.y);
                 let target_pos = Vec3::new(target_xz.x, target_y, target_xz.z);
 

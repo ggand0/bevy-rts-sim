@@ -5,14 +5,13 @@ use crate::types::*;
 use crate::constants::*;
 use crate::terrain::TerrainHeightmap;
 
-/// Unit Y offset above terrain (mesh feet are at Y=-1.6, scaled by 0.8 = -1.28)
-const UNIT_TERRAIN_OFFSET: f32 = 1.28;
+/// Unit Y offset above terrain (mesh origin is now at feet, so no offset needed)
 
 pub fn animate_march(
     time: Res<Time>,
     squad_manager: Res<SquadManager>,
     heightmap: Option<Res<TerrainHeightmap>>,
-    mut query: Query<(&mut BattleDroid, &mut Transform, &SquadMember)>,
+    mut query: Query<(&mut BattleDroid, &mut Transform, &SquadMember), (Without<KnockbackState>, Without<RagdollDeath>)>,
 ) {
     let time_seconds = time.elapsed_secs();
     let delta_time = time.delta_secs();
@@ -58,7 +57,7 @@ pub fn animate_march(
             // Subtract bob amplitude so the bob animation can go both up and down from visual center
             let bob_amplitude = 0.1;
             let base_y = if let Some(ref hm) = heightmap {
-                hm.sample_height(transform.translation.x, transform.translation.z) + UNIT_TERRAIN_OFFSET - bob_amplitude
+                hm.sample_height(transform.translation.x, transform.translation.z) - bob_amplitude
             } else {
                 droid.spawn_position.y - bob_amplitude
             };
@@ -78,7 +77,7 @@ pub fn animate_march(
             // When stationary, still update terrain height (important for map switching)
             if let Some(ref hm) = heightmap {
                 let terrain_y = hm.sample_height(transform.translation.x, transform.translation.z);
-                transform.translation.y = terrain_y + UNIT_TERRAIN_OFFSET;
+                transform.translation.y = terrain_y;
             }
 
             // When stationary, smoothly rotate to face squad's facing direction

@@ -4,6 +4,7 @@ use bevy::window::PrimaryWindow;
 use crate::types::*;
 use crate::constants::*;
 use crate::terrain::TerrainHeightmap;
+use crate::artillery::{ArtilleryState, ArtilleryMode};
 
 use super::state::{SelectionState, SelectionVisual};
 use super::utils::{screen_to_ground_with_heightmap, calculate_squad_centers, find_squad_at_position};
@@ -18,7 +19,13 @@ pub fn selection_input_system(
     squad_manager: Res<SquadManager>,
     mut selection_state: ResMut<SelectionState>,
     heightmap: Option<Res<TerrainHeightmap>>,
+    artillery_state: Res<ArtilleryState>,
 ) {
+    // Skip selection input when artillery mode is active
+    if artillery_state.mode != ArtilleryMode::None {
+        return;
+    }
+
     let Ok(window) = window_query.single() else { return };
     let Ok((camera, camera_transform)) = camera_query.single() else { return };
 
@@ -132,7 +139,19 @@ pub fn box_selection_update_system(
     camera_query: Query<(&Camera, &GlobalTransform), With<RtsCamera>>,
     squad_manager: Res<SquadManager>,
     mut selection_state: ResMut<SelectionState>,
+    artillery_state: Res<ArtilleryState>,
 ) {
+    // Skip box selection when artillery mode is active
+    if artillery_state.mode != ArtilleryMode::None {
+        // Clear any in-progress box selection state
+        if selection_state.is_box_selecting {
+            selection_state.box_select_start = None;
+            selection_state.drag_start_world = None;
+            selection_state.is_box_selecting = false;
+        }
+        return;
+    }
+
     let Ok(window) = window_query.single() else { return };
     let Ok((camera, camera_transform)) = camera_query.single() else { return };
     let Some(cursor_pos) = window.cursor_position() else { return };

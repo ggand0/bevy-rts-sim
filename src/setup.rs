@@ -286,8 +286,8 @@ pub fn spawn_single_squad(
         // Calculate XZ position first, then sample terrain height
         let xz_position = position + formation_offset;
         let terrain_height = heightmap.sample_height(xz_position.x, xz_position.z);
-        // Offset Y to place feet at ground level (mesh feet are at Y=-1.6, scaled by 0.8 = -1.28)
-        let unit_position = Vec3::new(xz_position.x, terrain_height + 1.28, xz_position.z);
+        // Mesh origin is at feet, so just place at terrain height
+        let unit_position = Vec3::new(xz_position.x, terrain_height, xz_position.z);
 
         // Add some randomness to march timing but reduce speed variance
         let march_offset = rng.gen_range(0.0..2.0 * PI);
@@ -369,7 +369,7 @@ pub fn spawn_single_squad(
         let head_entity = commands.spawn((
             Mesh3d(droid_mesh.clone()),
             MeshMaterial3d(unit_head_material),
-            Transform::from_xyz(0.0, 1.2, 0.0)
+            Transform::from_xyz(0.0, 2.8, 0.0)
                 .with_scale(Vec3::splat(0.3)),
         )).id();
 
@@ -521,8 +521,8 @@ fn spawn_team_squads(
             // Calculate XZ position first, then sample terrain height
             let xz_position = squad_center + formation_offset;
             let terrain_height = heightmap.sample_height(xz_position.x, xz_position.z);
-            // Offset Y to place feet at ground level (mesh feet are at Y=-1.6, scaled by 0.8 = -1.28)
-            let unit_position = Vec3::new(xz_position.x, terrain_height + 1.28, xz_position.z);
+            // Mesh origin is at feet, so just place at terrain height
+            let unit_position = Vec3::new(xz_position.x, terrain_height, xz_position.z);
             
             // Add some randomness to march timing but reduce speed variance
             let march_offset = rng.gen_range(0.0..2.0 * PI);
@@ -606,7 +606,7 @@ fn spawn_team_squads(
             let head_entity = commands.spawn((
                 Mesh3d(droid_mesh.clone()),
                 MeshMaterial3d(unit_head_material),
-                Transform::from_xyz(0.0, 1.2, 0.0)
+                Transform::from_xyz(0.0, 2.8, 0.0)
                     .with_scale(Vec3::splat(0.3)),
             )).id();
 
@@ -629,28 +629,29 @@ fn create_battle_droid_mesh_internal(meshes: &mut Assets<Mesh>) -> Handle<Mesh> 
     
     // Define vertices for a simple humanoid robot
     // Body is taller and thinner, head is smaller and more angular
+    // Origin is at FEET (Y=0) so transform.translation.y = terrain_height places feet on ground
     let vertices = vec![
-        // Torso (rectangular, thin)
-        [-0.3, -0.8, -0.15], [0.3, -0.8, -0.15], [0.3, 0.4, -0.15], [-0.3, 0.4, -0.15], // Front
-        [-0.3, -0.8, 0.15], [0.3, -0.8, 0.15], [0.3, 0.4, 0.15], [-0.3, 0.4, 0.15],   // Back
-        
-        // Arms (thin rectangles)
+        // Torso (rectangular, thin) - shifted up by 1.6
+        [-0.3, 0.8, -0.15], [0.3, 0.8, -0.15], [0.3, 2.0, -0.15], [-0.3, 2.0, -0.15], // Front
+        [-0.3, 0.8, 0.15], [0.3, 0.8, 0.15], [0.3, 2.0, 0.15], [-0.3, 2.0, 0.15],   // Back
+
+        // Arms (thin rectangles) - shifted up by 1.6
         // Left arm
-        [-0.6, 0.2, -0.1], [-0.4, 0.2, -0.1], [-0.4, -0.4, -0.1], [-0.6, -0.4, -0.1], // Front
-        [-0.6, 0.2, 0.1], [-0.4, 0.2, 0.1], [-0.4, -0.4, 0.1], [-0.6, -0.4, 0.1],   // Back
-        
-        // Right arm
-        [0.4, 0.2, -0.1], [0.6, 0.2, -0.1], [0.6, -0.4, -0.1], [0.4, -0.4, -0.1],   // Front
-        [0.4, 0.2, 0.1], [0.6, 0.2, 0.1], [0.6, -0.4, 0.1], [0.4, -0.4, 0.1],       // Back
-        
-        // Legs (thin rectangles)
+        [-0.6, 1.8, -0.1], [-0.4, 1.8, -0.1], [-0.4, 1.2, -0.1], [-0.6, 1.2, -0.1], // Front
+        [-0.6, 1.8, 0.1], [-0.4, 1.8, 0.1], [-0.4, 1.2, 0.1], [-0.6, 1.2, 0.1],   // Back
+
+        // Right arm - shifted up by 1.6
+        [0.4, 1.8, -0.1], [0.6, 1.8, -0.1], [0.6, 1.2, -0.1], [0.4, 1.2, -0.1],   // Front
+        [0.4, 1.8, 0.1], [0.6, 1.8, 0.1], [0.6, 1.2, 0.1], [0.4, 1.2, 0.1],       // Back
+
+        // Legs (thin rectangles) - shifted up by 1.6, feet now at Y=0
         // Left leg
-        [-0.15, -0.8, -0.1], [0.05, -0.8, -0.1], [0.05, -1.6, -0.1], [-0.15, -1.6, -0.1], // Front
-        [-0.15, -0.8, 0.1], [0.05, -0.8, 0.1], [0.05, -1.6, 0.1], [-0.15, -1.6, 0.1],   // Back
-        
-        // Right leg
-        [-0.05, -0.8, -0.1], [0.15, -0.8, -0.1], [0.15, -1.6, -0.1], [-0.05, -1.6, -0.1], // Front
-        [-0.05, -0.8, 0.1], [0.15, -0.8, 0.1], [0.15, -1.6, 0.1], [-0.05, -1.6, 0.1],   // Back
+        [-0.15, 0.8, -0.1], [0.05, 0.8, -0.1], [0.05, 0.0, -0.1], [-0.15, 0.0, -0.1], // Front
+        [-0.15, 0.8, 0.1], [0.05, 0.8, 0.1], [0.05, 0.0, 0.1], [-0.15, 0.0, 0.1],   // Back
+
+        // Right leg - shifted up by 1.6, feet now at Y=0
+        [-0.05, 0.8, -0.1], [0.15, 0.8, -0.1], [0.15, 0.0, -0.1], [-0.05, 0.0, -0.1], // Front
+        [-0.05, 0.8, 0.1], [0.15, 0.8, 0.1], [0.15, 0.0, 0.1], [-0.05, 0.0, 0.1],   // Back
     ];
     
     // Convert to Vec3

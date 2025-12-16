@@ -13,9 +13,9 @@ mod state;
 mod groups;
 mod input;
 mod movement;
-mod visuals;
+pub mod visuals;
 mod obb;
-mod utils;
+pub mod utils;
 
 // Re-export main types for external use
 pub use state::SelectionState;

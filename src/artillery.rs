@@ -1,0 +1,518 @@
+// Artillery barrage system - player-controlled artillery strikes
+// Three variants: Single shot, Scatter barrage, Line barrage
+
+use bevy::prelude::*;
+use bevy::pbr::{NotShadowCaster, NotShadowReceiver};
+use bevy::window::PrimaryWindow;
+use rand::Rng;
+
+use crate::area_damage::sample_terrain_height;
+use crate::constants::*;
+use crate::ground_explosion::{spawn_ground_explosion, FlipbookMaterial, GroundExplosionAssets};
+use crate::selection::utils::screen_to_ground_with_heightmap;
+use crate::selection::visuals::movement::create_arrow_mesh;
+use crate::terrain::TerrainHeightmap;
+use crate::types::*;
+use crate::wfx_materials::AdditiveMaterial;
+
+// ===== RESOURCES & COMPONENTS =====
+
+/// Artillery mode selection
+#[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ArtilleryMode {
+    #[default]
+    None,
+    SingleShot,     // F5: Single explosion at cursor (debug)
+    ScatterBarrage, // F6: 6-10 shells scattered around cursor
+    LineBarrage,    // F7: Shells along a dragged line
+}
+
+/// Artillery state resource
+#[derive(Resource, Default)]
+pub struct ArtilleryState {
+    pub mode: ArtilleryMode,
+    pub line_start: Option<Vec3>,
+    pub line_current: Option<Vec3>,
+    pub is_dragging: bool,
+    pub pending_shells: Vec<PendingShell>,
+}
+
+impl ArtilleryState {
+    /// Reset drag state (line_start, line_current, is_dragging)
+    pub fn reset_drag_state(&mut self) {
+        self.line_start = None;
+        self.line_current = None;
+        self.is_dragging = false;
+    }
+
+    /// Toggle artillery mode - if already in target mode, turn off; otherwise switch to target
+    pub fn toggle_mode(&mut self, target: ArtilleryMode, on_message: &str) {
+        if self.mode == target {
+            info!("Artillery: OFF");
+            self.mode = ArtilleryMode::None;
+        } else {
+            info!("{}", on_message);
+            self.mode = target;
+        }
+        self.reset_drag_state();
+    }
+}
+
+/// A pending artillery shell waiting to land
+pub struct PendingShell {
+    pub position: Vec3,
+    pub delay: f32, // Countdown timer
+    pub scale: f32,
+}
+
+/// Marker for artillery line visual arrow
+#[derive(Component)]
+pub struct ArtilleryLineArrow;
+
+/// Marker for artillery cursor (ground crosshair)
+#[derive(Component)]
+pub struct ArtilleryCursor;
+
+// ===== SYSTEMS =====
+
+/// Handle artillery hotkeys and input
+pub fn artillery_input_system(
+    keyboard: Res<ButtonInput<KeyCode>>,
+    mouse_button: Res<ButtonInput<MouseButton>>,
+    window_query: Query<&Window, With<PrimaryWindow>>,
+    camera_query: Query<(&Camera, &GlobalTransform), With<RtsCamera>>,
+    heightmap: Option<Res<TerrainHeightmap>>,
+    mut artillery_state: ResMut<ArtilleryState>,
+) {
+    // Toggle modes with V/B/N
+    if keyboard.just_pressed(KeyCode::KeyV) {
+        artillery_state.toggle_mode(
+            ArtilleryMode::SingleShot,
+            "Artillery: Single Shot mode (click to fire)",
+        );
+    }
+    if keyboard.just_pressed(KeyCode::KeyB) {
+        artillery_state.toggle_mode(
+            ArtilleryMode::ScatterBarrage,
+            "Artillery: Scatter Barrage mode (click to call barrage)",
+        );
+    }
+    if keyboard.just_pressed(KeyCode::KeyN) {
+        artillery_state.toggle_mode(
+            ArtilleryMode::LineBarrage,
+            "Artillery: Line Barrage mode (drag to set line)",
+        );
+    }
+
+    // Early exit if no mode active
+    if artillery_state.mode == ArtilleryMode::None {
+        return;
+    }
+
+    // Get cursor position
+    let Ok(window) = window_query.single() else {
+        return;
+    };
+    let Ok((camera, camera_transform)) = camera_query.single() else {
+        return;
+    };
+    let Some(cursor_pos) = window.cursor_position() else {
+        return;
+    };
+
+    let hm = heightmap.as_ref().map(|h| h.as_ref());
+    let current_world_pos = screen_to_ground_with_heightmap(cursor_pos, camera, camera_transform, hm);
+
+    match artillery_state.mode {
+        ArtilleryMode::SingleShot => {
+            // Left click to fire single shell
+            if mouse_button.just_pressed(MouseButton::Left) {
+                if let Some(pos) = current_world_pos {
+                    artillery_state.pending_shells.push(PendingShell {
+                        position: pos,
+                        delay: 0.0, // Immediate
+                        scale: 1.0,
+                    });
+                    info!("Artillery: Single shell at {:?}", pos);
+                }
+            }
+        }
+        ArtilleryMode::ScatterBarrage => {
+            // Left click to call scatter barrage
+            if mouse_button.just_pressed(MouseButton::Left) {
+                if let Some(center) = current_world_pos {
+                    let mut rng = rand::thread_rng();
+                    let shell_count =
+                        rng.gen_range(ARTILLERY_SHELL_COUNT_MIN..=ARTILLERY_SHELL_COUNT_MAX);
+
+                    for _ in 0..shell_count {
+                        let offset = Vec3::new(
+                            rng.gen_range(-ARTILLERY_SCATTER_RADIUS..ARTILLERY_SCATTER_RADIUS),
+                            0.0,
+                            rng.gen_range(-ARTILLERY_SCATTER_RADIUS..ARTILLERY_SCATTER_RADIUS),
+                        );
+                        let delay =
+                            rng.gen_range(ARTILLERY_SHELL_DELAY_MIN..ARTILLERY_SHELL_DELAY_MAX);
+
+                        // Sample terrain height at shell position
+                        let shell_pos = center + offset;
+                        let y = sample_terrain_height(hm, shell_pos.x, shell_pos.z, 0.0);
+
+                        artillery_state.pending_shells.push(PendingShell {
+                            position: Vec3::new(shell_pos.x, y, shell_pos.z),
+                            delay,
+                            scale: 1.0,
+                        });
+                    }
+                    info!(
+                        "Artillery: Scatter barrage ({} shells) around {:?}",
+                        shell_count, center
+                    );
+                }
+            }
+        }
+        ArtilleryMode::LineBarrage => {
+            // Left click to start drag
+            if mouse_button.just_pressed(MouseButton::Left) {
+                if let Some(pos) = current_world_pos {
+                    artillery_state.line_start = Some(pos);
+                    artillery_state.line_current = Some(pos);
+                    artillery_state.is_dragging = true;
+                }
+            }
+
+            // Update drag position
+            if mouse_button.pressed(MouseButton::Left) && artillery_state.is_dragging {
+                if let Some(pos) = current_world_pos {
+                    artillery_state.line_current = Some(pos);
+                }
+            }
+
+            // Release to fire line barrage
+            if mouse_button.just_released(MouseButton::Left) && artillery_state.is_dragging {
+                if let (Some(start), Some(end)) =
+                    (artillery_state.line_start, artillery_state.line_current)
+                {
+                    let direction = end - start;
+                    let mut line_length = direction.length();
+
+                    // Clamp to max length
+                    if line_length > ARTILLERY_LINE_MAX_LENGTH {
+                        line_length = ARTILLERY_LINE_MAX_LENGTH;
+                    }
+
+                    if line_length > 1.0 {
+                        let dir_normalized = direction.normalize();
+                        let shell_count =
+                            (line_length / ARTILLERY_LINE_SHELL_SPACING).ceil() as usize;
+                        let shell_count = shell_count.max(2); // At least 2 shells
+
+                        let mut rng = rand::thread_rng();
+
+                        for i in 0..shell_count {
+                            let t = if shell_count > 1 {
+                                i as f32 / (shell_count - 1) as f32
+                            } else {
+                                0.5
+                            };
+                            let base_pos = start + dir_normalized * (t * line_length);
+
+                            // Add small random scatter perpendicular to line
+                            let perp = Vec3::new(-dir_normalized.z, 0.0, dir_normalized.x);
+                            let scatter = perp * rng.gen_range(-3.0..3.0);
+                            let shell_pos = base_pos + scatter;
+
+                            // Sample terrain height
+                            let y = sample_terrain_height(hm, shell_pos.x, shell_pos.z, 0.0);
+
+                            // Stagger timing along line
+                            let delay = i as f32 * 0.25 + rng.gen_range(0.0..0.1);
+
+                            artillery_state.pending_shells.push(PendingShell {
+                                position: Vec3::new(shell_pos.x, y, shell_pos.z),
+                                delay,
+                                scale: 1.0,
+                            });
+                        }
+                        info!(
+                            "Artillery: Line barrage ({} shells) from {:?} to {:?}",
+                            shell_count, start, end
+                        );
+                    }
+                }
+
+                // Reset drag state
+                artillery_state.reset_drag_state();
+            }
+        }
+        ArtilleryMode::None => {}
+    }
+}
+
+/// Update artillery line visual (red arrow for line barrage)
+pub fn artillery_visual_system(
+    mut commands: Commands,
+    artillery_state: Res<ArtilleryState>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    arrow_query: Query<Entity, With<ArtilleryLineArrow>>,
+    heightmap: Option<Res<TerrainHeightmap>>,
+) {
+    // Clean up existing arrow if not in line barrage drag
+    if artillery_state.mode != ArtilleryMode::LineBarrage || !artillery_state.is_dragging {
+        for entity in arrow_query.iter() {
+            commands.entity(entity).despawn();
+        }
+        return;
+    }
+
+    let Some(start) = artillery_state.line_start else {
+        return;
+    };
+    let Some(current) = artillery_state.line_current else {
+        return;
+    };
+
+    // Calculate arrow properties
+    let direction = current - start;
+    let length = direction.length();
+
+    if length < 1.0 {
+        // Too short, remove arrow
+        for entity in arrow_query.iter() {
+            commands.entity(entity).despawn();
+        }
+        return;
+    }
+
+    // Clamp end position to max length
+    let clamped_end = if length > ARTILLERY_LINE_MAX_LENGTH {
+        start + direction.normalize() * ARTILLERY_LINE_MAX_LENGTH
+    } else {
+        current
+    };
+
+    // Remove existing arrow and recreate (mesh needs regeneration)
+    for entity in arrow_query.iter() {
+        commands.entity(entity).despawn();
+    }
+
+    // Get base terrain height
+    let start_terrain_y = heightmap
+        .as_deref()
+        .map(|hm| hm.sample_height(start.x, start.z))
+        .unwrap_or(-1.0);
+
+    // Create arrow mesh
+    let head_length = (clamped_end - start).length() * 0.2;
+    let arrow_mesh = meshes.add(create_arrow_mesh(
+        1.0,  // shaft_width
+        3.0,  // head_width
+        head_length,
+        start,
+        clamped_end,
+        heightmap.as_deref(),
+    ));
+
+    // Red material for artillery indicator
+    let arrow_material = materials.add(StandardMaterial {
+        base_color: Color::srgba(1.0, 0.2, 0.2, 0.8),
+        emissive: LinearRgba::new(0.5, 0.1, 0.1, 1.0),
+        alpha_mode: AlphaMode::Blend,
+        unlit: true,
+        cull_mode: None,
+        double_sided: true,
+        ..default()
+    });
+
+    commands.spawn((
+        Mesh3d(arrow_mesh),
+        MeshMaterial3d(arrow_material),
+        Transform::from_translation(Vec3::new(start.x, start_terrain_y, start.z)),
+        ArtilleryLineArrow,
+        NotShadowCaster,
+        NotShadowReceiver,
+    ));
+}
+
+/// Process pending shells and spawn explosions
+pub fn artillery_spawn_system(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut artillery_state: ResMut<ArtilleryState>,
+    ground_assets: Option<Res<GroundExplosionAssets>>,
+    mut flipbook_materials: ResMut<Assets<FlipbookMaterial>>,
+    mut additive_materials: ResMut<Assets<AdditiveMaterial>>,
+    mut area_damage_events: EventWriter<AreaDamageEvent>,
+    camera_query: Query<&GlobalTransform, With<RtsCamera>>,
+    audio_assets: Option<Res<AudioAssets>>,
+) {
+    let dt = time.delta_secs();
+
+    // Update timers and collect ready shells
+    let mut shells_to_spawn = Vec::new();
+    artillery_state.pending_shells.retain_mut(|shell| {
+        shell.delay -= dt;
+        if shell.delay <= 0.0 {
+            shells_to_spawn.push((shell.position, shell.scale));
+            false // Remove from pending
+        } else {
+            true // Keep in pending
+        }
+    });
+
+    // Spawn explosions for ready shells
+    if !shells_to_spawn.is_empty() {
+        let Some(assets) = ground_assets.as_ref() else {
+            return;
+        };
+
+        let camera_transform = camera_query.single().ok();
+
+        for (position, scale) in shells_to_spawn {
+            // Spawn ground explosion
+            spawn_ground_explosion(
+                &mut commands,
+                assets,
+                &mut flipbook_materials,
+                &mut additive_materials,
+                position,
+                scale,
+                camera_transform,
+                audio_assets.as_deref(),
+            );
+
+            // Fire area damage event
+            area_damage_events.write(AreaDamageEvent { position, scale });
+        }
+    }
+}
+
+/// Update artillery cursor - green crosshair on the ground at cursor position
+pub fn artillery_cursor_system(
+    mut commands: Commands,
+    artillery_state: Res<ArtilleryState>,
+    window_query: Query<&Window, With<PrimaryWindow>>,
+    camera_query: Query<(&Camera, &GlobalTransform), With<RtsCamera>>,
+    heightmap: Option<Res<TerrainHeightmap>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    cursor_query: Query<Entity, With<ArtilleryCursor>>,
+) {
+    // Remove cursor if artillery mode is off
+    if artillery_state.mode == ArtilleryMode::None {
+        for entity in cursor_query.iter() {
+            commands.entity(entity).despawn();
+        }
+        return;
+    }
+
+    // Get cursor world position
+    let Ok(window) = window_query.single() else { return };
+    let Ok((camera, camera_transform)) = camera_query.single() else { return };
+    let Some(cursor_pos) = window.cursor_position() else { return };
+
+    let hm = heightmap.as_ref().map(|h| h.as_ref());
+    let Some(world_pos) = screen_to_ground_with_heightmap(cursor_pos, camera, camera_transform, hm) else {
+        return;
+    };
+
+    // Remove old cursor
+    for entity in cursor_query.iter() {
+        commands.entity(entity).despawn();
+    }
+
+    // Create crosshair mesh (two perpendicular lines forming a +)
+    let size = 3.0;
+    let thickness = 0.3;
+    let y_offset = 0.2; // Slightly above ground to prevent z-fighting
+
+    // Horizontal bar
+    let h_mesh = meshes.add(Cuboid::new(size, 0.1, thickness));
+    // Vertical bar
+    let v_mesh = meshes.add(Cuboid::new(thickness, 0.1, size));
+    // Center circle (small)
+    let circle_mesh = meshes.add(Circle::new(0.8));
+
+    let green_material = materials.add(StandardMaterial {
+        base_color: Color::srgba(0.2, 1.0, 0.3, 0.9),
+        emissive: LinearRgba::new(0.1, 0.5, 0.15, 1.0),
+        unlit: true,
+        alpha_mode: AlphaMode::Blend,
+        cull_mode: None,
+        ..default()
+    });
+
+    // Red/orange material for lethal/scatter range indicator
+    let range_material = materials.add(StandardMaterial {
+        base_color: Color::srgba(1.0, 0.3, 0.1, 0.7),
+        emissive: LinearRgba::new(0.5, 0.15, 0.05, 1.0),
+        unlit: true,
+        alpha_mode: AlphaMode::Blend,
+        cull_mode: None,
+        ..default()
+    });
+
+    let cursor_pos_3d = Vec3::new(world_pos.x, world_pos.y + y_offset, world_pos.z);
+
+    // Spawn crosshair parent
+    commands.spawn((
+        Transform::from_translation(cursor_pos_3d),
+        Visibility::Visible,
+        ArtilleryCursor,
+        NotShadowCaster,
+        NotShadowReceiver,
+        Name::new("ArtilleryCursor"),
+    )).with_children(|parent| {
+        // Horizontal bar
+        parent.spawn((
+            Mesh3d(h_mesh),
+            MeshMaterial3d(green_material.clone()),
+            Transform::default(),
+        ));
+        // Vertical bar
+        parent.spawn((
+            Mesh3d(v_mesh),
+            MeshMaterial3d(green_material.clone()),
+            Transform::default(),
+        ));
+        // Center circle (rotated to face up)
+        parent.spawn((
+            Mesh3d(circle_mesh),
+            MeshMaterial3d(green_material),
+            Transform::from_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)),
+        ));
+
+        // Mode-specific range indicator
+        let ring_thickness = 0.2;
+        match artillery_state.mode {
+            ArtilleryMode::SingleShot => {
+                // Lethal range circle (core damage radius - instant death zone)
+                let lethal_range_mesh = meshes.add(Annulus::new(
+                    AREA_DAMAGE_CORE_RADIUS - ring_thickness,
+                    AREA_DAMAGE_CORE_RADIUS + ring_thickness,
+                ));
+                parent.spawn((
+                    Mesh3d(lethal_range_mesh),
+                    MeshMaterial3d(range_material),
+                    Transform::from_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)),
+                ));
+            }
+            ArtilleryMode::ScatterBarrage => {
+                // Scatter radius circle (area where shells will land)
+                let scatter_range_mesh = meshes.add(Annulus::new(
+                    ARTILLERY_SCATTER_RADIUS - ring_thickness,
+                    ARTILLERY_SCATTER_RADIUS + ring_thickness,
+                ));
+                parent.spawn((
+                    Mesh3d(scatter_range_mesh),
+                    MeshMaterial3d(range_material),
+                    Transform::from_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)),
+                ));
+            }
+            ArtilleryMode::LineBarrage | ArtilleryMode::None => {
+                // No range indicator for line barrage (uses arrow visual instead)
+            }
+        }
+    });
+}

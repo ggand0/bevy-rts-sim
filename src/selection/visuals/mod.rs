@@ -6,7 +6,7 @@
 // - group: Group orientation markers and bounding box debug
 
 mod selection;
-mod movement;
+pub mod movement;
 mod group;
 
 // Re-export systems
