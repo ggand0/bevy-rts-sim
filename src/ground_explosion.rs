@@ -2719,8 +2719,9 @@ pub fn ground_explosion_debug_menu_system(
             info!("═══════════════════════════════════════");
             info!("  1: main       2: main001    3: dirt");
             info!("  4: dirt001    5: dust       6: wisp");
-            info!("  7: smoke      8: sparks(CPU) 9: parts");
-            info!("  U: sparks(GPU) I: flash(GPU)");
+            info!("  7: smoke      8: spark      9: spark_l");
+            info!("  0: parts");
+            info!("  Shift+8: spark(GPU)  Shift+9: spark_l(GPU)");
             info!("  J: group 1-6  K: full explosion");
             info!("  P: close");
             info!("═══════════════════════════════════════");
@@ -2777,7 +2778,7 @@ pub fn ground_explosion_debug_menu_system(
         Some((EmitterType::Wisp, "wisp"))
     } else if keyboard_input.just_pressed(KeyCode::Digit7) {
         Some((EmitterType::Smoke, "smoke"))
-    } else if keyboard_input.just_pressed(KeyCode::Digit9) {
+    } else if keyboard_input.just_pressed(KeyCode::Digit0) {
         Some((EmitterType::Parts, "parts"))
     } else {
         None
@@ -2797,74 +2798,83 @@ pub fn ground_explosion_debug_menu_system(
         info!("[P] Spawned: {}", name);
     }
 
-    // 8: Both spark emitters
-    if keyboard_input.just_pressed(KeyCode::Digit8) {
-        spawn_single_emitter(
-            &mut commands,
-            &assets,
-            &mut flipbook_materials,
-            &mut additive_materials,
-            EmitterType::Spark,
-            position,
-            scale,
-            camera_transform,
-        );
-        spawn_single_emitter(
-            &mut commands,
-            &assets,
-            &mut flipbook_materials,
-            &mut additive_materials,
-            EmitterType::FlashSpark,
-            position,
-            scale,
-            camera_transform,
-        );
-        info!("[P] Spawned: sparks (both CPU)");
-    }
+    let shift_held = keyboard_input.pressed(KeyCode::ShiftLeft) || keyboard_input.pressed(KeyCode::ShiftRight);
 
-    // U: GPU sparks only (for comparison with CPU key 8)
-    if keyboard_input.just_pressed(KeyCode::KeyU) {
-        if let Some(effects) = gpu_effects.as_ref() {
-            let current_time = time.elapsed_secs_f64();
-            commands.spawn((
-                bevy_hanabi::ParticleEffect::new(effects.ground_sparks_effect.clone()),
-                bevy_hanabi::EffectMaterial {
-                    images: vec![effects.ground_sparks_texture.clone()],
-                },
-                Transform::from_translation(position).with_scale(Vec3::splat(scale)),
-                Visibility::Visible,
-                crate::particles::ParticleEffectLifetime {
-                    spawn_time: current_time,
-                    duration: 3.0,
-                },
-                Name::new("GE_GPU_Sparks_Debug"),
-            ));
-            info!("[P] Spawned: sparks (GPU)");
+    // 8: spark (CPU) or Shift+8: spark (GPU)
+    if keyboard_input.just_pressed(KeyCode::Digit8) {
+        if shift_held {
+            // GPU spark (replaces CPU spawn_sparks / SparkColorOverLife)
+            if let Some(effects) = gpu_effects.as_ref() {
+                let current_time = time.elapsed_secs_f64();
+                commands.spawn((
+                    bevy_hanabi::ParticleEffect::new(effects.ground_sparks_effect.clone()),
+                    bevy_hanabi::EffectMaterial {
+                        images: vec![effects.ground_sparks_texture.clone()],
+                    },
+                    Transform::from_translation(position).with_scale(Vec3::splat(scale)),
+                    Visibility::Visible,
+                    crate::particles::ParticleEffectLifetime {
+                        spawn_time: current_time,
+                        duration: 3.0,
+                    },
+                    Name::new("GE_GPU_Spark_Debug"),
+                ));
+                info!("[P] Spawned: spark (GPU)");
+            } else {
+                warn!("[P] GPU effects not available!");
+            }
         } else {
-            warn!("[P] GPU effects not available!");
+            // CPU spark
+            spawn_single_emitter(
+                &mut commands,
+                &assets,
+                &mut flipbook_materials,
+                &mut additive_materials,
+                EmitterType::Spark,
+                position,
+                scale,
+                camera_transform,
+            );
+            info!("[P] Spawned: spark (CPU)");
         }
     }
 
-    // I: GPU flash sparks only (for comparison with CPU key 8)
-    if keyboard_input.just_pressed(KeyCode::KeyI) {
-        if let Some(effects) = gpu_effects.as_ref() {
-            let current_time = time.elapsed_secs_f64();
-            commands.spawn((
-                bevy_hanabi::ParticleEffect::new(effects.ground_flash_sparks_effect.clone()),
-                bevy_hanabi::EffectMaterial {
-                    images: vec![effects.ground_sparks_texture.clone()],
-                },
-                Transform::from_translation(position).with_scale(Vec3::splat(scale)),
-                Visibility::Visible,
-                crate::particles::ParticleEffectLifetime {
-                    spawn_time: current_time,
-                    duration: 2.0,
-                },
-                Name::new("GE_GPU_FlashSparks_Debug"),
-            ));
-            info!("[P] Spawned: flash sparks (GPU)");
+    // 9: spark_l (CPU) or Shift+9: spark_l (GPU)
+    if keyboard_input.just_pressed(KeyCode::Digit9) {
+        if shift_held {
+            // GPU spark_l (replaces CPU spawn_flash_sparks / SparkLColorOverLife)
+            if let Some(effects) = gpu_effects.as_ref() {
+                let current_time = time.elapsed_secs_f64();
+                commands.spawn((
+                    bevy_hanabi::ParticleEffect::new(effects.ground_flash_sparks_effect.clone()),
+                    bevy_hanabi::EffectMaterial {
+                        images: vec![effects.ground_sparks_texture.clone()],
+                    },
+                    Transform::from_translation(position).with_scale(Vec3::splat(scale)),
+                    Visibility::Visible,
+                    crate::particles::ParticleEffectLifetime {
+                        spawn_time: current_time,
+                        duration: 2.0,
+                    },
+                    Name::new("GE_GPU_SparkL_Debug"),
+                ));
+                info!("[P] Spawned: spark_l (GPU)");
+            } else {
+                warn!("[P] GPU effects not available!");
+            }
         } else {
-            warn!("[P] GPU effects not available!");
+            // CPU spark_l
+            spawn_single_emitter(
+                &mut commands,
+                &assets,
+                &mut flipbook_materials,
+                &mut additive_materials,
+                EmitterType::FlashSpark,
+                position,
+                scale,
+                camera_transform,
+            );
+            info!("[P] Spawned: spark_l (CPU)");
         }
     }
 
@@ -2914,7 +2924,7 @@ pub fn ground_explosion_debug_menu_system(
 /// Spawn the debug menu UI (hidden by default)
 pub fn setup_ground_explosion_debug_ui(mut commands: Commands) {
     commands.spawn((
-        Text::new("GROUND EXPLOSION [P]\n─────────────────────\n1: main    2: main001\n3: dirt    4: dirt001\n5: dust    6: wisp\n7: smoke   8: sparks\n9: parts\n─────────────────────\nJ: group 1-6\nK: full explosion\nP: close"),
+        Text::new("GROUND EXPLOSION [P]\n─────────────────────\n1: main    2: main001\n3: dirt    4: dirt001\n5: dust    6: wisp\n7: smoke   8: spark\n9: spark_l 0: parts\n─────────────────────\nShift+8/9: GPU version\nJ: group 1-6\nK: full explosion\nP: close"),
         TextFont {
             font_size: 16.0,
             ..default()

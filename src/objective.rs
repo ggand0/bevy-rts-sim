@@ -328,8 +328,8 @@ pub fn debug_warfx_test_system(
     terrain_config: Res<crate::terrain::TerrainConfig>,
     heightmap: Res<crate::terrain::TerrainHeightmap>,
 ) {
-    // 0 key: Toggle explosion debug mode
-    if keyboard_input.just_pressed(KeyCode::Digit0) {
+    // O key: Toggle explosion debug mode (WFX)
+    if keyboard_input.just_pressed(KeyCode::KeyO) {
         debug_mode.explosion_mode = !debug_mode.explosion_mode;
         return;
     }
