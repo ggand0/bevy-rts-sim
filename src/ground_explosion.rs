@@ -2806,8 +2806,13 @@ pub fn ground_explosion_debug_menu_system(
             // GPU spark (replaces CPU spawn_sparks / SparkColorOverLife)
             if let Some(effects) = gpu_effects.as_ref() {
                 let current_time = time.elapsed_secs_f64();
+                // Generate unique seed from current time to ensure randomization
+                let seed = (current_time * 1000000.0) as u32;
                 commands.spawn((
-                    bevy_hanabi::ParticleEffect::new(effects.ground_sparks_effect.clone()),
+                    bevy_hanabi::ParticleEffect {
+                        handle: effects.ground_sparks_effect.clone(),
+                        prng_seed: Some(seed),
+                    },
                     bevy_hanabi::EffectMaterial {
                         images: vec![effects.ground_sparks_texture.clone()],
                     },
@@ -2845,8 +2850,13 @@ pub fn ground_explosion_debug_menu_system(
             // GPU spark_l (replaces CPU spawn_flash_sparks / SparkLColorOverLife)
             if let Some(effects) = gpu_effects.as_ref() {
                 let current_time = time.elapsed_secs_f64();
+                // Generate unique seed from current time to ensure randomization
+                let seed = (current_time * 1000000.0) as u32;
                 commands.spawn((
-                    bevy_hanabi::ParticleEffect::new(effects.ground_flash_sparks_effect.clone()),
+                    bevy_hanabi::ParticleEffect {
+                        handle: effects.ground_flash_sparks_effect.clone(),
+                        prng_seed: Some(seed),
+                    },
                     bevy_hanabi::EffectMaterial {
                         images: vec![effects.ground_sparks_texture.clone()],
                     },

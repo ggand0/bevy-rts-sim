@@ -411,22 +411,24 @@ fn setup_particle_effects(
     // === VELOCITY: 90° upward hemisphere ===
     // CPU uses spherical coordinates: phi in [0, PI/2], theta in [0, TAU]
     // velocity = (sin(phi)*cos(theta), cos(phi), sin(phi)*sin(theta)) * speed
-    // This creates an upward hemisphere cone.
+    // This creates an upward hemisphere cone with proper distribution.
     //
-    // GPU approach: Generate random direction in full sphere, then make Y positive
-    // to restrict to upper hemisphere.
-    let rand_dir = writer_spark.rand(VectorType::VEC3F) * writer_spark.lit(2.0) - writer_spark.lit(1.0);
-    let rand_dir_normalized = rand_dir.normalized();
-    // Force Y component positive (upward hemisphere)
-    let dir_x = rand_dir_normalized.clone().x();
-    let dir_y = rand_dir_normalized.clone().y().abs();  // abs() = upward only
-    let dir_z = rand_dir_normalized.z();
-    let hemisphere_dir = dir_x.vec3(dir_y, dir_z).normalized();
+    // GPU: Use same spherical coordinate approach for identical distribution
+    let theta = writer_spark.rand(ScalarType::Float) * writer_spark.lit(std::f32::consts::TAU);
+    let phi = writer_spark.rand(ScalarType::Float) * writer_spark.lit(std::f32::consts::FRAC_PI_2);
+    // Direction from spherical coords: (sin(phi)*cos(theta), cos(phi), sin(phi)*sin(theta))
+    let sin_phi = phi.clone().sin();
+    let cos_phi = phi.clone().cos();
+    let cos_theta = theta.clone().cos();
+    let sin_theta = theta.sin();
+    let dir_x = sin_phi.clone() * cos_theta;
+    let dir_y = cos_phi.clone();  // Y is up
+    let dir_z = sin_phi * sin_theta;
+    let hemisphere_dir = dir_x.vec3(dir_y, dir_z);
     // Random speed 15-37.5 m/s (matching CPU's rng.gen_range(15.0..37.5))
-    // CPU also applies falloff: speed * (1.0 - (phi/PI_2) * 0.5) = speed * 0.5..1.0
-    // For hemisphere, Y component indicates angle: Y=1 is straight up (phi=0), Y=0 is horizontal (phi=PI/2)
-    // falloff = 1.0 - (1.0 - Y) * 0.5 = 0.5 + Y * 0.5
-    let falloff = writer_spark.lit(0.5) + hemisphere_dir.clone().y() * writer_spark.lit(0.5);
+    // CPU also applies falloff: speed * (1.0 - (phi/PI_2) * 0.5)
+    // falloff ranges from 1.0 (phi=0, straight up) to 0.5 (phi=PI/2, horizontal)
+    let falloff = writer_spark.lit(1.0) - phi / writer_spark.lit(std::f32::consts::FRAC_PI_2) * writer_spark.lit(0.5);
     let spark_speed = (writer_spark.lit(15.0) + writer_spark.rand(ScalarType::Float) * writer_spark.lit(22.5)) * falloff;
     let spark_velocity = hemisphere_dir * spark_speed;
     let spark_init_vel = SetAttributeModifier::new(Attribute::VELOCITY, spark_velocity.expr());
@@ -917,9 +919,15 @@ pub fn spawn_ground_explosion_gpu_sparks(
     scale: f32,
     current_time: f64,
 ) {
+    // Generate unique seeds from current time to ensure randomization per spawn
+    let seed = (current_time * 1000000.0) as u32;
+
     // GPU Sparks (replaces spawn_sparks - 30-60 entities → 1 GPU effect)
     commands.spawn((
-        ParticleEffect::new(particle_effects.ground_sparks_effect.clone()),
+        ParticleEffect {
+            handle: particle_effects.ground_sparks_effect.clone(),
+            prng_seed: Some(seed),
+        },
         EffectMaterial {
             images: vec![particle_effects.ground_sparks_texture.clone()],
         },
@@ -933,8 +941,12 @@ pub fn spawn_ground_explosion_gpu_sparks(
     ));
 
     // GPU Flash Sparks (replaces spawn_flash_sparks - 20-50 entities → 1 GPU effect)
+    // Use different seed to avoid correlation
     commands.spawn((
-        ParticleEffect::new(particle_effects.ground_flash_sparks_effect.clone()),
+        ParticleEffect {
+            handle: particle_effects.ground_flash_sparks_effect.clone(),
+            prng_seed: Some(seed.wrapping_add(12345)),
+        },
         EffectMaterial {
             images: vec![particle_effects.ground_sparks_texture.clone()],
         },
