@@ -394,9 +394,10 @@ fn setup_particle_effects(
     spark_color_gradient.add_key(0.75, Vec4::new(0.72, 0.032, 0.0, 0.25)); // Fading
     spark_color_gradient.add_key(1.0, Vec4::new(0.5, 0.02, 0.0, 0.0));     // Gone
 
+    // CPU sparks maintain constant size (no size animation in update_spark_color)
     let mut spark_size_gradient = bevy_hanabi::Gradient::new();
     spark_size_gradient.add_key(0.0, Vec3::splat(1.0));
-    spark_size_gradient.add_key(1.0, Vec3::splat(0.3));
+    spark_size_gradient.add_key(1.0, Vec3::splat(1.0));
 
     let writer_spark = ExprWriter::new();
 
@@ -422,7 +423,11 @@ fn setup_particle_effects(
     let dir_z = rand_dir_normalized.z();
     let hemisphere_dir = dir_x.vec3(dir_y, dir_z).normalized();
     // Random speed 15-37.5 m/s (matching CPU's rng.gen_range(15.0..37.5))
-    let spark_speed = writer_spark.lit(15.0) + writer_spark.rand(ScalarType::Float) * writer_spark.lit(22.5);
+    // CPU also applies falloff: speed * (1.0 - (phi/PI_2) * 0.5) = speed * 0.5..1.0
+    // For hemisphere, Y component indicates angle: Y=1 is straight up (phi=0), Y=0 is horizontal (phi=PI/2)
+    // falloff = 1.0 - (1.0 - Y) * 0.5 = 0.5 + Y * 0.5
+    let falloff = writer_spark.lit(0.5) + hemisphere_dir.clone().y() * writer_spark.lit(0.5);
+    let spark_speed = (writer_spark.lit(15.0) + writer_spark.rand(ScalarType::Float) * writer_spark.lit(22.5)) * falloff;
     let spark_velocity = hemisphere_dir * spark_speed;
     let spark_init_vel = SetAttributeModifier::new(Attribute::VELOCITY, spark_velocity.expr());
 
@@ -431,6 +436,7 @@ fn setup_particle_effects(
         Attribute::LIFETIME,
         (writer_spark.lit(0.5) + writer_spark.rand(ScalarType::Float) * writer_spark.lit(1.5)).expr()
     );
+    // CPU size: 0.8..1.8 * scale (scale applied via Transform, so just use 0.8..1.8)
     let spark_init_size = SetAttributeModifier::new(
         Attribute::SIZE,
         (writer_spark.lit(0.8) + writer_spark.rand(ScalarType::Float) * writer_spark.lit(1.0)).expr()
