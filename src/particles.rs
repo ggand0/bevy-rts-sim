@@ -385,12 +385,14 @@ fn setup_particle_effects(
     //   t=1.0:  (0.125, 0.005, 0.0, 0.0) - Fully faded
     let mut spark_color_gradient = bevy_hanabi::Gradient::new();
     // Match CPU's linear interpolation from hot orange-yellow to cooled red
-    spark_color_gradient.add_key(0.0, Vec4::new(12.5, 6.75, 1.9, 1.0));    // Hot HDR orange-yellow
-    spark_color_gradient.add_key(0.2, Vec4::new(8.0, 4.3, 1.2, 0.9));      // Still hot
-    spark_color_gradient.add_key(0.4, Vec4::new(3.5, 1.8, 0.5, 0.75));     // Cooling
-    spark_color_gradient.add_key(0.55, Vec4::new(0.25, 0.0125, 0.0, 0.5)); // Cooled to dim red
-    spark_color_gradient.add_key(0.75, Vec4::new(0.18, 0.008, 0.0, 0.25)); // Fading
-    spark_color_gradient.add_key(1.0, Vec4::new(0.125, 0.005, 0.0, 0.0));  // Gone
+    // CPU shader applies 4x brightness multiplier, so multiply by 4 here:
+    // CPU values: (12.5, 6.75, 1.9) * 4 = (50, 27, 7.6) final HDR
+    spark_color_gradient.add_key(0.0, Vec4::new(50.0, 27.0, 7.6, 1.0));    // Hot HDR orange-yellow
+    spark_color_gradient.add_key(0.2, Vec4::new(32.0, 17.2, 4.8, 0.9));    // Still hot
+    spark_color_gradient.add_key(0.4, Vec4::new(14.0, 7.2, 2.0, 0.75));    // Cooling
+    spark_color_gradient.add_key(0.55, Vec4::new(1.0, 0.05, 0.0, 0.5));    // Cooled to dim red
+    spark_color_gradient.add_key(0.75, Vec4::new(0.72, 0.032, 0.0, 0.25)); // Fading
+    spark_color_gradient.add_key(1.0, Vec4::new(0.5, 0.02, 0.0, 0.0));     // Gone
 
     let mut spark_size_gradient = bevy_hanabi::Gradient::new();
     spark_size_gradient.add_key(0.0, Vec3::splat(1.0));
@@ -456,7 +458,7 @@ fn setup_particle_effects(
             .render(OrientModifier::new(OrientMode::AlongVelocity))
             .render(ParticleTextureModifier {
                 texture_slot: spark_texture_slot,
-                sample_mapping: ImageSampleMapping::ModulateOpacityFromR,
+                sample_mapping: ImageSampleMapping::ModulateOpacityFromR,  // Texture R channel controls alpha/shape
             })
             .render(ColorOverLifetimeModifier::new(spark_color_gradient))
             .render(SizeOverLifetimeModifier { gradient: spark_size_gradient, screen_space_size: false })
@@ -472,20 +474,21 @@ fn setup_particle_effects(
     //   Deceleration: (-0.25, -1.0, -0.5) * 10 = (-2.5, -10, -5) m/s²
     let mut flash_color_gradient = bevy_hanabi::Gradient::new();
     // Constant HDR orange, alpha fades linearly
-    flash_color_gradient.add_key(0.0, Vec4::new(2.5, 1.625, 0.975, 1.0));
-    flash_color_gradient.add_key(0.3, Vec4::new(2.5, 1.625, 0.975, 0.7));
-    flash_color_gradient.add_key(0.6, Vec4::new(2.5, 1.625, 0.975, 0.4));
-    flash_color_gradient.add_key(1.0, Vec4::new(2.5, 1.625, 0.975, 0.0));
+    // CPU shader applies 4x brightness: (2.5, 1.625, 0.975) * 4 = (10, 6.5, 3.9)
+    flash_color_gradient.add_key(0.0, Vec4::new(10.0, 6.5, 3.9, 1.0));
+    flash_color_gradient.add_key(0.3, Vec4::new(10.0, 6.5, 3.9, 0.7));
+    flash_color_gradient.add_key(0.6, Vec4::new(10.0, 6.5, 3.9, 0.4));
+    flash_color_gradient.add_key(1.0, Vec4::new(10.0, 6.5, 3.9, 0.0));
 
-    // "Shooting star" effect: very elongated at start, normalizes over time
-    // CPU: t=0: tiny → t=0.05: 0.3×50 → t=0.5: 5×3 → t=1.0: 5×3
-    // In bevy_hanabi with AlongVelocity, X is perpendicular, Y is along velocity
+    // "Shooting star" effect with AlongVelocity: X is along velocity, Y is perpendicular
+    // CPU: t=0: tiny → t=0.05: elongated (Y=0.3, X=50) → t=0.5: normalized (Y=5, X=3)
+    // For AlongVelocity: X = along velocity (elongated), Y = perpendicular (thin)
     let mut flash_size_gradient = bevy_hanabi::Gradient::new();
-    flash_size_gradient.add_key(0.0, Vec3::new(0.06, 10.0, 1.0));  // Very elongated (shooting star)
-    flash_size_gradient.add_key(0.05, Vec3::new(0.06, 10.0, 1.0)); // Hold elongation briefly
-    flash_size_gradient.add_key(0.2, Vec3::new(0.3, 2.0, 1.0));    // Shrinking
-    flash_size_gradient.add_key(0.5, Vec3::new(1.0, 0.6, 1.0));    // Normalized
-    flash_size_gradient.add_key(1.0, Vec3::new(1.0, 0.6, 1.0));    // Hold
+    flash_size_gradient.add_key(0.0, Vec3::new(10.0, 0.1, 1.0));   // Very elongated along velocity
+    flash_size_gradient.add_key(0.05, Vec3::new(10.0, 0.1, 1.0));  // Hold elongation briefly
+    flash_size_gradient.add_key(0.2, Vec3::new(2.0, 0.3, 1.0));    // Shrinking
+    flash_size_gradient.add_key(0.5, Vec3::new(0.6, 1.0, 1.0));    // Normalized
+    flash_size_gradient.add_key(1.0, Vec3::new(0.6, 1.0, 1.0));    // Hold
 
     let writer_flash = ExprWriter::new();
 
@@ -551,10 +554,11 @@ fn setup_particle_effects(
             .init(flash_init_size)
             .update(flash_update_drag)
             // No AccelModifier - CPU flash sparks have no gravity, only drag/deceleration
+            // AlongVelocity: X-axis along velocity, Y perpendicular, faces camera
             .render(OrientModifier::new(OrientMode::AlongVelocity))
             .render(ParticleTextureModifier {
                 texture_slot: flash_texture_slot,
-                sample_mapping: ImageSampleMapping::ModulateOpacityFromR,
+                sample_mapping: ImageSampleMapping::ModulateOpacityFromR,  // Texture R channel controls alpha/shape
             })
             .render(ColorOverLifetimeModifier::new(flash_color_gradient))
             .render(SizeOverLifetimeModifier { gradient: flash_size_gradient, screen_space_size: false })
