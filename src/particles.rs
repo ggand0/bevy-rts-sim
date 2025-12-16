@@ -511,21 +511,27 @@ fn setup_particle_effects(
     // === VELOCITY: 100° cone (wider than hemisphere) ===
     // CPU uses phi in [0, 100°] where 90° = horizontal, 100° = slightly below
     // velocity = (sin(phi)*cos(theta), cos(phi), sin(phi)*sin(theta)) * speed
-    // cos(100°) ≈ -0.17, so Y can be slightly negative
+    // CPU also applies velocity falloff: falloff = 1.0 - (phi / max_phi) * 0.5
+    // This reduces speed for more horizontal particles (phi near max).
     //
-    // GPU approach: Generate hemisphere direction, but allow slight downward bias
-    let rand_dir_f = writer_flash.rand(VectorType::VEC3F) * writer_flash.lit(2.0) - writer_flash.lit(1.0);
-    let rand_dir_norm_f = rand_dir_f.normalized();
-    // For 100° cone: Y can range from -0.17 to 1.0, so we clamp Y to be >= -0.2
-    // Simpler: just use abs(Y) * 0.9 + Y * 0.1 to bias upward but allow slight down
-    let dir_x_f = rand_dir_norm_f.clone().x();
-    let dir_y_raw = rand_dir_norm_f.clone().y();
-    // Mix abs(y) and raw y to allow ~100° cone: 80% upward bias, 20% raw
-    let dir_y_f = dir_y_raw.clone().abs() * writer_flash.lit(0.8) + dir_y_raw * writer_flash.lit(0.2);
-    let dir_z_f = rand_dir_norm_f.z();
-    let cone_dir = dir_x_f.vec3(dir_y_f, dir_z_f).normalized();
+    // GPU: Use same spherical coordinate approach for identical distribution
+    let flash_theta = writer_flash.rand(ScalarType::Float) * writer_flash.lit(std::f32::consts::TAU);
+    let max_phi_f = writer_flash.lit(100.0_f32.to_radians()); // 100° cone
+    let flash_phi = writer_flash.rand(ScalarType::Float) * max_phi_f.clone();
+    // Direction from spherical coords: (sin(phi)*cos(theta), cos(phi), sin(phi)*sin(theta))
+    let flash_sin_phi = flash_phi.clone().sin();
+    let flash_cos_phi = flash_phi.clone().cos();
+    let flash_cos_theta = flash_theta.clone().cos();
+    let flash_sin_theta = flash_theta.sin();
+    let flash_dir_x = flash_sin_phi.clone() * flash_cos_theta;
+    let flash_dir_y = flash_cos_phi.clone();  // Y is up
+    let flash_dir_z = flash_sin_phi * flash_sin_theta;
+    let cone_dir = flash_dir_x.vec3(flash_dir_y, flash_dir_z);
     // Speed 4-55 m/s (matching CPU's rng.gen_range(4.0..55.0))
-    let flash_speed = writer_flash.lit(4.0) + writer_flash.rand(ScalarType::Float) * writer_flash.lit(51.0);
+    // CPU applies falloff: speed * (1.0 - (phi / max_phi) * 0.5)
+    // Falloff ranges from 1.0 (phi=0, straight up) to 0.5 (phi=100°, slightly down)
+    let flash_falloff = writer_flash.lit(1.0) - flash_phi / max_phi_f * writer_flash.lit(0.5);
+    let flash_speed = (writer_flash.lit(4.0) + writer_flash.rand(ScalarType::Float) * writer_flash.lit(51.0)) * flash_falloff;
     let flash_velocity = cone_dir * flash_speed;
     let flash_init_vel = SetAttributeModifier::new(Attribute::VELOCITY, flash_velocity.expr());
 
