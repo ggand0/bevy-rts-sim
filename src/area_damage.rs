@@ -9,6 +9,37 @@ use crate::explosion_shader::{spawn_custom_shader_explosion, ExplosionAssets, Ex
 use crate::terrain::TerrainHeightmap;
 use crate::types::*;
 
+// ===== HELPER FUNCTIONS =====
+
+/// Calculate arc velocity with upward component for knockback/ragdoll effects
+/// `up_range` specifies the range of upward component (e.g., 0.3..0.5 for knockback, 0.5..0.8 for ragdoll)
+fn calculate_arc_velocity(
+    direction: Vec3,
+    speed: f32,
+    up_range: (f32, f32),
+    rng: &mut impl Rng,
+) -> Vec3 {
+    let up_component: f32 = rng.gen_range(up_range.0..up_range.1);
+    let horizontal = (1.0_f32 - up_component * up_component).sqrt();
+    Vec3::new(
+        direction.x * horizontal * speed,
+        up_component * speed,
+        direction.z * horizontal * speed,
+    )
+}
+
+/// Sample terrain height with fallback default
+pub fn sample_terrain_height(
+    heightmap: Option<&TerrainHeightmap>,
+    x: f32,
+    z: f32,
+    default: f32,
+) -> f32 {
+    heightmap
+        .map(|hm| hm.sample_height(x, z))
+        .unwrap_or(default)
+}
+
 /// Process area damage events - apply death/knockback to units in explosion radius
 pub fn area_damage_system(
     mut commands: Commands,
@@ -54,10 +85,12 @@ pub fn area_damage_system(
             };
 
             // Get ground height at unit position
-            let ground_y = heightmap
-                .as_ref()
-                .map(|hm| hm.sample_height(transform.translation.x, transform.translation.z))
-                .unwrap_or(0.0);
+            let ground_y = sample_terrain_height(
+                heightmap.as_deref(),
+                transform.translation.x,
+                transform.translation.z,
+                0.0,
+            );
 
             if distance <= core_radius {
                 // CORE ZONE: Instant death
@@ -162,15 +195,7 @@ fn apply_death_effect(
     } else {
         // Ragdoll death - unit flies away
         let speed = rng.gen_range(RAGDOLL_MIN_SPEED..RAGDOLL_MAX_SPEED);
-
-        // Add upward component for arc trajectory
-        let up_component: f32 = rng.gen_range(0.5..0.8);
-        let horizontal = (1.0_f32 - up_component * up_component).sqrt();
-        let velocity = Vec3::new(
-            direction.x * horizontal * speed,
-            up_component * speed,
-            direction.z * horizontal * speed,
-        );
+        let velocity = calculate_arc_velocity(direction, speed, (0.5, 0.8), rng);
 
         // Random angular velocity for tumbling
         let angular_velocity = Vec3::new(
@@ -199,15 +224,7 @@ fn apply_knockback(
     rng: &mut impl Rng,
 ) {
     let speed = KNOCKBACK_BASE_SPEED * scale * rng.gen_range(0.8..1.2);
-
-    // Add upward component for arc trajectory
-    let up_component: f32 = rng.gen_range(0.3..0.5);
-    let horizontal = (1.0_f32 - up_component * up_component).sqrt();
-    let velocity = Vec3::new(
-        direction.x * horizontal * speed,
-        up_component * speed,
-        direction.z * horizontal * speed,
-    );
+    let velocity = calculate_arc_velocity(direction, speed, (0.3, 0.5), rng);
 
     commands.entity(entity).try_insert(KnockbackState {
         velocity,
@@ -246,10 +263,12 @@ pub fn ragdoll_death_system(
         transform.rotation = rotation * transform.rotation;
 
         // Update ground height at current position
-        let current_ground_y = heightmap
-            .as_ref()
-            .map(|hm| hm.sample_height(transform.translation.x, transform.translation.z))
-            .unwrap_or(ragdoll.ground_y);
+        let current_ground_y = sample_terrain_height(
+            heightmap.as_deref(),
+            transform.translation.x,
+            transform.translation.z,
+            ragdoll.ground_y,
+        );
 
         // Check ground collision
         if transform.translation.y <= current_ground_y {
@@ -270,10 +289,12 @@ pub fn knockback_physics_system(
 
     for (entity, mut transform, mut knockback) in query.iter_mut() {
         // Get current terrain height (mesh origin is at feet, so this is the ground level)
-        let ground_y = heightmap
-            .as_ref()
-            .map(|hm| hm.sample_height(transform.translation.x, transform.translation.z))
-            .unwrap_or(knockback.ground_y);
+        let ground_y = sample_terrain_height(
+            heightmap.as_deref(),
+            transform.translation.x,
+            transform.translation.z,
+            knockback.ground_y,
+        );
 
         if knockback.is_airborne {
             // Apply velocity

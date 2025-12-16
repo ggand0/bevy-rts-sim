@@ -6,6 +6,7 @@ use bevy::pbr::{NotShadowCaster, NotShadowReceiver};
 use bevy::window::PrimaryWindow;
 use rand::Rng;
 
+use crate::area_damage::sample_terrain_height;
 use crate::constants::*;
 use crate::ground_explosion::{spawn_ground_explosion, FlipbookMaterial, GroundExplosionAssets};
 use crate::selection::utils::screen_to_ground_with_heightmap;
@@ -36,6 +37,27 @@ pub struct ArtilleryState {
     pub pending_shells: Vec<PendingShell>,
 }
 
+impl ArtilleryState {
+    /// Reset drag state (line_start, line_current, is_dragging)
+    pub fn reset_drag_state(&mut self) {
+        self.line_start = None;
+        self.line_current = None;
+        self.is_dragging = false;
+    }
+
+    /// Toggle artillery mode - if already in target mode, turn off; otherwise switch to target
+    pub fn toggle_mode(&mut self, target: ArtilleryMode, on_message: &str) {
+        if self.mode == target {
+            info!("Artillery: OFF");
+            self.mode = ArtilleryMode::None;
+        } else {
+            info!("{}", on_message);
+            self.mode = target;
+        }
+        self.reset_drag_state();
+    }
+}
+
 /// A pending artillery shell waiting to land
 pub struct PendingShell {
     pub position: Vec3,
@@ -64,43 +86,22 @@ pub fn artillery_input_system(
 ) {
     // Toggle modes with V/B/N
     if keyboard.just_pressed(KeyCode::KeyV) {
-        artillery_state.mode = if artillery_state.mode == ArtilleryMode::SingleShot {
-            info!("Artillery: OFF");
-            ArtilleryMode::None
-        } else {
-            info!("Artillery: Single Shot mode (click to fire)");
-            ArtilleryMode::SingleShot
-        };
-        // Reset state when changing modes
-        artillery_state.line_start = None;
-        artillery_state.line_current = None;
-        artillery_state.is_dragging = false;
+        artillery_state.toggle_mode(
+            ArtilleryMode::SingleShot,
+            "Artillery: Single Shot mode (click to fire)",
+        );
     }
-
     if keyboard.just_pressed(KeyCode::KeyB) {
-        artillery_state.mode = if artillery_state.mode == ArtilleryMode::ScatterBarrage {
-            info!("Artillery: OFF");
-            ArtilleryMode::None
-        } else {
-            info!("Artillery: Scatter Barrage mode (click to call barrage)");
-            ArtilleryMode::ScatterBarrage
-        };
-        artillery_state.line_start = None;
-        artillery_state.line_current = None;
-        artillery_state.is_dragging = false;
+        artillery_state.toggle_mode(
+            ArtilleryMode::ScatterBarrage,
+            "Artillery: Scatter Barrage mode (click to call barrage)",
+        );
     }
-
     if keyboard.just_pressed(KeyCode::KeyN) {
-        artillery_state.mode = if artillery_state.mode == ArtilleryMode::LineBarrage {
-            info!("Artillery: OFF");
-            ArtilleryMode::None
-        } else {
-            info!("Artillery: Line Barrage mode (drag to set line)");
-            ArtilleryMode::LineBarrage
-        };
-        artillery_state.line_start = None;
-        artillery_state.line_current = None;
-        artillery_state.is_dragging = false;
+        artillery_state.toggle_mode(
+            ArtilleryMode::LineBarrage,
+            "Artillery: Line Barrage mode (drag to set line)",
+        );
     }
 
     // Early exit if no mode active
@@ -155,9 +156,7 @@ pub fn artillery_input_system(
 
                         // Sample terrain height at shell position
                         let shell_pos = center + offset;
-                        let y = hm
-                            .map(|h| h.sample_height(shell_pos.x, shell_pos.z))
-                            .unwrap_or(0.0);
+                        let y = sample_terrain_height(hm, shell_pos.x, shell_pos.z, 0.0);
 
                         artillery_state.pending_shells.push(PendingShell {
                             position: Vec3::new(shell_pos.x, y, shell_pos.z),
@@ -224,9 +223,7 @@ pub fn artillery_input_system(
                             let shell_pos = base_pos + scatter;
 
                             // Sample terrain height
-                            let y = hm
-                                .map(|h| h.sample_height(shell_pos.x, shell_pos.z))
-                                .unwrap_or(0.0);
+                            let y = sample_terrain_height(hm, shell_pos.x, shell_pos.z, 0.0);
 
                             // Stagger timing along line
                             let delay = i as f32 * 0.25 + rng.gen_range(0.0..0.1);
@@ -245,9 +242,7 @@ pub fn artillery_input_system(
                 }
 
                 // Reset drag state
-                artillery_state.line_start = None;
-                artillery_state.line_current = None;
-                artillery_state.is_dragging = false;
+                artillery_state.reset_drag_state();
             }
         }
         ArtilleryMode::None => {}
