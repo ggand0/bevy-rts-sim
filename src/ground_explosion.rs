@@ -528,6 +528,34 @@ pub fn spawn_ground_explosion(
           if gpu_effects.is_some() { 10 } else { 11 }, spark_type);
 }
 
+/// ABLATION TEST: GPU particles + selected CPU emitters
+/// Use this to isolate which CPU emitters cause the FPS drop
+pub fn spawn_ground_explosion_gpu_only(
+    commands: &mut Commands,
+    assets: &GroundExplosionAssets,
+    flipbook_materials: &mut ResMut<Assets<FlipbookMaterial>>,
+    additive_materials: &mut ResMut<Assets<AdditiveMaterial>>,
+    gpu_effects: &ExplosionParticleEffects,
+    position: Vec3,
+    scale: f32,
+    current_time: f64,
+) {
+    let mut rng = rand::thread_rng();
+
+    // GPU particles (sparks, flash sparks, parts debris)
+    spawn_ground_explosion_gpu_sparks(commands, gpu_effects, position, scale, current_time);
+
+    // CPU emitters for ablation test: fireballs + dust + impact + dirt
+    spawn_main_fireball(commands, assets, flipbook_materials, position, scale, &mut rng);
+    spawn_secondary_fireball(commands, assets, flipbook_materials, position, scale, &mut rng);
+    spawn_dust_ring(commands, assets, flipbook_materials, position, scale, &mut rng);
+    spawn_impact_flash(commands, assets, flipbook_materials, additive_materials, position, scale, 0.1);
+    spawn_dirt_debris(commands, assets, flipbook_materials, position, scale, &mut rng);
+    spawn_velocity_dirt(commands, assets, flipbook_materials, position, scale, &mut rng);
+
+    info!("🧪 ABLATION: GPU + fireballs/dust/impact/dirt at {:?}", position);
+}
+
 // ===== EMITTER SPAWN FUNCTIONS =====
 
 /// Spawn a single emitter by type (for debug testing)
@@ -2959,12 +2987,62 @@ pub fn ground_explosion_debug_menu_system(
         );
         info!("[P] Spawned: FULL EXPLOSION");
     }
+
+    // Shift+L: ABLATION - GPU + fireballs/dust/impact scatter barrage (8 explosions)
+    // Check shift first to avoid triggering single explosion
+    if keyboard_input.just_pressed(KeyCode::KeyL) && shift_held {
+        if let Some(effects) = gpu_effects.as_ref() {
+            let current_time = time.elapsed_secs_f64();
+            let mut rng = rand::thread_rng();
+            let scatter_radius = 30.0; // Same as artillery scatter
+
+            for i in 0..8 {
+                // Random offset within scatter radius
+                let angle = rng.gen_range(0.0..std::f32::consts::TAU);
+                let dist = rng.gen_range(0.0..scatter_radius);
+                let offset = Vec3::new(angle.cos() * dist, 0.0, angle.sin() * dist);
+                let spawn_pos = position + offset;
+
+                spawn_ground_explosion_gpu_only(
+                    &mut commands,
+                    &assets,
+                    &mut flipbook_materials,
+                    &mut additive_materials,
+                    effects,
+                    spawn_pos,
+                    1.0,
+                    current_time + (i as f64 * 0.001), // Tiny offset for unique seeds
+                );
+            }
+            info!("[P] ABLATION: GPU + fireballs/dust/impact barrage (8 explosions)");
+        } else {
+            info!("[P] ABLATION: GPU effects not available");
+        }
+    } else if keyboard_input.just_pressed(KeyCode::KeyL) {
+        // L: ABLATION - GPU + fireballs/dust/impact single explosion
+        if let Some(effects) = gpu_effects.as_ref() {
+            let current_time = time.elapsed_secs_f64();
+            spawn_ground_explosion_gpu_only(
+                &mut commands,
+                &assets,
+                &mut flipbook_materials,
+                &mut additive_materials,
+                effects,
+                position,
+                1.0,
+                current_time,
+            );
+            info!("[P] ABLATION: GPU + fireballs/dust/impact explosion");
+        } else {
+            info!("[P] ABLATION: GPU effects not available");
+        }
+    }
 }
 
 /// Spawn the debug menu UI (hidden by default)
 pub fn setup_ground_explosion_debug_ui(mut commands: Commands) {
     commands.spawn((
-        Text::new("GROUND EXPLOSION [P]\n─────────────────────\n1: main    2: main001\n3: dirt    4: dirt001\n5: dust    6: wisp\n7: smoke   8: spark\n9: spark_l 0: parts\n─────────────────────\nShift+8/9/0: GPU ver\nJ: group 1-6\nK: full explosion\nP: close"),
+        Text::new("GROUND EXPLOSION [P]\n─────────────────────\n1: main    2: main001\n3: dirt    4: dirt001\n5: dust    6: wisp\n7: smoke   8: spark\n9: spark_l 0: parts\n─────────────────────\nShift+8/9/0: GPU ver\nJ: group 1-6\nK: full explosion\nL: GPU-only (ablation)\nShift+L: GPU barrage\nP: close"),
         TextFont {
             font_size: 16.0,
             ..default()
