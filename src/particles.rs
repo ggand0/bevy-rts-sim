@@ -782,10 +782,11 @@ fn setup_particle_effects(
     vdirt_color_gradient.add_key(0.7, Vec4::new(0.082, 0.063, 0.050, 1.0));
     vdirt_color_gradient.add_key(1.0, Vec4::new(0.082, 0.063, 0.050, 0.0));
 
-    // Size gradient for velocity-aligned particles (elongated)
+    // Size gradient for velocity-aligned particles
+    // CPU Dirt001ScaleOverLife: Linear GROWTH from 1.0 to 2.0 (opposite of dirt!)
     let mut vdirt_size_gradient = bevy_hanabi::Gradient::new();
-    vdirt_size_gradient.add_key(0.0, Vec3::splat(1.0));
-    vdirt_size_gradient.add_key(1.0, Vec3::splat(0.3));
+    vdirt_size_gradient.add_key(0.0, Vec3::splat(1.0));  // Start at 1.0×
+    vdirt_size_gradient.add_key(1.0, Vec3::splat(2.0)); // Grow to 2.0×
 
     let writer_vdirt = ExprWriter::new();
 
@@ -825,13 +826,16 @@ fn setup_particle_effects(
         Attribute::LIFETIME,
         (writer_vdirt.lit(0.8) + writer_vdirt.rand(ScalarType::Float) * writer_vdirt.lit(0.9)).expr()
     );
-    // Non-uniform size: base 1.0-2.0m, X: 0.5-1.0, Y: 0.6-1.2
-    // For AlongVelocity: X = along velocity (elongated streak), Y = perpendicular width
-    // Scale up 2x to match CPU visual appearance (velocity-aligned billboards render smaller)
-    let vdirt_base_size = writer_vdirt.lit(2.0) + writer_vdirt.rand(ScalarType::Float) * writer_vdirt.lit(2.0);
-    let vdirt_scale_x = writer_vdirt.lit(0.5) + writer_vdirt.rand(ScalarType::Float) * writer_vdirt.lit(0.5);
-    let vdirt_scale_y = writer_vdirt.lit(0.6) + writer_vdirt.rand(ScalarType::Float) * writer_vdirt.lit(0.6);
-    let vdirt_size = (vdirt_base_size.clone() * vdirt_scale_x).vec3(vdirt_base_size.clone() * vdirt_scale_y, vdirt_base_size);
+    // Non-uniform size: base 1.0-2.0m
+    // CPU VelocityAligned: Y = along velocity (height), X = perpendicular (width)
+    // CPU scales: base_scale_x = 0.5-1.0 (width), base_scale_y = 0.6-1.2 (height along velocity)
+    // bevy_hanabi AlongVelocity: X = along velocity, Y = perpendicular
+    // So we need to SWAP: GPU_X = CPU_Y (along velocity), GPU_Y = CPU_X (perpendicular)
+    let vdirt_base_size = writer_vdirt.lit(1.0) + writer_vdirt.rand(ScalarType::Float) * writer_vdirt.lit(1.0); // 1.0-2.0m
+    let vdirt_cpu_scale_x = writer_vdirt.lit(0.5) + writer_vdirt.rand(ScalarType::Float) * writer_vdirt.lit(0.5); // 0.5-1.0 (width)
+    let vdirt_cpu_scale_y = writer_vdirt.lit(0.6) + writer_vdirt.rand(ScalarType::Float) * writer_vdirt.lit(0.6); // 0.6-1.2 (height)
+    // Swap axes: GPU_X = CPU_Y (height along velocity), GPU_Y = CPU_X (width perpendicular)
+    let vdirt_size = (vdirt_base_size.clone() * vdirt_cpu_scale_y).vec3(vdirt_base_size.clone() * vdirt_cpu_scale_x, vdirt_base_size);
     let vdirt_init_size = SetAttributeModifier::new(Attribute::SIZE3, vdirt_size.expr());
 
     // No gravity, only drag
