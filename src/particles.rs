@@ -39,6 +39,10 @@ pub struct ExplosionParticleEffects {
     // Ground explosion GPU parts debris (replaces CPU mesh entities)
     pub ground_parts_effect: Handle<EffectAsset>,
     pub ground_parts_texture: Handle<Image>,
+    // Ground explosion GPU dirt debris (replaces CPU dirt entities)
+    pub ground_dirt_effect: Handle<EffectAsset>,
+    pub ground_vdirt_effect: Handle<EffectAsset>,
+    pub ground_dirt_texture: Handle<Image>,
 }
 
 fn setup_particle_effects(
@@ -677,6 +681,185 @@ fn setup_particle_effects(
             .render(SizeOverLifetimeModifier { gradient: parts_size_gradient, screen_space_size: false })
     );
 
+    // === GROUND EXPLOSION GPU DIRT DEBRIS ===
+    // Replaces CPU dirt entities (35 per explosion) with single GPU effect
+    // CPU behavior (from spawn_dirt_debris):
+    //   Count: 35 particles
+    //   Size: 1.0-2.0m with non-uniform XY (X: 0.3-1.0, Y: 0.4-1.0)
+    //   Velocity: box X/Z: ±5, Y: 15-25
+    //   Lifetime: 1.0-4.0s
+    //   Color: dark brown (0.082, 0.063, 0.050), fade-in then fade-out
+    //   Physics: gravity 9.8, drag 2.0
+    //   Orientation: CameraFacing
+    let ground_dirt_texture: Handle<Image> = asset_server.load("textures/premium/ground_explosion/dirt.png");
+
+    // Color gradient: dark brown with alpha fade-in/out
+    let mut dirt_color_gradient = bevy_hanabi::Gradient::new();
+    dirt_color_gradient.add_key(0.0, Vec4::new(0.082, 0.063, 0.050, 0.0));   // Start invisible
+    dirt_color_gradient.add_key(0.1, Vec4::new(0.082, 0.063, 0.050, 1.0));   // Fade in
+    dirt_color_gradient.add_key(0.7, Vec4::new(0.082, 0.063, 0.050, 1.0));   // Hold
+    dirt_color_gradient.add_key(1.0, Vec4::new(0.082, 0.063, 0.050, 0.0));   // Fade out
+
+    // Size gradient: shrink over lifetime (CPU uses scale curve)
+    // Non-uniform size handled by initial SIZE3 attribute
+    let mut dirt_size_gradient = bevy_hanabi::Gradient::new();
+    dirt_size_gradient.add_key(0.0, Vec3::splat(1.0));   // Full size
+    dirt_size_gradient.add_key(1.0, Vec3::splat(0.3));   // Shrink to 30%
+
+    let writer_dirt = ExprWriter::new();
+
+    // Spawn at explosion center
+    let dirt_init_pos = SetPositionSphereModifier {
+        center: writer_dirt.lit(Vec3::ZERO).expr(),
+        radius: writer_dirt.lit(0.5).expr(),
+        dimension: ShapeDimension::Volume,
+    };
+
+    // Box velocity: X/Z: ±5, Y: 15-25 (matching CPU)
+    let dirt_vel_x = writer_dirt.rand(ScalarType::Float) * writer_dirt.lit(10.0) - writer_dirt.lit(5.0);
+    let dirt_vel_y = writer_dirt.lit(15.0) + writer_dirt.rand(ScalarType::Float) * writer_dirt.lit(10.0);
+    let dirt_vel_z = writer_dirt.rand(ScalarType::Float) * writer_dirt.lit(10.0) - writer_dirt.lit(5.0);
+    let dirt_velocity = dirt_vel_x.vec3(dirt_vel_y, dirt_vel_z);
+    let dirt_init_vel = SetAttributeModifier::new(Attribute::VELOCITY, dirt_velocity.expr());
+
+    let dirt_init_age = SetAttributeModifier::new(Attribute::AGE, writer_dirt.lit(0.0).expr());
+    // Lifetime: 1.0-4.0s (matching CPU)
+    let dirt_init_lifetime = SetAttributeModifier::new(
+        Attribute::LIFETIME,
+        (writer_dirt.lit(1.0) + writer_dirt.rand(ScalarType::Float) * writer_dirt.lit(3.0)).expr()
+    );
+    // Non-uniform size: base 1.0-2.0m, X: 0.3-1.0, Y: 0.4-1.0
+    // SIZE3 allows Vec3 with independent X, Y, Z
+    let dirt_base_size = writer_dirt.lit(1.0) + writer_dirt.rand(ScalarType::Float) * writer_dirt.lit(1.0);
+    let dirt_scale_x = writer_dirt.lit(0.3) + writer_dirt.rand(ScalarType::Float) * writer_dirt.lit(0.7);
+    let dirt_scale_y = writer_dirt.lit(0.4) + writer_dirt.rand(ScalarType::Float) * writer_dirt.lit(0.6);
+    let dirt_size = (dirt_base_size.clone() * dirt_scale_x).vec3(dirt_base_size.clone() * dirt_scale_y, dirt_base_size);
+    let dirt_init_size = SetAttributeModifier::new(Attribute::SIZE3, dirt_size.expr());
+
+    // Gravity + drag approximation: use AccelModifier for gravity, LinearDragModifier for drag
+    let dirt_update_accel = AccelModifier::new(writer_dirt.lit(Vec3::new(0.0, -9.8, 0.0)).expr());
+    let dirt_update_drag = LinearDragModifier::new(writer_dirt.lit(2.0).expr());
+
+    let dirt_texture_slot = writer_dirt.lit(0u32).expr();
+    let mut dirt_module = writer_dirt.finish();
+    dirt_module.add_texture_slot("dirt_texture");
+
+    let ground_dirt_effect = effects.add(
+        EffectAsset::new(64, SpawnerSettings::once(35.0.into()), dirt_module)
+            .with_name("ground_explosion_dirt")
+            .with_alpha_mode(bevy_hanabi::AlphaMode::Blend)
+            .init(dirt_init_pos)
+            .init(dirt_init_vel)
+            .init(dirt_init_age)
+            .init(dirt_init_lifetime)
+            .init(dirt_init_size)
+            .update(dirt_update_accel)
+            .update(dirt_update_drag)
+            .render(OrientModifier::new(OrientMode::FaceCameraPosition))  // Billboard
+            .render(ParticleTextureModifier {
+                texture_slot: dirt_texture_slot,
+                sample_mapping: ImageSampleMapping::Modulate,
+            })
+            .render(ColorOverLifetimeModifier::new(dirt_color_gradient))
+            .render(SizeOverLifetimeModifier { gradient: dirt_size_gradient, screen_space_size: false })
+    );
+
+    // === GROUND EXPLOSION GPU VELOCITY DIRT ===
+    // Replaces CPU velocity dirt entities (10-15 per explosion) with single GPU effect
+    // CPU behavior (from spawn_velocity_dirt):
+    //   Count: 10-15 particles
+    //   Size: 1.0-2.0m with non-uniform XY (X: 0.5-1.0, Y: 0.6-1.2)
+    //   Velocity: hemisphere cone, speed 2.5-10m/s
+    //   Lifetime: 0.8-1.7s
+    //   Color: dark brown (same as dirt)
+    //   Physics: NO gravity, drag 2.0
+    //   Orientation: VelocityAligned
+
+    // Color gradient: same dark brown with alpha fade
+    let mut vdirt_color_gradient = bevy_hanabi::Gradient::new();
+    vdirt_color_gradient.add_key(0.0, Vec4::new(0.082, 0.063, 0.050, 0.0));
+    vdirt_color_gradient.add_key(0.1, Vec4::new(0.082, 0.063, 0.050, 1.0));
+    vdirt_color_gradient.add_key(0.7, Vec4::new(0.082, 0.063, 0.050, 1.0));
+    vdirt_color_gradient.add_key(1.0, Vec4::new(0.082, 0.063, 0.050, 0.0));
+
+    // Size gradient for velocity-aligned particles (elongated)
+    let mut vdirt_size_gradient = bevy_hanabi::Gradient::new();
+    vdirt_size_gradient.add_key(0.0, Vec3::splat(1.0));
+    vdirt_size_gradient.add_key(1.0, Vec3::splat(0.3));
+
+    let writer_vdirt = ExprWriter::new();
+
+    let vdirt_init_pos = SetPositionSphereModifier {
+        center: writer_vdirt.lit(Vec3::ZERO).expr(),
+        radius: writer_vdirt.lit(0.5).expr(),
+        dimension: ShapeDimension::Volume,
+    };
+
+    // Hemisphere cone velocity: spherical coords with phi in [0, 90°]
+    // CPU has falloff: faster at center (phi=0), slower at edges (phi=90°)
+    // falloff = (1.0 - phi / (PI/2))^2, adjusted_speed = speed * (0.5 + 0.5 * falloff)
+    let vdirt_theta = writer_vdirt.rand(ScalarType::Float) * writer_vdirt.lit(std::f32::consts::TAU);
+    let vdirt_phi = writer_vdirt.rand(ScalarType::Float) * writer_vdirt.lit(std::f32::consts::FRAC_PI_2);
+    let vdirt_sin_phi = vdirt_phi.clone().sin();
+    let vdirt_cos_phi = vdirt_phi.clone().cos();
+    let vdirt_cos_theta = vdirt_theta.clone().cos();
+    let vdirt_sin_theta = vdirt_theta.sin();
+    let vdirt_dir_x = vdirt_sin_phi.clone() * vdirt_cos_theta;
+    let vdirt_dir_y = vdirt_cos_phi;
+    let vdirt_dir_z = vdirt_sin_phi * vdirt_sin_theta;
+    let vdirt_dir = vdirt_dir_x.vec3(vdirt_dir_y, vdirt_dir_z);
+    // Speed: 2.5-10m/s with falloff (faster at center)
+    // falloff = (1 - phi / (PI/2))^2, adjusted = speed * (0.5 + 0.5 * falloff)
+    // No powf in expr API, so compute x^2 = x * x
+    let vdirt_base_speed = writer_vdirt.lit(2.5) + writer_vdirt.rand(ScalarType::Float) * writer_vdirt.lit(7.5);
+    let vdirt_phi_normalized = vdirt_phi / writer_vdirt.lit(std::f32::consts::FRAC_PI_2);
+    let vdirt_falloff_base = writer_vdirt.lit(1.0) - vdirt_phi_normalized;
+    let vdirt_falloff = vdirt_falloff_base.clone() * vdirt_falloff_base; // x^2
+    let vdirt_speed = vdirt_base_speed * (writer_vdirt.lit(0.5) + writer_vdirt.lit(0.5) * vdirt_falloff);
+    let vdirt_velocity = vdirt_dir * vdirt_speed;
+    let vdirt_init_vel = SetAttributeModifier::new(Attribute::VELOCITY, vdirt_velocity.expr());
+
+    let vdirt_init_age = SetAttributeModifier::new(Attribute::AGE, writer_vdirt.lit(0.0).expr());
+    // Lifetime: 0.8-1.7s
+    let vdirt_init_lifetime = SetAttributeModifier::new(
+        Attribute::LIFETIME,
+        (writer_vdirt.lit(0.8) + writer_vdirt.rand(ScalarType::Float) * writer_vdirt.lit(0.9)).expr()
+    );
+    // Non-uniform size: base 1.0-2.0m, X: 0.5-1.0, Y: 0.6-1.2
+    // For AlongVelocity: X = along velocity (elongated streak), Y = perpendicular width
+    // Scale up 2x to match CPU visual appearance (velocity-aligned billboards render smaller)
+    let vdirt_base_size = writer_vdirt.lit(2.0) + writer_vdirt.rand(ScalarType::Float) * writer_vdirt.lit(2.0);
+    let vdirt_scale_x = writer_vdirt.lit(0.5) + writer_vdirt.rand(ScalarType::Float) * writer_vdirt.lit(0.5);
+    let vdirt_scale_y = writer_vdirt.lit(0.6) + writer_vdirt.rand(ScalarType::Float) * writer_vdirt.lit(0.6);
+    let vdirt_size = (vdirt_base_size.clone() * vdirt_scale_x).vec3(vdirt_base_size.clone() * vdirt_scale_y, vdirt_base_size);
+    let vdirt_init_size = SetAttributeModifier::new(Attribute::SIZE3, vdirt_size.expr());
+
+    // No gravity, only drag
+    let vdirt_update_drag = LinearDragModifier::new(writer_vdirt.lit(2.0).expr());
+
+    let vdirt_texture_slot = writer_vdirt.lit(0u32).expr();
+    let mut vdirt_module = writer_vdirt.finish();
+    vdirt_module.add_texture_slot("vdirt_texture");
+
+    let ground_vdirt_effect = effects.add(
+        EffectAsset::new(32, SpawnerSettings::once(12.0.into()), vdirt_module)
+            .with_name("ground_explosion_velocity_dirt")
+            .with_alpha_mode(bevy_hanabi::AlphaMode::Blend)
+            .init(vdirt_init_pos)
+            .init(vdirt_init_vel)
+            .init(vdirt_init_age)
+            .init(vdirt_init_lifetime)
+            .init(vdirt_init_size)
+            .update(vdirt_update_drag)
+            .render(OrientModifier::new(OrientMode::AlongVelocity))  // Velocity aligned
+            .render(ParticleTextureModifier {
+                texture_slot: vdirt_texture_slot,
+                sample_mapping: ImageSampleMapping::Modulate,
+            })
+            .render(ColorOverLifetimeModifier::new(vdirt_color_gradient))
+            .render(SizeOverLifetimeModifier { gradient: vdirt_size_gradient, screen_space_size: false })
+    );
+
     commands.insert_resource(ExplosionParticleEffects {
         debris_effect: debris_effect.clone(),
         sparks_effect: sparks_effect.clone(),
@@ -689,6 +872,9 @@ fn setup_particle_effects(
         ground_sparks_texture: ground_sparks_texture.clone(),
         ground_parts_effect: ground_parts_effect.clone(),
         ground_parts_texture: ground_parts_texture.clone(),
+        ground_dirt_effect: ground_dirt_effect.clone(),
+        ground_vdirt_effect: ground_vdirt_effect.clone(),
+        ground_dirt_texture: ground_dirt_texture.clone(),
     });
 
     // Warmup: Spawn particles far below the map to prime the GPU pipeline
@@ -746,6 +932,27 @@ fn setup_particle_effects(
         Visibility::Visible,
         ParticleEffectLifetime { spawn_time: 0.0, duration: 0.5 },
         Name::new("WarmupGroundParts"),
+    ));
+    // Warmup for ground explosion GPU dirt debris
+    commands.spawn((
+        ParticleEffect::new(ground_dirt_effect),
+        EffectMaterial {
+            images: vec![ground_dirt_texture.clone()],
+        },
+        Transform::from_translation(warmup_pos).with_scale(Vec3::splat(0.001)),
+        Visibility::Visible,
+        ParticleEffectLifetime { spawn_time: 0.0, duration: 0.5 },
+        Name::new("WarmupGroundDirt"),
+    ));
+    commands.spawn((
+        ParticleEffect::new(ground_vdirt_effect),
+        EffectMaterial {
+            images: vec![ground_dirt_texture],
+        },
+        Transform::from_translation(warmup_pos).with_scale(Vec3::splat(0.001)),
+        Visibility::Visible,
+        ParticleEffectLifetime { spawn_time: 0.0, duration: 0.5 },
+        Name::new("WarmupGroundVDirt"),
     ));
 
     info!("✅ Particle effects ready (with warmup)");
@@ -1096,5 +1303,57 @@ pub fn spawn_ground_explosion_gpu_sparks(
             duration: 2.0,
         },
         Name::new("GE_GPU_Parts"),
+    ));
+}
+
+/// Spawns GPU-based dirt particles for ground explosions
+/// Replaces CPU dirt debris entities with 2 GPU particle effects:
+/// - Dirt Debris: 35 CPU entities → 1 GPU effect (camera-facing, gravity)
+/// - Velocity Dirt: 10-15 CPU entities → 1 GPU effect (velocity-aligned, no gravity)
+/// Total reduction: ~45-50 entities → 2 entities per explosion
+pub fn spawn_ground_explosion_gpu_dirt(
+    commands: &mut Commands,
+    particle_effects: &ExplosionParticleEffects,
+    position: Vec3,
+    scale: f32,
+    current_time: f64,
+) {
+    // Generate unique seeds from current time to ensure randomization per spawn
+    let seed = (current_time * 1000000.0) as u32;
+
+    // GPU Dirt Debris (replaces spawn_dirt_debris - 35 entities → 1 GPU effect)
+    commands.spawn((
+        ParticleEffect {
+            handle: particle_effects.ground_dirt_effect.clone(),
+            prng_seed: Some(seed.wrapping_add(111111)),
+        },
+        EffectMaterial {
+            images: vec![particle_effects.ground_dirt_texture.clone()],
+        },
+        Transform::from_translation(position).with_scale(Vec3::splat(scale)),
+        Visibility::Visible,
+        ParticleEffectLifetime {
+            spawn_time: current_time,
+            duration: 5.0, // Longer lifetime for dirt (1-4s particles)
+        },
+        Name::new("GE_GPU_Dirt"),
+    ));
+
+    // GPU Velocity Dirt (replaces spawn_velocity_dirt - 10-15 entities → 1 GPU effect)
+    commands.spawn((
+        ParticleEffect {
+            handle: particle_effects.ground_vdirt_effect.clone(),
+            prng_seed: Some(seed.wrapping_add(222222)),
+        },
+        EffectMaterial {
+            images: vec![particle_effects.ground_dirt_texture.clone()],
+        },
+        Transform::from_translation(position).with_scale(Vec3::splat(scale)),
+        Visibility::Visible,
+        ParticleEffectLifetime {
+            spawn_time: current_time,
+            duration: 3.0, // Shorter lifetime for velocity dirt (0.8-1.7s particles)
+        },
+        Name::new("GE_GPU_VDirt"),
     ));
 }

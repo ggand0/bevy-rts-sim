@@ -7,10 +7,11 @@ use bevy::pbr::{Material, MaterialPipeline, MaterialPipelineKey, NotShadowCaster
 use bevy::render::mesh::{Indices, MeshVertexBufferLayoutRef, PrimitiveTopology};
 use bevy::render::render_resource::{AsBindGroup, BlendState, RenderPipelineDescriptor, ShaderRef, SpecializedMeshPipelineError};
 use bevy::asset::RenderAssetUsages;
+use bevy_hanabi::{ParticleEffect, EffectMaterial};
 use rand::Rng;
 
 use crate::wfx_materials::AdditiveMaterial;
-use crate::particles::{ExplosionParticleEffects, spawn_ground_explosion_gpu_sparks};
+use crate::particles::{ExplosionParticleEffects, spawn_ground_explosion_gpu_sparks, spawn_ground_explosion_gpu_dirt};
 
 // ===== HELPER FUNCTIONS =====
 
@@ -545,15 +546,16 @@ pub fn spawn_ground_explosion_gpu_only(
     // GPU particles (sparks, flash sparks, parts debris)
     spawn_ground_explosion_gpu_sparks(commands, gpu_effects, position, scale, current_time);
 
-    // CPU emitters for ablation test: fireballs + dust + impact + dirt
+    // GPU dirt emitters (replaces CPU dirt_debris + velocity_dirt)
+    spawn_ground_explosion_gpu_dirt(commands, gpu_effects, position, scale, current_time);
+
+    // CPU emitters for ablation test: fireballs + dust + impact
     spawn_main_fireball(commands, assets, flipbook_materials, position, scale, &mut rng);
     spawn_secondary_fireball(commands, assets, flipbook_materials, position, scale, &mut rng);
     spawn_dust_ring(commands, assets, flipbook_materials, position, scale, &mut rng);
     spawn_impact_flash(commands, assets, flipbook_materials, additive_materials, position, scale, 0.1);
-    spawn_dirt_debris(commands, assets, flipbook_materials, position, scale, &mut rng);
-    spawn_velocity_dirt(commands, assets, flipbook_materials, position, scale, &mut rng);
 
-    info!("🧪 ABLATION: GPU + fireballs/dust/impact/dirt at {:?}", position);
+    info!("🧪 ABLATION: GPU sparks/parts/dirt + fireballs/dust/impact at {:?}", position);
 }
 
 // ===== EMITTER SPAWN FUNCTIONS =====
@@ -2749,7 +2751,7 @@ pub fn ground_explosion_debug_menu_system(
             info!("  4: dirt001    5: dust       6: wisp");
             info!("  7: smoke      8: spark      9: spark_l");
             info!("  0: parts");
-            info!("  Shift+8/9/0: GPU versions");
+            info!("  Shift+3/4/8/9/0: GPU versions");
             info!("  J: group 1-6  K: full explosion");
             info!("  P: close");
             info!("═══════════════════════════════════════");
@@ -2794,14 +2796,14 @@ pub fn ground_explosion_debug_menu_system(
     let shift_held = keyboard_input.pressed(KeyCode::ShiftLeft) || keyboard_input.pressed(KeyCode::ShiftRight);
 
     // Individual emitter keys (1-7, 0 without shift for CPU parts)
-    // 8, 9, 0 with shift are handled separately for GPU versions
+    // 3, 4, 8, 9, 0 with shift are handled separately for GPU versions
     let emitter = if keyboard_input.just_pressed(KeyCode::Digit1) {
         Some((EmitterType::MainFireball, "main"))
     } else if keyboard_input.just_pressed(KeyCode::Digit2) {
         Some((EmitterType::SecondaryFireball, "main001"))
-    } else if keyboard_input.just_pressed(KeyCode::Digit3) {
+    } else if keyboard_input.just_pressed(KeyCode::Digit3) && !shift_held {
         Some((EmitterType::Dirt, "dirt"))
-    } else if keyboard_input.just_pressed(KeyCode::Digit4) {
+    } else if keyboard_input.just_pressed(KeyCode::Digit4) && !shift_held {
         Some((EmitterType::VelocityDirt, "dirt001"))
     } else if keyboard_input.just_pressed(KeyCode::Digit5) {
         Some((EmitterType::Dust, "dust"))
@@ -2828,6 +2830,56 @@ pub fn ground_explosion_debug_menu_system(
             camera_transform,
         );
         info!("[P] Spawned: {}", name);
+    }
+
+    // 3: dirt (CPU) or Shift+3: dirt (GPU)
+    if keyboard_input.just_pressed(KeyCode::Digit3) && shift_held {
+        if let Some(effects) = gpu_effects.as_ref() {
+            let current_time = time.elapsed_secs_f64();
+            let seed = (current_time * 1000000.0) as u32;
+            commands.spawn((
+                ParticleEffect {
+                    handle: effects.ground_dirt_effect.clone(),
+                    prng_seed: Some(seed),
+                },
+                EffectMaterial {
+                    images: vec![effects.ground_dirt_texture.clone()],
+                },
+                Transform::from_translation(position).with_scale(Vec3::splat(scale)),
+                Visibility::Visible,
+                crate::particles::ParticleEffectLifetime {
+                    spawn_time: current_time,
+                    duration: 5.0,
+                },
+                Name::new("GE_GPU_Dirt_Debug"),
+            ));
+            info!("[P] Spawned: dirt (GPU)");
+        }
+    }
+
+    // 4: velocity dirt (CPU) or Shift+4: velocity dirt (GPU)
+    if keyboard_input.just_pressed(KeyCode::Digit4) && shift_held {
+        if let Some(effects) = gpu_effects.as_ref() {
+            let current_time = time.elapsed_secs_f64();
+            let seed = (current_time * 1000000.0) as u32;
+            commands.spawn((
+                ParticleEffect {
+                    handle: effects.ground_vdirt_effect.clone(),
+                    prng_seed: Some(seed),
+                },
+                EffectMaterial {
+                    images: vec![effects.ground_dirt_texture.clone()],
+                },
+                Transform::from_translation(position).with_scale(Vec3::splat(scale)),
+                Visibility::Visible,
+                crate::particles::ParticleEffectLifetime {
+                    spawn_time: current_time,
+                    duration: 3.0,
+                },
+                Name::new("GE_GPU_VDirt_Debug"),
+            ));
+            info!("[P] Spawned: dirt001 (GPU)");
+        }
     }
 
     // 8: spark (CPU) or Shift+8: spark (GPU)
@@ -3042,7 +3094,7 @@ pub fn ground_explosion_debug_menu_system(
 /// Spawn the debug menu UI (hidden by default)
 pub fn setup_ground_explosion_debug_ui(mut commands: Commands) {
     commands.spawn((
-        Text::new("GROUND EXPLOSION [P]\n─────────────────────\n1: main    2: main001\n3: dirt    4: dirt001\n5: dust    6: wisp\n7: smoke   8: spark\n9: spark_l 0: parts\n─────────────────────\nShift+8/9/0: GPU ver\nJ: group 1-6\nK: full explosion\nL: GPU-only (ablation)\nShift+L: GPU barrage\nP: close"),
+        Text::new("GROUND EXPLOSION [P]\n─────────────────────\n1: main    2: main001\n3: dirt    4: dirt001\n5: dust    6: wisp\n7: smoke   8: spark\n9: spark_l 0: parts\n─────────────────────\nShift+3/4/8/9/0: GPU\nJ: group 1-6\nK: full explosion\nL: GPU-only (ablation)\nShift+L: GPU barrage\nP: close"),
         TextFont {
             font_size: 16.0,
             ..default()
