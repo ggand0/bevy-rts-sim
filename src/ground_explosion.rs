@@ -518,15 +518,19 @@ pub fn spawn_ground_explosion(
     // Impact ground flash - short duration for full explosion
     spawn_impact_flash(commands, assets, flipbook_materials, additive_materials, position, scale, 0.1);
 
-    // Dirt debris (single texture, camera facing)
-    spawn_dirt_debris(commands, assets, flipbook_materials, position, scale, &mut rng);
+    // Dirt debris - use GPU if available, otherwise CPU
+    if let (Some(effects), Some(time)) = (gpu_effects, current_time) {
+        // GPU dirt: 2 entities instead of ~45-50 CPU entities
+        // (dirt_debris: 35, velocity_dirt: 10-15)
+        spawn_ground_explosion_gpu_dirt(commands, effects, position, scale, time);
+    } else {
+        // Fallback to CPU dirt particles
+        spawn_dirt_debris(commands, assets, flipbook_materials, position, scale, &mut rng);
+        spawn_velocity_dirt(commands, assets, flipbook_materials, position, scale, &mut rng);
+    }
 
-    // Velocity-stretched dirt (single texture, velocity aligned)
-    spawn_velocity_dirt(commands, assets, flipbook_materials, position, scale, &mut rng);
-
-    let spark_type = if gpu_effects.is_some() { "GPU" } else { "CPU" };
-    info!("✅ Ground explosion spawned with {} emitters ({} sparks+parts)",
-          if gpu_effects.is_some() { 10 } else { 11 }, spark_type);
+    let gpu_type = if gpu_effects.is_some() { "GPU" } else { "CPU" };
+    info!("✅ Ground explosion spawned with {} sparks/parts/dirt", gpu_type);
 }
 
 /// ABLATION TEST: GPU particles + selected CPU emitters
