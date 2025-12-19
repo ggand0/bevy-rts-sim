@@ -43,6 +43,10 @@ pub struct ExplosionParticleEffects {
     pub ground_dirt_effect: Handle<EffectAsset>,
     pub ground_vdirt_effect: Handle<EffectAsset>,
     pub ground_dirt_texture: Handle<Image>,
+    // Ground explosion GPU fireballs (replaces CPU fireball entities)
+    pub ground_fireball_effect: Handle<EffectAsset>,
+    pub ground_fireball_texture: Handle<Image>,
+    pub ground_fireball_secondary_texture: Handle<Image>,
 }
 
 fn setup_particle_effects(
@@ -864,6 +868,127 @@ fn setup_particle_effects(
             .render(SizeOverLifetimeModifier { gradient: vdirt_size_gradient, screen_space_size: false })
     );
 
+    // === GROUND EXPLOSION GPU FIREBALL ===
+    // Replaces CPU fireball entities (main: 9-17, secondary: 7-13 per explosion)
+    // Combined into single effect with ~25 particles total
+    // CPU behavior (from spawn_main_fireball/spawn_secondary_fireball):
+    //   Count: 9-17 (main) + 7-13 (secondary) = ~16-30 total
+    //   Size: 14-18m base × 0.5→1.3 scale curve over lifetime
+    //   Velocity: 90° hemisphere cone, 3-5 m/s
+    //   Lifetime: 1.5s
+    //   8x8 flipbook (64 frames)
+    //   Orientation: VelocityAligned with bottom pivot
+    //   Color: orange HSV variation (hue 0.08 ± 0.1)
+    //   Alpha: S-curve fade
+    let ground_fireball_texture: Handle<Image> = asset_server.load("textures/premium/ground_explosion/main_9x9.png");
+    let ground_fireball_secondary_texture: Handle<Image> = asset_server.load("textures/premium/ground_explosion/secondary_8x8.png");
+
+    // Color gradient: orange with S-curve alpha fade
+    // CPU uses HSV variation around hue 0.08 (orange), saturation 0.8-1.0, value 0.8-1.0
+    // S-curve alpha: t=0→1.0, t=0.2→0.77, t=0.4→0.56, t=0.6→0.33, t=0.8→0.14, t=1.0→0.0
+    let mut fireball_color_gradient = bevy_hanabi::Gradient::new();
+    fireball_color_gradient.add_key(0.0, Vec4::new(1.0, 0.5, 0.1, 1.0));   // Bright orange
+    fireball_color_gradient.add_key(0.2, Vec4::new(1.0, 0.4, 0.1, 0.77));  // S-curve fade
+    fireball_color_gradient.add_key(0.4, Vec4::new(0.9, 0.35, 0.1, 0.56));
+    fireball_color_gradient.add_key(0.6, Vec4::new(0.8, 0.3, 0.1, 0.33));
+    fireball_color_gradient.add_key(0.8, Vec4::new(0.7, 0.25, 0.1, 0.14));
+    fireball_color_gradient.add_key(1.0, Vec4::new(0.5, 0.2, 0.1, 0.0));   // Fade out
+
+    // Size gradient - linear scaling 8m to 20m
+    let mut fireball_size_gradient = bevy_hanabi::Gradient::new();
+    fireball_size_gradient.add_key(0.0, Vec3::splat(8.0));
+    fireball_size_gradient.add_key(1.0, Vec3::splat(20.0));
+
+    let writer_fireball = ExprWriter::new();
+
+    // Spawn within small sphere (CPU: 0.5m radius)
+    let fireball_init_pos = SetPositionSphereModifier {
+        center: writer_fireball.lit(Vec3::ZERO).expr(),
+        radius: writer_fireball.lit(0.5).expr(),
+        dimension: ShapeDimension::Volume,
+    };
+
+    // 90° hemisphere cone velocity, speed 3-5 m/s
+    let fb_theta = writer_fireball.rand(ScalarType::Float) * writer_fireball.lit(std::f32::consts::TAU);
+    let fb_phi = writer_fireball.rand(ScalarType::Float) * writer_fireball.lit(std::f32::consts::FRAC_PI_2);
+    let fb_sin_phi = fb_phi.clone().sin();
+    let fb_cos_phi = fb_phi.cos();
+    let fb_cos_theta = fb_theta.clone().cos();
+    let fb_sin_theta = fb_theta.sin();
+    let fb_dir_x = fb_sin_phi.clone() * fb_cos_theta;
+    let fb_dir_y = fb_cos_phi;
+    let fb_dir_z = fb_sin_phi * fb_sin_theta;
+    let fb_dir = fb_dir_x.vec3(fb_dir_y, fb_dir_z);
+    let fb_speed = writer_fireball.lit(6.0) + writer_fireball.rand(ScalarType::Float) * writer_fireball.lit(4.0); // 6-10 m/s
+    let fb_velocity = fb_dir * fb_speed;
+    let fireball_init_vel = SetAttributeModifier::new(Attribute::VELOCITY, fb_velocity.expr());
+
+    let fireball_init_age = SetAttributeModifier::new(Attribute::AGE, writer_fireball.lit(0.0).expr());
+    // Lifetime: 1.5s (matching CPU)
+    let fireball_init_lifetime = SetAttributeModifier::new(
+        Attribute::LIFETIME,
+        writer_fireball.lit(1.5).expr()
+    );
+
+    // Flipbook animation: 8x8 grid, 64 frames over 1.5s lifetime
+    // Frame index driven by age/lifetime ratio
+    let fb_age = writer_fireball.attr(Attribute::AGE);
+    let fb_lifetime = writer_fireball.attr(Attribute::LIFETIME);
+    let fb_progress = fb_age / fb_lifetime;
+    let fb_frame = (fb_progress * writer_fireball.lit(64.0))
+        .cast(ScalarType::Int)
+        .min(writer_fireball.lit(63i32));
+    let fireball_init_sprite = SetAttributeModifier::new(Attribute::SPRITE_INDEX, fb_frame.expr());
+
+    let fireball_texture_slot = writer_fireball.lit(0u32).expr();
+    // Fixed 90° rotation to align Y along velocity (matching CPU VelocityAligned)
+    let fireball_rotation = writer_fireball.lit(std::f32::consts::FRAC_PI_2).expr();
+    // Per-particle random axis rotation (spin around velocity axis, 0 to TAU)
+    // CPU: rotation_angle = rng.gen_range(0.0..TAU), applied as Quat::from_rotation_y
+    let fb_random_spin = writer_fireball.rand(ScalarType::Float) * writer_fireball.lit(std::f32::consts::TAU);
+    let fireball_init_spin = SetAttributeModifier::new(Attribute::F32_0, fb_random_spin.expr());
+    let fireball_axis_rotation = writer_fireball.attr(Attribute::F32_0).expr();
+    let mut fireball_module = writer_fireball.finish();
+    fireball_module.add_texture_slot("fireball_texture");
+
+    // Use AlongVelocity with 90° rotation for Y-along-velocity, plus random spin around velocity
+    let ground_fireball_effect = effects.add(
+        EffectAsset::new(64, SpawnerSettings::once(25.0.into()), fireball_module)
+            .with_name("ground_explosion_fireball")
+            .with_alpha_mode(bevy_hanabi::AlphaMode::Blend)
+            .init(fireball_init_pos)
+            .init(fireball_init_vel)
+            .init(fireball_init_age)
+            .init(fireball_init_lifetime)
+            .init(fireball_init_spin)  // Random spin per particle
+            .update(fireball_init_sprite)  // Update sprite index each frame
+            .render(OrientModifier::new(OrientMode::AlongVelocity)
+                .with_rotation(fireball_rotation)
+                .with_axis_rotation(fireball_axis_rotation))
+            .render(ParticleTextureModifier {
+                texture_slot: fireball_texture_slot,
+                sample_mapping: ImageSampleMapping::Modulate,
+            })
+            .render(FlipbookModifier { sprite_grid_size: UVec2::new(8, 8) })
+            .render(ColorOverLifetimeModifier::new(fireball_color_gradient))
+            .render(SizeOverLifetimeModifier { gradient: fireball_size_gradient, screen_space_size: false })
+            // UV zoom: 500x → 1x over lifetime (smoothstep ease baked into gradient)
+            // CPU: let ease = t * t * (3.0 - 2.0 * t); let uv_scale = 500.0 - ease * 499.0;
+            .render(UVScaleOverLifetimeModifier {
+                gradient: {
+                    let mut g = bevy_hanabi::Gradient::new();
+                    g.add_key(0.0, Vec2::splat(500.0));  // Very zoomed in
+                    g.add_key(0.2, Vec2::splat(466.0));  // Smoothstep curve
+                    g.add_key(0.4, Vec2::splat(350.0));
+                    g.add_key(0.6, Vec2::splat(224.0));
+                    g.add_key(0.8, Vec2::splat(100.0));
+                    g.add_key(1.0, Vec2::splat(1.0));    // Normal scale
+                    g
+                },
+            })
+            // PivotModifier disabled - causes visual issues
+    );
+
     commands.insert_resource(ExplosionParticleEffects {
         debris_effect: debris_effect.clone(),
         sparks_effect: sparks_effect.clone(),
@@ -879,6 +1004,9 @@ fn setup_particle_effects(
         ground_dirt_effect: ground_dirt_effect.clone(),
         ground_vdirt_effect: ground_vdirt_effect.clone(),
         ground_dirt_texture: ground_dirt_texture.clone(),
+        ground_fireball_effect: ground_fireball_effect.clone(),
+        ground_fireball_texture: ground_fireball_texture.clone(),
+        ground_fireball_secondary_texture: ground_fireball_secondary_texture.clone(),
     });
 
     // Warmup: Spawn particles far below the map to prime the GPU pipeline
@@ -957,6 +1085,17 @@ fn setup_particle_effects(
         Visibility::Visible,
         ParticleEffectLifetime { spawn_time: 0.0, duration: 0.5 },
         Name::new("WarmupGroundVDirt"),
+    ));
+    // Warmup for ground explosion GPU fireballs
+    commands.spawn((
+        ParticleEffect::new(ground_fireball_effect),
+        EffectMaterial {
+            images: vec![ground_fireball_texture],
+        },
+        Transform::from_translation(warmup_pos).with_scale(Vec3::splat(0.001)),
+        Visibility::Visible,
+        ParticleEffectLifetime { spawn_time: 0.0, duration: 0.5 },
+        Name::new("WarmupGroundFireball"),
     ));
 
     info!("✅ Particle effects ready (with warmup)");
@@ -1359,5 +1498,38 @@ pub fn spawn_ground_explosion_gpu_dirt(
             duration: 3.0, // Shorter lifetime for velocity dirt (0.8-1.7s particles)
         },
         Name::new("GE_GPU_VDirt"),
+    ));
+}
+
+/// Spawns GPU fireball particles for ground explosions
+/// Replaces CPU main_fireball (9-17) + secondary_fireball (7-13) → 1 GPU effect with 25 particles
+pub fn spawn_ground_explosion_gpu_fireballs(
+    commands: &mut Commands,
+    particle_effects: &ExplosionParticleEffects,
+    position: Vec3,
+    scale: f32,
+    current_time: f64,
+) {
+    // Generate unique seed from current time
+    let seed = (current_time * 1000000.0) as u32;
+
+    // GPU Fireballs (replaces CPU main + secondary fireball - ~16-30 entities → 1 GPU effect)
+    // Note: Position offset to simulate bottom pivot (fireball expands from bottom)
+    // CPU bottom pivot moved transform down by half height, we approximate with Y offset
+    commands.spawn((
+        ParticleEffect {
+            handle: particle_effects.ground_fireball_effect.clone(),
+            prng_seed: Some(seed.wrapping_add(333333)),
+        },
+        EffectMaterial {
+            images: vec![particle_effects.ground_fireball_texture.clone()],
+        },
+        Transform::from_translation(position).with_scale(Vec3::splat(scale)),
+        Visibility::Visible,
+        ParticleEffectLifetime {
+            spawn_time: current_time,
+            duration: 2.0, // 1.5s particles + buffer
+        },
+        Name::new("GE_GPU_Fireball"),
     ));
 }
