@@ -919,7 +919,11 @@ fn setup_particle_effects(
     let fb_dir_y = fb_cos_phi;
     let fb_dir_z = fb_sin_phi * fb_sin_theta;
     let fb_dir = fb_dir_x.vec3(fb_dir_y, fb_dir_z);
-    let fb_speed = writer_fireball.lit(6.0) + writer_fireball.rand(ScalarType::Float) * writer_fireball.lit(4.0); // 6-10 m/s
+    // CPU uses bottom pivot - size growth adds to velocity for top edge motion
+    // CPU: 4 m/s velocity + 7 m/s (half size growth from bottom pivot) = 11 m/s apparent top edge
+    // GPU uses center pivot for size - need higher velocity to compensate
+    // Target: 10-14 m/s to match CPU's apparent scatter speed
+    let fb_speed = writer_fireball.lit(10.0) + writer_fireball.rand(ScalarType::Float) * writer_fireball.lit(4.0); // 10-14 m/s
     let fb_velocity = fb_dir * fb_speed;
     let fireball_init_vel = SetAttributeModifier::new(Attribute::VELOCITY, fb_velocity.expr());
 
@@ -952,9 +956,11 @@ fn setup_particle_effects(
     fireball_module.add_texture_slot("fireball_texture");
 
     // Use AlongVelocity with 90° rotation for Y-along-velocity, plus random spin around velocity
+    // SimulationSpace::Local makes transform scale apply to particle positions and velocities
     let ground_fireball_effect = effects.add(
         EffectAsset::new(64, SpawnerSettings::once(25.0.into()), fireball_module)
             .with_name("ground_explosion_fireball")
+            .with_simulation_space(SimulationSpace::Local)
             .with_alpha_mode(bevy_hanabi::AlphaMode::Blend)
             .init(fireball_init_pos)
             .init(fireball_init_vel)
@@ -972,19 +978,21 @@ fn setup_particle_effects(
             .render(FlipbookModifier { sprite_grid_size: UVec2::new(8, 8) })
             .render(ColorOverLifetimeModifier::new(fireball_color_gradient))
             .render(SizeOverLifetimeModifier { gradient: fireball_size_gradient, screen_space_size: false })
-            // UV zoom: 500x → 1x over lifetime (smoothstep ease baked into gradient)
-            // CPU: let ease = t * t * (3.0 - 2.0 * t); let uv_scale = 500.0 - ease * 499.0;
             .render(UVScaleOverLifetimeModifier {
                 gradient: {
                     let mut g = bevy_hanabi::Gradient::new();
-                    g.add_key(0.0, Vec2::splat(500.0));  // Very zoomed in
-                    g.add_key(0.2, Vec2::splat(466.0));  // Smoothstep curve
+                    g.add_key(0.0, Vec2::splat(500.0));  // Very zoomed in at start
+                    g.add_key(0.2, Vec2::splat(466.0));  // Smoothstep curve approximation
                     g.add_key(0.4, Vec2::splat(350.0));
                     g.add_key(0.6, Vec2::splat(224.0));
                     g.add_key(0.8, Vec2::splat(100.0));
-                    g.add_key(1.0, Vec2::splat(1.0));    // Normal scale
+                    g.add_key(1.0, Vec2::splat(1.0));    // Normal scale at end
                     g
                 },
+                // Bottom pivot: UV zoom expands upward along velocity axis
+                // With OrientMode::AlongVelocity + 90° rotation, Y axis is along velocity
+                // UV V=1.0 is at the bottom of the quad, so pivot there for upward expansion
+                pivot: Vec2::new(0.5, 1.0),
             })
             // PivotModifier disabled - causes visual issues
     );
