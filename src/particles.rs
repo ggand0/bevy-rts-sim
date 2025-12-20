@@ -9,7 +9,7 @@ impl Plugin for ParticleEffectsPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(HanabiPlugin)
             .add_systems(Startup, setup_particle_effects)
-            .add_systems(Update, (cleanup_finished_particle_effects, debug_hanabi_entities));
+            .add_systems(Update, (cleanup_finished_particle_effects, debug_hanabi_entities, auto_spawn_test_fireball));
     }
 }
 
@@ -47,6 +47,9 @@ pub struct ExplosionParticleEffects {
     pub ground_fireball_effect: Handle<EffectAsset>,
     pub ground_fireball_texture: Handle<Image>,
     pub ground_fireball_secondary_texture: Handle<Image>,
+    // Circle test effect (exact copy of bevy_hanabi circle.rs example)
+    pub circle_test_effect: Handle<EffectAsset>,
+    pub circle_test_texture: Handle<Image>,
 }
 
 fn setup_particle_effects(
@@ -894,59 +897,59 @@ fn setup_particle_effects(
     fireball_color_gradient.add_key(0.8, Vec4::new(0.7, 0.25, 0.1, 0.14));
     fireball_color_gradient.add_key(1.0, Vec4::new(0.5, 0.2, 0.1, 0.0));   // Fade out
 
-    // Size gradient - linear scaling 8m to 20m
+    // Size gradient - matches CPU FireballScaleOverLife curve
+    // CPU: base 14-18m × scale curve (0.5 → 1.3) = 7-9m start → 18-23m end
+    // GPU uses SimulationSpace::Local so Transform.scale will multiply these values
+    // Use cubic ease-out for fast initial growth that slows down
     let mut fireball_size_gradient = bevy_hanabi::Gradient::new();
-    fireball_size_gradient.add_key(0.0, Vec3::splat(8.0));
-    fireball_size_gradient.add_key(1.0, Vec3::splat(20.0));
+    fireball_size_gradient.add_key(0.0, Vec3::splat(7.0));   // Start at 7m
+    fireball_size_gradient.add_key(0.3, Vec3::splat(12.0));  // Quick growth
+    fireball_size_gradient.add_key(0.6, Vec3::splat(17.0));  // Slowing down
+    fireball_size_gradient.add_key(1.0, Vec3::splat(20.0));  // End at 20m
 
     let writer_fireball = ExprWriter::new();
 
-    // Spawn within small sphere (CPU: 0.5m radius)
+    // Test: Sphere spawn with outward velocity - should expand outward from center
+    // Position: random on small sphere surface at origin
     let fireball_init_pos = SetPositionSphereModifier {
         center: writer_fireball.lit(Vec3::ZERO).expr(),
-        radius: writer_fireball.lit(0.5).expr(),
-        dimension: ShapeDimension::Volume,
+        radius: writer_fireball.lit(0.5).expr(),  // Small radius to see direction clearly
+        dimension: ShapeDimension::Surface,
     };
 
-    // 90° hemisphere cone velocity, speed 3-5 m/s
-    let fb_theta = writer_fireball.rand(ScalarType::Float) * writer_fireball.lit(std::f32::consts::TAU);
-    let fb_phi = writer_fireball.rand(ScalarType::Float) * writer_fireball.lit(std::f32::consts::FRAC_PI_2);
-    let fb_sin_phi = fb_phi.clone().sin();
-    let fb_cos_phi = fb_phi.cos();
-    let fb_cos_theta = fb_theta.clone().cos();
-    let fb_sin_theta = fb_theta.sin();
-    let fb_dir_x = fb_sin_phi.clone() * fb_cos_theta;
-    let fb_dir_y = fb_cos_phi;
-    let fb_dir_z = fb_sin_phi * fb_sin_theta;
-    let fb_dir = fb_dir_x.vec3(fb_dir_y, fb_dir_z);
-    // CPU uses bottom pivot - size growth adds to velocity for top edge motion
-    // CPU: 4 m/s velocity + 7 m/s (half size growth from bottom pivot) = 11 m/s apparent top edge
-    // GPU uses center pivot for size - need higher velocity to compensate
-    // Target: 10-14 m/s to match CPU's apparent scatter speed
-    let fb_speed = writer_fireball.lit(10.0) + writer_fireball.rand(ScalarType::Float) * writer_fireball.lit(4.0); // 10-14 m/s
-    let fb_velocity = fb_dir * fb_speed;
-    let fireball_init_vel = SetAttributeModifier::new(Attribute::VELOCITY, fb_velocity.expr());
+    // Velocity: radially outward from center at 5 m/s
+    let fireball_init_vel = SetVelocitySphereModifier {
+        center: writer_fireball.lit(Vec3::ZERO).expr(),
+        speed: writer_fireball.lit(5.0).expr(),
+    };
 
-    let fireball_init_age = SetAttributeModifier::new(Attribute::AGE, writer_fireball.lit(0.0).expr());
-    // Lifetime: 1.5s (matching CPU)
+    // Initialize AGE to 0
+    let fireball_init_age = SetAttributeModifier::new(
+        Attribute::AGE,
+        writer_fireball.lit(0.0).expr()
+    );
+    // Lifetime: 1.5s (matching CPU fireball)
     let fireball_init_lifetime = SetAttributeModifier::new(
         Attribute::LIFETIME,
         writer_fireball.lit(1.5).expr()
     );
 
     // Flipbook animation: 8x8 grid, 64 frames over 1.5s lifetime
-    // Frame index driven by age/lifetime ratio
-    let fb_age = writer_fireball.attr(Attribute::AGE);
-    let fb_lifetime = writer_fireball.attr(Attribute::LIFETIME);
-    let fb_progress = fb_age / fb_lifetime;
-    let fb_frame = (fb_progress * writer_fireball.lit(64.0))
+    // Play all 64 frames once: sprite_index = i32(age / lifetime * 64)
+    // Clamp to 0-63 instead of wrapping with % to avoid looping
+    let frame_count = 64i32;
+    let fireball_sprite_index = writer_fireball
+        .attr(Attribute::AGE)
+        .div(writer_fireball.attr(Attribute::LIFETIME))
+        .mul(writer_fireball.lit(frame_count as f32))
         .cast(ScalarType::Int)
-        .min(writer_fireball.lit(63i32));
-    let fireball_init_sprite = SetAttributeModifier::new(Attribute::SPRITE_INDEX, fb_frame.expr());
+        .min(writer_fireball.lit(frame_count - 1))  // Clamp to max frame instead of wrapping
+        .expr();
+    let fireball_update_sprite = SetAttributeModifier::new(Attribute::SPRITE_INDEX, fireball_sprite_index);
 
     let fireball_texture_slot = writer_fireball.lit(0u32).expr();
-    // Fixed 90° rotation to align Y along velocity (matching CPU VelocityAligned)
-    let fireball_rotation = writer_fireball.lit(std::f32::consts::FRAC_PI_2).expr();
+    // Fixed rotation: -90° to align sprite with velocity
+    let fireball_rotation = writer_fireball.lit(-std::f32::consts::FRAC_PI_2).expr();
     // Per-particle random axis rotation (spin around velocity axis, 0 to TAU)
     // CPU: rotation_angle = rng.gen_range(0.0..TAU), applied as Quat::from_rotation_y
     let fb_random_spin = writer_fireball.rand(ScalarType::Float) * writer_fireball.lit(std::f32::consts::TAU);
@@ -955,10 +958,11 @@ fn setup_particle_effects(
     let mut fireball_module = writer_fireball.finish();
     fireball_module.add_texture_slot("fireball_texture");
 
-    // Use AlongVelocity with 90° rotation for Y-along-velocity, plus random spin around velocity
+    // Use AlongVelocity with -90° rotation + random spin, negate X&Z for velocity fix
     // SimulationSpace::Local makes transform scale apply to particle positions and velocities
+    // DEBUG: spawn only 3 particles to observe behavior clearly
     let ground_fireball_effect = effects.add(
-        EffectAsset::new(64, SpawnerSettings::once(25.0.into()), fireball_module)
+        EffectAsset::new(64, SpawnerSettings::once(3.0.into()), fireball_module)
             .with_name("ground_explosion_fireball")
             .with_simulation_space(SimulationSpace::Local)
             .with_alpha_mode(bevy_hanabi::AlphaMode::Blend)
@@ -966,8 +970,8 @@ fn setup_particle_effects(
             .init(fireball_init_vel)
             .init(fireball_init_age)
             .init(fireball_init_lifetime)
-            .init(fireball_init_spin)  // Random spin per particle
-            .update(fireball_init_sprite)  // Update sprite index each frame
+            .init(fireball_init_spin)
+            .update(fireball_update_sprite)
             .render(OrientModifier::new(OrientMode::AlongVelocity)
                 .with_rotation(fireball_rotation)
                 .with_axis_rotation(fireball_axis_rotation))
@@ -978,24 +982,100 @@ fn setup_particle_effects(
             .render(FlipbookModifier { sprite_grid_size: UVec2::new(8, 8) })
             .render(ColorOverLifetimeModifier::new(fireball_color_gradient))
             .render(SizeOverLifetimeModifier { gradient: fireball_size_gradient, screen_space_size: false })
-            .render(UVScaleOverLifetimeModifier {
-                gradient: {
-                    let mut g = bevy_hanabi::Gradient::new();
-                    g.add_key(0.0, Vec2::splat(500.0));  // Very zoomed in at start
-                    g.add_key(0.2, Vec2::splat(466.0));  // Smoothstep curve approximation
-                    g.add_key(0.4, Vec2::splat(350.0));
-                    g.add_key(0.6, Vec2::splat(224.0));
-                    g.add_key(0.8, Vec2::splat(100.0));
-                    g.add_key(1.0, Vec2::splat(1.0));    // Normal scale at end
-                    g
-                },
-                // Bottom pivot: UV zoom expands upward along velocity axis
-                // With OrientMode::AlongVelocity + 90° rotation, Y axis is along velocity
-                // UV V=1.0 is at the bottom of the quad, so pivot there for upward expansion
-                pivot: Vec2::new(0.5, 1.0),
-            })
+            // UV zoom disabled - CPU fireballs don't use it
+            // .render(UVScaleOverLifetimeModifier {
+            //     gradient: {
+            //         // CPU smoothstep: ease = t * t * (3.0 - 2.0 * t), uv_scale = 500 - ease * 499
+            //         let mut g = bevy_hanabi::Gradient::new();
+            //         g.add_key(0.0, Vec2::splat(500.0));  // t=0: ease=0
+            //         g.add_key(0.2, Vec2::splat(448.0));  // t=0.2: ease=0.104
+            //         g.add_key(0.4, Vec2::splat(324.0));  // t=0.4: ease=0.352
+            //         g.add_key(0.5, Vec2::splat(250.5));  // t=0.5: ease=0.5
+            //         g.add_key(0.6, Vec2::splat(176.0));  // t=0.6: ease=0.648
+            //         g.add_key(0.8, Vec2::splat(52.0));   // t=0.8: ease=0.896
+            //         g.add_key(1.0, Vec2::splat(1.0));    // t=1.0: ease=1.0
+            //         g
+            //     },
+            //     // Bottom pivot: UV zoom expands upward along velocity axis
+            //     // With OrientMode::AlongVelocity + 90° rotation, Y axis is along velocity
+            //     // UV V=1.0 is at the bottom of the quad, so pivot there for upward expansion
+            //     pivot: Vec2::new(0.5, 1.0),
+            // })
             // PivotModifier disabled - causes visual issues
     );
+
+    // === CIRCLE TEST EFFECT (exact copy of bevy_hanabi circle.rs) ===
+    // This is for debugging flipbook animation - should animate properly
+    let circle_writer = ExprWriter::new();
+
+    // Initialize AGE to random 0-1 so particles start at different frames
+    let circle_init_age = SetAttributeModifier::new(
+        Attribute::AGE,
+        circle_writer.rand(ScalarType::Float).expr()
+    );
+
+    // Lifetime: 5 seconds
+    let circle_init_lifetime = SetAttributeModifier::new(
+        Attribute::LIFETIME,
+        circle_writer.lit(5.0).expr()
+    );
+
+    // Position: circle around Y axis
+    let circle_init_pos = SetPositionCircleModifier {
+        center: circle_writer.lit(Vec3::Y * 0.1).expr(),
+        axis: circle_writer.lit(Vec3::Y).expr(),
+        radius: circle_writer.lit(0.4).expr(),
+        dimension: ShapeDimension::Surface,
+    };
+
+    // Velocity: zero (static)
+    let circle_init_vel = SetAttributeModifier::new(Attribute::VELOCITY, circle_writer.lit(Vec3::ZERO).expr());
+
+    // Flipbook animation: forward-only
+    let circle_frame_count = 64i32;
+    let circle_sprite_index = circle_writer
+        .attr(Attribute::AGE)
+        .mul(circle_writer.lit(0.1))
+        .fract()
+        .mul(circle_writer.lit(circle_frame_count as f32))
+        .cast(ScalarType::Int)
+        .rem(circle_writer.lit(circle_frame_count))
+        .expr();
+    let circle_update_sprite = SetAttributeModifier::new(Attribute::SPRITE_INDEX, circle_sprite_index);
+
+    let circle_texture_slot = circle_writer.lit(0u32).expr();
+
+    let mut circle_module = circle_writer.finish();
+    circle_module.add_texture_slot("color");
+
+    // Color gradient: fade alpha at end
+    let mut circle_gradient = bevy_hanabi::Gradient::new();
+    circle_gradient.add_key(0.0, Vec4::ONE);
+    circle_gradient.add_key(0.5, Vec4::ONE);
+    circle_gradient.add_key(1.0, Vec3::ONE.extend(0.0));
+
+    let circle_test_effect = effects.add(
+        EffectAsset::new(1, SpawnerSettings::once(1.0.into()), circle_module)
+            .with_name("circle_test")
+            .init(circle_init_pos)
+            .init(circle_init_vel)
+            .init(circle_init_age)
+            .init(circle_init_lifetime)
+            .update(circle_update_sprite)
+            .render(ParticleTextureModifier {
+                texture_slot: circle_texture_slot,
+                sample_mapping: ImageSampleMapping::Modulate,
+            })
+            .render(FlipbookModifier { sprite_grid_size: UVec2::new(8, 8) })
+            .render(ColorOverLifetimeModifier::new(circle_gradient))
+            .render(SizeOverLifetimeModifier {
+                gradient: bevy_hanabi::Gradient::constant(Vec3::splat(5.0)),
+                screen_space_size: false,
+            })
+    );
+
+    // Use fireball texture for circle test (8x8 grid)
+    let circle_test_texture = ground_fireball_texture.clone();
 
     commands.insert_resource(ExplosionParticleEffects {
         debris_effect: debris_effect.clone(),
@@ -1015,6 +1095,8 @@ fn setup_particle_effects(
         ground_fireball_effect: ground_fireball_effect.clone(),
         ground_fireball_texture: ground_fireball_texture.clone(),
         ground_fireball_secondary_texture: ground_fireball_secondary_texture.clone(),
+        circle_test_effect: circle_test_effect.clone(),
+        circle_test_texture: circle_test_texture.clone(),
     });
 
     // Warmup: Spawn particles far below the map to prime the GPU pipeline
@@ -1104,6 +1186,16 @@ fn setup_particle_effects(
         Visibility::Visible,
         ParticleEffectLifetime { spawn_time: 0.0, duration: 0.5 },
         Name::new("WarmupGroundFireball"),
+    ));
+    // Circle test: spawn permanently at Y=5 like circle.rs example (no despawn)
+    commands.spawn((
+        ParticleEffect::new(circle_test_effect.clone()),
+        EffectMaterial {
+            images: vec![circle_test_texture.clone()],
+        },
+        Transform::from_translation(Vec3::new(0.0, 5.0, 0.0)),
+        Visibility::Visible,
+        Name::new("CircleTestPermanent"),
     ));
 
     info!("✅ Particle effects ready (with warmup)");
@@ -1525,10 +1617,7 @@ pub fn spawn_ground_explosion_gpu_fireballs(
     // Note: Position offset to simulate bottom pivot (fireball expands from bottom)
     // CPU bottom pivot moved transform down by half height, we approximate with Y offset
     commands.spawn((
-        ParticleEffect {
-            handle: particle_effects.ground_fireball_effect.clone(),
-            prng_seed: Some(seed.wrapping_add(333333)),
-        },
+        ParticleEffect::new(particle_effects.ground_fireball_effect.clone()),  // TEST: Use new() like circle.rs
         EffectMaterial {
             images: vec![particle_effects.ground_fireball_texture.clone()],
         },
@@ -1540,4 +1629,24 @@ pub fn spawn_ground_explosion_gpu_fireballs(
         },
         Name::new("GE_GPU_Fireball"),
     ));
+}
+
+/// Auto-spawn a test GPU fireball at startup for debugging
+pub fn auto_spawn_test_fireball(
+    mut commands: Commands,
+    particle_effects: Res<ExplosionParticleEffects>,
+    time: Res<Time>,
+    mut spawned: Local<bool>,
+) {
+    // Only spawn once, after a short delay to ensure everything is ready
+    if *spawned {
+        return;
+    }
+    if time.elapsed_secs() < 1.0 {
+        return;
+    }
+    *spawned = true;
+
+    println!("[TEST_FIREBALL] Auto-spawning test GPU fireball at origin");
+    spawn_ground_explosion_gpu_fireballs(&mut commands, &particle_effects, Vec3::new(0.0, 5.0, 0.0), 1.0, time.elapsed_secs_f64());
 }
