@@ -990,25 +990,30 @@ fn setup_particle_effects(
     fireball_color_gradient.add_key(0.8, Vec4::new(0.7, 0.25, 0.1, 0.14));
     fireball_color_gradient.add_key(1.0, Vec4::new(0.5, 0.2, 0.1, 0.0));   // Fade out
 
-    // Size gradient: CPU uses 8-20m range
+    // Size gradient: CPU uses cubic ease-out (1-(1-t)³) from 0.5→1.3 scale
+    // Base 16m * scale: 8m start → 21m end, fast expansion early
     let mut fireball_size_gradient = bevy_hanabi::Gradient::new();
-    fireball_size_gradient.add_key(0.0, Vec3::splat(8.0));
-    fireball_size_gradient.add_key(1.0, Vec3::splat(20.0));
+    fireball_size_gradient.add_key(0.0, Vec3::splat(8.0));    // t=0: 0.5x
+    fireball_size_gradient.add_key(0.2, Vec3::splat(14.2));   // t=0.2: 0.89x (fast jump)
+    fireball_size_gradient.add_key(0.4, Vec3::splat(18.0));   // t=0.4: 1.127x
+    fireball_size_gradient.add_key(0.6, Vec3::splat(20.0));   // t=0.6: 1.249x
+    fireball_size_gradient.add_key(0.8, Vec3::splat(20.7));   // t=0.8: 1.294x
+    fireball_size_gradient.add_key(1.0, Vec3::splat(21.0));   // t=1.0: 1.3x
 
     let writer_fireball = ExprWriter::new();
 
-    // Position: hemisphere (Y >= 0) surface, radius 5.0 (10m diameter)
+    // Position: hemisphere (Y >= 0) surface, radius 7.5 (15m diameter)
     let rx = writer_fireball.rand(ScalarType::Float) * writer_fireball.lit(2.0) - writer_fireball.lit(1.0);
     let ry = writer_fireball.rand(ScalarType::Float); // [0,1] for Y >= 0
     let rz = writer_fireball.rand(ScalarType::Float) * writer_fireball.lit(2.0) - writer_fireball.lit(1.0);
-    let fb_pos = rx.vec3(ry, rz).normalized() * writer_fireball.lit(5.0);
+    let fb_pos = rx.vec3(ry, rz).normalized() * writer_fireball.lit(7.5);
     let fireball_init_pos = SetAttributeModifier::new(Attribute::POSITION, fb_pos.expr());
 
-    // Velocity: outward from spawn position (this worked before for debug sprites)
+    // Velocity: outward from spawn position
     // velocity = normalize(position) * speed
     let fb_pos_read = writer_fireball.attr(Attribute::POSITION);
     let fb_outward_dir = fb_pos_read.normalized();
-    let fb_speed = writer_fireball.lit(3.0) + writer_fireball.rand(ScalarType::Float) * writer_fireball.lit(2.0);
+    let fb_speed = writer_fireball.lit(5.0) + writer_fireball.rand(ScalarType::Float) * writer_fireball.lit(3.0); // 5-8 m/s
     let fb_velocity = fb_outward_dir * fb_speed;
     let fireball_init_vel = SetAttributeModifier::new(Attribute::VELOCITY, fb_velocity.expr());
 
@@ -1060,9 +1065,7 @@ fn setup_particle_effects(
                 texture_slot: fireball_texture_slot,
                 sample_mapping: ImageSampleMapping::Modulate,
             })
-            .render(FlipbookModifier { sprite_grid_size: UVec2::new(8, 8) })
-            .render(ColorOverLifetimeModifier::new(fireball_color_gradient))
-            .render(SizeOverLifetimeModifier { gradient: fireball_size_gradient, screen_space_size: false })
+            // UV zoom MUST come before FlipbookModifier (CPU shader zooms before frame offset)
             .render(UVScaleOverLifetimeModifier {
                 gradient: {
                     let mut g = bevy_hanabi::Gradient::new();
@@ -1075,6 +1078,9 @@ fn setup_particle_effects(
                     g
                 },
             })
+            .render(FlipbookModifier { sprite_grid_size: UVec2::new(8, 8) })
+            .render(ColorOverLifetimeModifier::new(fireball_color_gradient))
+            .render(SizeOverLifetimeModifier { gradient: fireball_size_gradient, screen_space_size: false })
     );
 
     // ========== DEBUG FIREBALL EFFECT ==========

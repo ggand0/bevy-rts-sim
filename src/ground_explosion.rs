@@ -2919,7 +2919,7 @@ pub fn ground_explosion_debug_menu_system(
         }
     }
 
-    // 2: secondary fireball (CPU) or Shift+2: fireball (GPU) - same as Shift+1
+    // 2: secondary fireball (CPU) or Shift+2: secondary fireball (GPU)
     if keyboard_input.just_pressed(KeyCode::Digit2) && shift_held {
         if let Some(effects) = gpu_effects.as_ref() {
             let current_time = time.elapsed_secs_f64();
@@ -2930,7 +2930,7 @@ pub fn ground_explosion_debug_menu_system(
                     prng_seed: Some(seed),
                 },
                 EffectMaterial {
-                    images: vec![effects.ground_fireball_texture.clone()],
+                    images: vec![effects.ground_fireball_secondary_texture.clone()],
                 },
                 Transform::from_translation(position).with_scale(Vec3::splat(scale)),
                 Visibility::Visible,
@@ -2938,9 +2938,9 @@ pub fn ground_explosion_debug_menu_system(
                     spawn_time: current_time,
                     duration: 2.0,
                 },
-                Name::new("GE_GPU_Fireball_Debug"),
+                Name::new("GE_GPU_Secondary_Fireball"),
             ));
-            info!("[P] Spawned: fireball (GPU) - combined main+secondary");
+            info!("[P] Spawned: secondary fireball (GPU)");
         }
     }
 
