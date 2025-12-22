@@ -142,6 +142,9 @@ pub struct ExplosionParticleEffects {
     pub ground_fireball_secondary_texture: Handle<Image>,
     // Debug: simple colored quads to visualize velocity direction
     pub debug_fireball_effect: Handle<EffectAsset>,
+    // Ground explosion GPU dust ring (replaces CPU dust entities)
+    pub ground_dust_effect: Handle<EffectAsset>,
+    pub ground_dust_texture: Handle<Image>,
 }
 
 fn setup_particle_effects(
@@ -153,6 +156,7 @@ fn setup_particle_effects(
 
     // Load flare texture for ground explosion sparks
     let ground_sparks_texture: Handle<Image> = asset_server.load("textures/premium/ground_explosion/flare.png");
+    let ground_dust_texture: Handle<Image> = asset_server.load("textures/premium/ground_explosion/dust_4x1.png");
 
     // === DEBRIS PARTICLES ===
     // Physical debris chunks that fly outward
@@ -1140,6 +1144,97 @@ fn setup_particle_effects(
             })
     );
 
+    // === GROUND EXPLOSION GPU DUST RING ===
+    // Replaces CPU dust entities (2-3 per explosion) with single GPU effect
+    // CPU behavior (from spawn_dust_ring):
+    //   Count: 2-3 particles
+    //   Size: 3-5m base, scales from ZERO to (3×, 2×) - X grows faster than Y
+    //   Velocity: 35° cone upward, 5-10 m/s
+    //   Lifetime: 0.1-0.5s (very short)
+    //   Color: dark brown (0.147, 0.114, 0.070), alpha 3.0→0 S-curve fade
+    //   Texture: 4×1 flipbook, random FIXED frame (not animated)
+    //   Orientation: VelocityAligned
+
+    // Color: constant dark brown with HDR alpha (3.0→0) S-curve fade
+    // UE5 uses alpha > 1.0 as brightness multiplier
+    let mut dust_color_gradient = bevy_hanabi::Gradient::new();
+    // S-curve fade: 3.0 * (1 - smoothstep(t))
+    // t=0: 3.0, t=0.2: 2.59, t=0.5: 1.5, t=0.8: 0.34, t=1.0: 0
+    dust_color_gradient.add_key(0.0, Vec4::new(0.147, 0.114, 0.070, 3.0));
+    dust_color_gradient.add_key(0.2, Vec4::new(0.147, 0.114, 0.070, 2.59));
+    dust_color_gradient.add_key(0.5, Vec4::new(0.147, 0.114, 0.070, 1.5));
+    dust_color_gradient.add_key(0.8, Vec4::new(0.147, 0.114, 0.070, 0.34));
+    dust_color_gradient.add_key(1.0, Vec4::new(0.147, 0.114, 0.070, 0.0));
+
+    // Size gradient: linear growth from 0 to (3×, 2×) base size
+    // Base size 4m (midpoint of 3-5m), so final X=12m, Y=8m
+    // bevy_hanabi AlongVelocity: X = along velocity, Y = perpendicular
+    // CPU VelocityAligned: Y = along velocity (height), X = perpendicular (width)
+    // CPU scales: X grows to 3× (width), Y grows to 2× (height)
+    // Swap for GPU: GPU_X = 2× (along velocity), GPU_Y = 3× (perpendicular width)
+    let mut dust_size_gradient = bevy_hanabi::Gradient::new();
+    dust_size_gradient.add_key(0.0, Vec3::new(0.0, 0.0, 1.0));           // Start at zero
+    dust_size_gradient.add_key(1.0, Vec3::new(8.0, 12.0, 1.0));          // End at 2×, 3× (4m base)
+
+    let writer_dust = ExprWriter::new();
+
+    // Position: spawn at origin
+    let dust_init_pos = SetAttributeModifier::new(
+        Attribute::POSITION,
+        writer_dust.lit(Vec3::ZERO).expr()
+    );
+
+    // Velocity: 35° cone pointing up, 5-10 m/s
+    let dust_theta = writer_dust.rand(ScalarType::Float) * writer_dust.lit(std::f32::consts::TAU);
+    let dust_cone_angle = writer_dust.lit(35.0_f32.to_radians());
+    let dust_phi = writer_dust.rand(ScalarType::Float) * dust_cone_angle; // 0-35° from vertical
+    let dust_sin_phi = dust_phi.clone().sin();
+    let dust_cos_phi = dust_phi.cos();
+    let dust_cos_theta = dust_theta.clone().cos();
+    let dust_sin_theta = dust_theta.sin();
+    let dust_dir_x = dust_sin_phi.clone() * dust_cos_theta;
+    let dust_dir_y = dust_cos_phi;  // Mostly upward
+    let dust_dir_z = dust_sin_phi * dust_sin_theta;
+    let dust_dir = dust_dir_x.vec3(dust_dir_y, dust_dir_z);
+    let dust_speed = writer_dust.lit(5.0) + writer_dust.rand(ScalarType::Float) * writer_dust.lit(5.0); // 5-10 m/s
+    let dust_velocity = dust_dir * dust_speed;
+    let dust_init_vel = SetAttributeModifier::new(Attribute::VELOCITY, dust_velocity.expr());
+
+    let dust_init_age = SetAttributeModifier::new(Attribute::AGE, writer_dust.lit(0.0).expr());
+    // Lifetime: 0.1-0.5s
+    let dust_init_lifetime = SetAttributeModifier::new(
+        Attribute::LIFETIME,
+        (writer_dust.lit(0.1) + writer_dust.rand(ScalarType::Float) * writer_dust.lit(0.4)).expr()
+    );
+
+    // Sprite index: random fixed frame 0-3 (4 frames in 4×1 grid)
+    // Cast rand float to int: floor(rand * 4)
+    let dust_random_frame = (writer_dust.rand(ScalarType::Float) * writer_dust.lit(4.0)).cast(ScalarType::Int);
+    let dust_init_sprite = SetAttributeModifier::new(Attribute::SPRITE_INDEX, dust_random_frame.expr());
+
+    let dust_texture_slot = writer_dust.lit(0u32).expr();
+    let mut dust_module = writer_dust.finish();
+    dust_module.add_texture_slot("dust_texture");
+
+    let ground_dust_effect = effects.add(
+        EffectAsset::new(8, SpawnerSettings::once(3.0.into()), dust_module)
+            .with_name("ground_explosion_dust_ring")
+            .with_alpha_mode(bevy_hanabi::AlphaMode::Blend)
+            .init(dust_init_pos)
+            .init(dust_init_vel)
+            .init(dust_init_age)
+            .init(dust_init_lifetime)
+            .init(dust_init_sprite)
+            .render(OrientModifier::new(OrientMode::AlongVelocity))  // Velocity aligned
+            .render(ParticleTextureModifier {
+                texture_slot: dust_texture_slot,
+                sample_mapping: ImageSampleMapping::Modulate,
+            })
+            .render(FlipbookModifier { sprite_grid_size: UVec2::new(4, 1) })
+            .render(ColorOverLifetimeModifier::new(dust_color_gradient))
+            .render(SizeOverLifetimeModifier { gradient: dust_size_gradient, screen_space_size: false })
+    );
+
     commands.insert_resource(ExplosionParticleEffects {
         debris_effect: debris_effect.clone(),
         sparks_effect: sparks_effect.clone(),
@@ -1159,6 +1254,8 @@ fn setup_particle_effects(
         ground_fireball_texture: ground_fireball_texture.clone(),
         ground_fireball_secondary_texture: ground_fireball_secondary_texture.clone(),
         debug_fireball_effect: debug_fireball_effect.clone(),
+        ground_dust_effect: ground_dust_effect.clone(),
+        ground_dust_texture: ground_dust_texture.clone(),
     });
 
     // Warmup: Spawn particles far below the map to prime the GPU pipeline
@@ -1248,6 +1345,17 @@ fn setup_particle_effects(
         Visibility::Visible,
         ParticleEffectLifetime { spawn_time: 0.0, duration: 0.5 },
         Name::new("WarmupGroundFireball"),
+    ));
+    // Warmup for ground explosion GPU dust ring
+    commands.spawn((
+        ParticleEffect::new(ground_dust_effect),
+        EffectMaterial {
+            images: vec![ground_dust_texture],
+        },
+        Transform::from_translation(warmup_pos).with_scale(Vec3::splat(0.001)),
+        Visibility::Visible,
+        ParticleEffectLifetime { spawn_time: 0.0, duration: 0.5 },
+        Name::new("WarmupGroundDust"),
     ));
 
     info!("✅ Particle effects ready (with warmup)");
@@ -1683,5 +1791,36 @@ pub fn spawn_ground_explosion_gpu_fireballs(
             duration: 2.0, // 1.5s particles + buffer
         },
         Name::new("GE_GPU_Fireball"),
+    ));
+}
+
+/// Spawn GPU dust ring effect (replaces CPU dust_ring - 2-3 entities → 1 GPU effect)
+/// Short-lived dust particles that shoot upward in a cone, velocity-aligned
+pub fn spawn_ground_explosion_gpu_dust(
+    commands: &mut Commands,
+    particle_effects: &ExplosionParticleEffects,
+    position: Vec3,
+    scale: f32,
+    current_time: f64,
+) {
+    // Generate unique seed from current time
+    let seed = (current_time * 1000000.0) as u32;
+
+    // GPU Dust Ring (replaces CPU dust_ring - 2-3 entities → 1 GPU effect)
+    commands.spawn((
+        ParticleEffect {
+            handle: particle_effects.ground_dust_effect.clone(),
+            prng_seed: Some(seed.wrapping_add(444444)),
+        },
+        EffectMaterial {
+            images: vec![particle_effects.ground_dust_texture.clone()],
+        },
+        Transform::from_translation(position).with_scale(Vec3::splat(scale)),
+        Visibility::Visible,
+        ParticleEffectLifetime {
+            spawn_time: current_time,
+            duration: 1.0, // 0.1-0.5s particles + buffer
+        },
+        Name::new("GE_GPU_Dust"),
     ));
 }

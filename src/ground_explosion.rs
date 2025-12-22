@@ -11,7 +11,7 @@ use bevy_hanabi::{ParticleEffect, EffectMaterial};
 use rand::Rng;
 
 use crate::wfx_materials::AdditiveMaterial;
-use crate::particles::{ExplosionParticleEffects, spawn_ground_explosion_gpu_sparks, spawn_ground_explosion_gpu_dirt, spawn_ground_explosion_gpu_fireballs};
+use crate::particles::{ExplosionParticleEffects, spawn_ground_explosion_gpu_sparks, spawn_ground_explosion_gpu_dirt, spawn_ground_explosion_gpu_fireballs, spawn_ground_explosion_gpu_dust};
 
 // ===== HELPER FUNCTIONS =====
 
@@ -2817,7 +2817,7 @@ pub fn ground_explosion_debug_menu_system(
         Some((EmitterType::Dirt, "dirt"))
     } else if keyboard_input.just_pressed(KeyCode::Digit4) && !shift_held {
         Some((EmitterType::VelocityDirt, "dirt001"))
-    } else if keyboard_input.just_pressed(KeyCode::Digit5) {
+    } else if keyboard_input.just_pressed(KeyCode::Digit5) && !shift_held {
         Some((EmitterType::Dust, "dust"))
     } else if keyboard_input.just_pressed(KeyCode::Digit6) {
         Some((EmitterType::Wisp, "wisp"))
@@ -2891,6 +2891,31 @@ pub fn ground_explosion_debug_menu_system(
                 Name::new("GE_GPU_VDirt_Debug"),
             ));
             info!("[P] Spawned: dirt001 (GPU)");
+        }
+    }
+
+    // 5: dust (CPU) or Shift+5: dust (GPU)
+    if keyboard_input.just_pressed(KeyCode::Digit5) && shift_held {
+        if let Some(effects) = gpu_effects.as_ref() {
+            let current_time = time.elapsed_secs_f64();
+            let seed = (current_time * 1000000.0) as u32;
+            commands.spawn((
+                ParticleEffect {
+                    handle: effects.ground_dust_effect.clone(),
+                    prng_seed: Some(seed),
+                },
+                EffectMaterial {
+                    images: vec![effects.ground_dust_texture.clone()],
+                },
+                Transform::from_translation(position).with_scale(Vec3::splat(scale)),
+                Visibility::Visible,
+                crate::particles::ParticleEffectLifetime {
+                    spawn_time: current_time,
+                    duration: 1.0,
+                },
+                Name::new("GE_GPU_Dust_Debug"),
+            ));
+            info!("[P] Spawned: dust (GPU)");
         }
     }
 
@@ -3060,28 +3085,30 @@ pub fn ground_explosion_debug_menu_system(
         }
     }
 
-    // J: Emitter group 1-6 (main, main001, dirt, dirt001, dust, wisp)
+    // J: GPU explosion + impact flash (no smoke/wisp)
     if keyboard_input.just_pressed(KeyCode::KeyJ) {
-        for emitter_type in [
-            EmitterType::MainFireball,
-            EmitterType::SecondaryFireball,
-            EmitterType::Dirt,
-            EmitterType::VelocityDirt,
-            EmitterType::Dust,
-            EmitterType::Wisp,
-        ] {
-            spawn_single_emitter(
-                &mut commands,
-                &assets,
-                &mut flipbook_materials,
-                &mut additive_materials,
-                emitter_type,
-                position,
-                scale,
-                camera_transform,
-            );
+        if let Some(effects) = gpu_effects.as_ref() {
+            let current_time = time.elapsed_secs_f64();
+
+            // GPU particles (sparks, flash sparks, parts debris)
+            spawn_ground_explosion_gpu_sparks(&mut commands, effects, position, scale, current_time);
+
+            // GPU dirt emitters (replaces CPU dirt_debris + velocity_dirt)
+            spawn_ground_explosion_gpu_dirt(&mut commands, effects, position, scale, current_time);
+
+            // GPU fireballs (replaces CPU main + secondary fireball)
+            spawn_ground_explosion_gpu_fireballs(&mut commands, effects, position, scale, current_time);
+
+            // GPU dust ring (replaces CPU dust_ring)
+            spawn_ground_explosion_gpu_dust(&mut commands, effects, position, scale, current_time);
+
+            // CPU impact flash (point light + glow circle)
+            spawn_impact_flash(&mut commands, &assets, &mut flipbook_materials, &mut additive_materials, position, scale, 0.1);
+
+            info!("[P] Spawned: GPU explosion + impact (no smoke/wisp)");
+        } else {
+            info!("[P] GPU effects not available!");
         }
-        info!("[P] Spawned: group 1-6 (main, main001, dirt, dirt001, dust, wisp)");
     }
 
     // K: Full explosion (all emitters)
@@ -3179,7 +3206,7 @@ pub fn ground_explosion_debug_menu_system(
 /// Spawn the debug menu UI (hidden by default)
 pub fn setup_ground_explosion_debug_ui(mut commands: Commands) {
     commands.spawn((
-        Text::new("GROUND EXPLOSION [P]\n─────────────────────\n1: main    2: main001\n3: dirt    4: dirt001\n5: dust    6: wisp\n7: smoke   8: spark\n9: spark_l 0: parts\n─────────────────────\nShift+3/4/8/9/0: GPU\nJ: group 1-6\nK: full explosion\nL: GPU-only (ablation)\nShift+L: GPU barrage\nX: debug velocity\nP: close"),
+        Text::new("GROUND EXPLOSION [P]\n─────────────────────\n1: main    2: main001\n3: dirt    4: dirt001\n5: dust    6: wisp\n7: smoke   8: spark\n9: spark_l 0: parts\n─────────────────────\nShift+3/4/5/8/9/0:GPU\nJ: GPU+dust+impact\nK: full explosion\nL: ablation test\nShift+L: GPU barrage\nX: debug velocity\nP: close"),
         TextFont {
             font_size: 16.0,
             ..default()
