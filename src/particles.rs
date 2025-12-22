@@ -997,11 +997,11 @@ fn setup_particle_effects(
 
     let writer_fireball = ExprWriter::new();
 
-    // Position: hemisphere (Y >= 0) surface, radius 0.5
+    // Position: hemisphere (Y >= 0) surface, radius 5.0 (10m diameter)
     let rx = writer_fireball.rand(ScalarType::Float) * writer_fireball.lit(2.0) - writer_fireball.lit(1.0);
     let ry = writer_fireball.rand(ScalarType::Float); // [0,1] for Y >= 0
     let rz = writer_fireball.rand(ScalarType::Float) * writer_fireball.lit(2.0) - writer_fireball.lit(1.0);
-    let fb_pos = rx.vec3(ry, rz).normalized() * writer_fireball.lit(0.5);
+    let fb_pos = rx.vec3(ry, rz).normalized() * writer_fireball.lit(5.0);
     let fireball_init_pos = SetAttributeModifier::new(Attribute::POSITION, fb_pos.expr());
 
     // Velocity: outward from spawn position (this worked before for debug sprites)
