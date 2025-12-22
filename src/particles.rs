@@ -8,9 +8,102 @@ pub struct ParticleEffectsPlugin;
 impl Plugin for ParticleEffectsPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(HanabiPlugin)
-            .add_systems(Startup, setup_particle_effects)
+            .add_systems(Startup, (setup_particle_effects, debug_orientation_math))
             .add_systems(Update, (cleanup_finished_particle_effects, debug_hanabi_entities));
     }
+}
+
+/// Debug system to verify orientation math by computing values for test velocities
+fn debug_orientation_math() {
+    info!("═══════════════════════════════════════════════════════════════");
+    info!("  GPU ORIENTATION MATH DEBUG");
+    info!("═══════════════════════════════════════════════════════════════");
+
+    // Test velocities - opposite directions
+    let test_velocities = [
+        Vec3::new(1.0, 0.0, 0.0),   // +X
+        Vec3::new(-1.0, 0.0, 0.0),  // -X
+        Vec3::new(0.0, 1.0, 0.0),   // +Y
+        Vec3::new(0.0, -1.0, 0.0),  // -Y
+        Vec3::new(0.7, 0.7, 0.0),   // +X+Y diagonal
+        Vec3::new(-0.7, 0.7, 0.0),  // -X+Y diagonal
+    ];
+
+    // Simulate camera at origin looking down -Z
+    let camera_pos = Vec3::new(0.0, 5.0, 10.0);
+    let particle_pos = Vec3::ZERO;
+
+    info!("Camera position: {:?}", camera_pos);
+    info!("Particle position: {:?}", particle_pos);
+    info!("");
+
+    // Test 1: Original X=velocity (bevy_hanabi AlongVelocity)
+    info!("--- ORIGINAL X=velocity (no mirroring expected) ---");
+    for vel in &test_velocities {
+        let velocity = vel.normalize();
+        let dir = (particle_pos - camera_pos).normalize(); // dir away from camera
+
+        let axis_x = velocity;
+        let axis_y = dir.cross(axis_x);
+        let axis_z = axis_x.cross(axis_y);
+
+        info!("vel={:+.2?} → axis_x={:+.3?}, axis_y={:+.3?}, axis_z={:+.3?}",
+              velocity, axis_x, axis_y, axis_z);
+    }
+    info!("");
+
+    // Test 2: Quaternion rotation from (0,1,0) to velocity
+    info!("--- QUATERNION Y→velocity (mirroring expected) ---");
+    for vel in &test_velocities {
+        let velocity = vel.normalize();
+        let from = Vec3::Y;
+
+        // Half-angle quaternion formula
+        let d = from.dot(velocity);
+        let c = from.cross(velocity);
+
+        let quat = if d < -0.999 {
+            // Anti-parallel case
+            Quat::from_xyzw(1.0, 0.0, 0.0, 0.0)
+        } else {
+            Quat::from_xyzw(c.x, c.y, c.z, 1.0 + d).normalize()
+        };
+
+        // Apply quaternion to default basis
+        let axis_x = quat * Vec3::X;
+        let axis_y = quat * Vec3::Y;
+        let axis_z = quat * Vec3::Z;
+
+        info!("vel={:+.2?} → axis_x={:+.3?}, axis_y={:+.3?}, axis_z={:+.3?}",
+              velocity, axis_x, axis_y, axis_z);
+    }
+    info!("");
+
+    // Test 3: X=velocity with -90° rotation (should give Y=velocity)
+    info!("--- X=velocity + (-90° rotation) ---");
+    for vel in &test_velocities {
+        let velocity = vel.normalize();
+        let dir = (particle_pos - camera_pos).normalize();
+
+        // Original X=velocity
+        let axis_x0 = velocity;
+        let axis_y0 = dir.cross(axis_x0);
+        let axis_z0 = axis_x0.cross(axis_y0);
+
+        // Apply -90° rotation in X-Y plane
+        let rot = -std::f32::consts::FRAC_PI_2;
+        let cos_rot = rot.cos();
+        let sin_rot = rot.sin();
+
+        let axis_x = axis_x0 * cos_rot + axis_y0 * sin_rot;
+        let axis_y = axis_y0 * cos_rot - axis_x0 * sin_rot;
+        let axis_z = axis_z0;
+
+        info!("vel={:+.2?} → axis_x={:+.3?}, axis_y={:+.3?}, axis_z={:+.3?}",
+              velocity, axis_x, axis_y, axis_z);
+    }
+
+    info!("═══════════════════════════════════════════════════════════════");
 }
 
 // Component to mark particle effects for despawn after a fixed duration
@@ -47,6 +140,8 @@ pub struct ExplosionParticleEffects {
     pub ground_fireball_effect: Handle<EffectAsset>,
     pub ground_fireball_texture: Handle<Image>,
     pub ground_fireball_secondary_texture: Handle<Image>,
+    // Debug: simple colored quads to visualize velocity direction
+    pub debug_fireball_effect: Handle<EffectAsset>,
 }
 
 fn setup_particle_effects(
@@ -880,6 +975,7 @@ fn setup_particle_effects(
     //   Orientation: VelocityAligned with bottom pivot
     //   Color: orange HSV variation (hue 0.08 ± 0.1)
     //   Alpha: S-curve fade
+    // Original texture with code rotation
     let ground_fireball_texture: Handle<Image> = asset_server.load("textures/premium/ground_explosion/main_9x9.png");
     let ground_fireball_secondary_texture: Handle<Image> = asset_server.load("textures/premium/ground_explosion/secondary_8x8.png");
 
@@ -894,41 +990,30 @@ fn setup_particle_effects(
     fireball_color_gradient.add_key(0.8, Vec4::new(0.7, 0.25, 0.1, 0.14));
     fireball_color_gradient.add_key(1.0, Vec4::new(0.5, 0.2, 0.1, 0.0));   // Fade out
 
-    // Size gradient - linear scaling 8m to 20m
+    // Size gradient: CPU uses 8-20m range
     let mut fireball_size_gradient = bevy_hanabi::Gradient::new();
     fireball_size_gradient.add_key(0.0, Vec3::splat(8.0));
     fireball_size_gradient.add_key(1.0, Vec3::splat(20.0));
 
     let writer_fireball = ExprWriter::new();
 
-    // Spawn within small sphere (CPU: 0.5m radius)
-    let fireball_init_pos = SetPositionSphereModifier {
-        center: writer_fireball.lit(Vec3::ZERO).expr(),
-        radius: writer_fireball.lit(0.5).expr(),
-        dimension: ShapeDimension::Volume,
-    };
+    // Position: hemisphere (Y >= 0) surface, radius 0.5
+    let rx = writer_fireball.rand(ScalarType::Float) * writer_fireball.lit(2.0) - writer_fireball.lit(1.0);
+    let ry = writer_fireball.rand(ScalarType::Float); // [0,1] for Y >= 0
+    let rz = writer_fireball.rand(ScalarType::Float) * writer_fireball.lit(2.0) - writer_fireball.lit(1.0);
+    let fb_pos = rx.vec3(ry, rz).normalized() * writer_fireball.lit(0.5);
+    let fireball_init_pos = SetAttributeModifier::new(Attribute::POSITION, fb_pos.expr());
 
-    // 90° hemisphere cone velocity, speed 3-5 m/s
-    let fb_theta = writer_fireball.rand(ScalarType::Float) * writer_fireball.lit(std::f32::consts::TAU);
-    let fb_phi = writer_fireball.rand(ScalarType::Float) * writer_fireball.lit(std::f32::consts::FRAC_PI_2);
-    let fb_sin_phi = fb_phi.clone().sin();
-    let fb_cos_phi = fb_phi.cos();
-    let fb_cos_theta = fb_theta.clone().cos();
-    let fb_sin_theta = fb_theta.sin();
-    let fb_dir_x = fb_sin_phi.clone() * fb_cos_theta;
-    let fb_dir_y = fb_cos_phi;
-    let fb_dir_z = fb_sin_phi * fb_sin_theta;
-    let fb_dir = fb_dir_x.vec3(fb_dir_y, fb_dir_z);
-    // CPU uses bottom pivot - size growth adds to velocity for top edge motion
-    // CPU: 4 m/s velocity + 7 m/s (half size growth from bottom pivot) = 11 m/s apparent top edge
-    // GPU uses center pivot for size - need higher velocity to compensate
-    // Target: 10-14 m/s to match CPU's apparent scatter speed
-    let fb_speed = writer_fireball.lit(10.0) + writer_fireball.rand(ScalarType::Float) * writer_fireball.lit(4.0); // 10-14 m/s
-    let fb_velocity = fb_dir * fb_speed;
+    // Velocity: outward from spawn position (this worked before for debug sprites)
+    // velocity = normalize(position) * speed
+    let fb_pos_read = writer_fireball.attr(Attribute::POSITION);
+    let fb_outward_dir = fb_pos_read.normalized();
+    let fb_speed = writer_fireball.lit(3.0) + writer_fireball.rand(ScalarType::Float) * writer_fireball.lit(2.0);
+    let fb_velocity = fb_outward_dir * fb_speed;
     let fireball_init_vel = SetAttributeModifier::new(Attribute::VELOCITY, fb_velocity.expr());
 
     let fireball_init_age = SetAttributeModifier::new(Attribute::AGE, writer_fireball.lit(0.0).expr());
-    // Lifetime: 1.5s (matching CPU)
+    // Lifetime 1.5s (matches CPU)
     let fireball_init_lifetime = SetAttributeModifier::new(
         Attribute::LIFETIME,
         writer_fireball.lit(1.5).expr()
@@ -945,8 +1030,8 @@ fn setup_particle_effects(
     let fireball_init_sprite = SetAttributeModifier::new(Attribute::SPRITE_INDEX, fb_frame.expr());
 
     let fireball_texture_slot = writer_fireball.lit(0u32).expr();
-    // Fixed 90° rotation to align Y along velocity (matching CPU VelocityAligned)
-    let fireball_rotation = writer_fireball.lit(std::f32::consts::FRAC_PI_2).expr();
+    // -90° rotation to align Y along velocity
+    let fireball_rotation = writer_fireball.lit(-std::f32::consts::FRAC_PI_2).expr();
     // Per-particle random axis rotation (spin around velocity axis, 0 to TAU)
     // CPU: rotation_angle = rng.gen_range(0.0..TAU), applied as Quat::from_rotation_y
     let fb_random_spin = writer_fireball.rand(ScalarType::Float) * writer_fireball.lit(std::f32::consts::TAU);
@@ -955,7 +1040,7 @@ fn setup_particle_effects(
     let mut fireball_module = writer_fireball.finish();
     fireball_module.add_texture_slot("fireball_texture");
 
-    // Use AlongVelocity with 90° rotation for Y-along-velocity, plus random spin around velocity
+    // TEST: Simplified version - no OrientModifier, no UV scaling
     // SimulationSpace::Local makes transform scale apply to particle positions and velocities
     let ground_fireball_effect = effects.add(
         EffectAsset::new(64, SpawnerSettings::once(25.0.into()), fireball_module)
@@ -966,8 +1051,8 @@ fn setup_particle_effects(
             .init(fireball_init_vel)
             .init(fireball_init_age)
             .init(fireball_init_lifetime)
-            .init(fireball_init_spin)  // Random spin per particle
-            .update(fireball_init_sprite)  // Update sprite index each frame
+            .init(fireball_init_spin)
+            .update(fireball_init_sprite)
             .render(OrientModifier::new(OrientMode::AlongVelocity)
                 .with_rotation(fireball_rotation)
                 .with_axis_rotation(fireball_axis_rotation))
@@ -981,20 +1066,72 @@ fn setup_particle_effects(
             .render(UVScaleOverLifetimeModifier {
                 gradient: {
                     let mut g = bevy_hanabi::Gradient::new();
-                    g.add_key(0.0, Vec2::splat(500.0));  // Very zoomed in at start
-                    g.add_key(0.2, Vec2::splat(466.0));  // Smoothstep curve approximation
+                    g.add_key(0.0, Vec2::splat(500.0));
+                    g.add_key(0.2, Vec2::splat(466.0));
                     g.add_key(0.4, Vec2::splat(350.0));
                     g.add_key(0.6, Vec2::splat(224.0));
                     g.add_key(0.8, Vec2::splat(100.0));
-                    g.add_key(1.0, Vec2::splat(1.0));    // Normal scale at end
+                    g.add_key(1.0, Vec2::splat(1.0));
                     g
                 },
-                // Bottom pivot: UV zoom expands upward along velocity axis
-                // With OrientMode::AlongVelocity + 90° rotation, Y axis is along velocity
-                // UV V=1.0 is at the bottom of the quad, so pivot there for upward expansion
-                pivot: Vec2::new(0.5, 1.0),
             })
-            // PivotModifier disabled - causes visual issues
+    );
+
+    // ========== DEBUG FIREBALL EFFECT ==========
+    // Simple colored quads to visualize velocity direction
+    // Small particles, no texture, color shows velocity direction
+    let writer_debug = ExprWriter::new();
+
+    // Position: hemisphere (Y >= 0) surface, radius 2.5 (5m diameter)
+    let dbg_rx = writer_debug.rand(ScalarType::Float) * writer_debug.lit(2.0) - writer_debug.lit(1.0);
+    let dbg_ry = writer_debug.rand(ScalarType::Float); // [0,1] for Y >= 0
+    let dbg_rz = writer_debug.rand(ScalarType::Float) * writer_debug.lit(2.0) - writer_debug.lit(1.0);
+    let dbg_pos = dbg_rx.vec3(dbg_ry, dbg_rz).normalized() * writer_debug.lit(2.5);
+    let debug_init_pos = SetAttributeModifier::new(Attribute::POSITION, dbg_pos.expr());
+
+    // Velocity: outward from spawn position
+    let dbg_pos_read = writer_debug.attr(Attribute::POSITION);
+    let dbg_outward_dir = dbg_pos_read.normalized();
+    let dbg_speed = writer_debug.lit(5.0);
+    let dbg_velocity = dbg_outward_dir * dbg_speed;
+    let debug_init_vel = SetAttributeModifier::new(Attribute::VELOCITY, dbg_velocity.expr());
+
+    let debug_init_age = SetAttributeModifier::new(Attribute::AGE, writer_debug.lit(0.0).expr());
+    let debug_init_lifetime = SetAttributeModifier::new(Attribute::LIFETIME, writer_debug.lit(3.0).expr());
+
+    // Color based on velocity direction (R=+X, G=+Y, B=+Z)
+    let dbg_vel_read = writer_debug.attr(Attribute::VELOCITY).normalized();
+    let dbg_vel_x = dbg_vel_read.clone().x();
+    let dbg_vel_y = dbg_vel_read.clone().y();
+    let dbg_vel_z = dbg_vel_read.z();
+    // Map [-1,1] to [0,1] for color
+    let dbg_r = (dbg_vel_x + writer_debug.lit(1.0)) * writer_debug.lit(0.5);
+    let dbg_g = (dbg_vel_y + writer_debug.lit(1.0)) * writer_debug.lit(0.5);
+    let dbg_b = (dbg_vel_z + writer_debug.lit(1.0)) * writer_debug.lit(0.5);
+    let dbg_rgb = dbg_r.vec3(dbg_g, dbg_b);
+    let dbg_color = dbg_rgb.vec4_xyz_w(writer_debug.lit(1.0)).pack4x8unorm();
+    let debug_init_color = SetAttributeModifier::new(Attribute::COLOR, dbg_color.expr());
+
+    let debug_module = writer_debug.finish();
+
+    let debug_fireball_effect = effects.add(
+        EffectAsset::new(100, SpawnerSettings::once(50.0.into()), debug_module)
+            .with_name("debug_fireball")
+            .with_simulation_space(SimulationSpace::Local)
+            .init(debug_init_pos)
+            .init(debug_init_vel)
+            .init(debug_init_age)
+            .init(debug_init_lifetime)
+            .init(debug_init_color)
+            .render(SizeOverLifetimeModifier {
+                gradient: {
+                    let mut g = bevy_hanabi::Gradient::new();
+                    g.add_key(0.0, Vec3::splat(0.3));  // Small 0.3m particles
+                    g.add_key(1.0, Vec3::splat(0.3));
+                    g
+                },
+                screen_space_size: false,
+            })
     );
 
     commands.insert_resource(ExplosionParticleEffects {
@@ -1015,6 +1152,7 @@ fn setup_particle_effects(
         ground_fireball_effect: ground_fireball_effect.clone(),
         ground_fireball_texture: ground_fireball_texture.clone(),
         ground_fireball_secondary_texture: ground_fireball_secondary_texture.clone(),
+        debug_fireball_effect: debug_fireball_effect.clone(),
     });
 
     // Warmup: Spawn particles far below the map to prime the GPU pipeline

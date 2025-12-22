@@ -3151,12 +3151,35 @@ pub fn ground_explosion_debug_menu_system(
             info!("[P] ABLATION: GPU effects not available");
         }
     }
+
+    // X: Debug GPU fireball (velocity colors, no texture, small quads)
+    if keyboard_input.just_pressed(KeyCode::KeyX) {
+        if let Some(effects) = gpu_effects.as_ref() {
+            let current_time = time.elapsed_secs_f64();
+            let seed = (current_time * 1000000.0) as u32;
+            commands.spawn((
+                ParticleEffect {
+                    handle: effects.debug_fireball_effect.clone(),
+                    prng_seed: Some(seed),
+                },
+                // No EffectMaterial - uses vertex colors only
+                Transform::from_translation(position),  // No scale - use raw 5m hemisphere
+                Visibility::Visible,
+                crate::particles::ParticleEffectLifetime {
+                    spawn_time: current_time,
+                    duration: 6.0,
+                },
+                Name::new("GE_GPU_Debug_Fireball"),
+            ));
+            info!("[P] DEBUG: velocity-colored fireball (5m hemisphere, 0.3m quads)");
+        }
+    }
 }
 
 /// Spawn the debug menu UI (hidden by default)
 pub fn setup_ground_explosion_debug_ui(mut commands: Commands) {
     commands.spawn((
-        Text::new("GROUND EXPLOSION [P]\n─────────────────────\n1: main    2: main001\n3: dirt    4: dirt001\n5: dust    6: wisp\n7: smoke   8: spark\n9: spark_l 0: parts\n─────────────────────\nShift+3/4/8/9/0: GPU\nJ: group 1-6\nK: full explosion\nL: GPU-only (ablation)\nShift+L: GPU barrage\nP: close"),
+        Text::new("GROUND EXPLOSION [P]\n─────────────────────\n1: main    2: main001\n3: dirt    4: dirt001\n5: dust    6: wisp\n7: smoke   8: spark\n9: spark_l 0: parts\n─────────────────────\nShift+3/4/8/9/0: GPU\nJ: group 1-6\nK: full explosion\nL: GPU-only (ablation)\nShift+L: GPU barrage\nX: debug velocity\nP: close"),
         TextFont {
             font_size: 16.0,
             ..default()
