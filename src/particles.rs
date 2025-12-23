@@ -145,6 +145,12 @@ pub struct ExplosionParticleEffects {
     // Ground explosion GPU dust ring (replaces CPU dust entities)
     pub ground_dust_effect: Handle<EffectAsset>,
     pub ground_dust_texture: Handle<Image>,
+    // Ground explosion GPU smoke cloud (replaces CPU smoke entities)
+    pub ground_smoke_effect: Handle<EffectAsset>,
+    pub ground_smoke_texture: Handle<Image>,
+    // Ground explosion GPU wisp puffs (replaces CPU wisp entities)
+    pub ground_wisp_effect: Handle<EffectAsset>,
+    pub ground_wisp_texture: Handle<Image>,
 }
 
 fn setup_particle_effects(
@@ -157,6 +163,8 @@ fn setup_particle_effects(
     // Load flare texture for ground explosion sparks
     let ground_sparks_texture: Handle<Image> = asset_server.load("textures/premium/ground_explosion/flare.png");
     let ground_dust_texture: Handle<Image> = asset_server.load("textures/premium/ground_explosion/dust_4x1.png");
+    let ground_smoke_texture: Handle<Image> = asset_server.load("textures/premium/ground_explosion/smoke_8x8.png");
+    let ground_wisp_texture: Handle<Image> = asset_server.load("textures/premium/ground_explosion/wisp_8x8.png");
 
     // === DEBRIS PARTICLES ===
     // Physical debris chunks that fly outward
@@ -1235,6 +1243,158 @@ fn setup_particle_effects(
             .render(SizeOverLifetimeModifier { gradient: dust_size_gradient, screen_space_size: false })
     );
 
+    // === GROUND EXPLOSION GPU SMOKE CLOUD ===
+    // Replaces CPU smoke entities (10-15 per explosion) with single GPU effect
+    // CPU behavior (from spawn_smoke_cloud):
+    //   Count: 10-15 particles
+    //   Size: 0.5-1.0m base, grows 3× over lifetime
+    //   Velocity: screen-local spread ±12m/s on XY (we use world XZ)
+    //   Lifetime: 0.8-2.5s
+    //   Color: grey (0.4, 0.4, 0.4), alpha 0.6→0 linear fade
+    //   Texture: 8×8 flipbook, 35 frames animated
+    //   Orientation: Camera facing
+    //   Drag: 2.0, slight upward acceleration
+
+    // Color: constant grey with alpha fade 0.6→0
+    let mut smoke_color_gradient = bevy_hanabi::Gradient::new();
+    smoke_color_gradient.add_key(0.0, Vec4::new(0.4, 0.4, 0.4, 0.6));
+    smoke_color_gradient.add_key(0.5, Vec4::new(0.4, 0.4, 0.4, 0.4));
+    smoke_color_gradient.add_key(1.0, Vec4::new(0.4, 0.4, 0.4, 0.0));
+
+    // Size: grow from base (0.5-1.0m → avg 0.75m) to 3× over lifetime
+    let mut smoke_size_gradient = bevy_hanabi::Gradient::new();
+    smoke_size_gradient.add_key(0.0, Vec3::splat(0.75));   // Starting size
+    smoke_size_gradient.add_key(1.0, Vec3::splat(2.25));   // 3× at end
+
+    let writer_smoke = ExprWriter::new();
+
+    // Position: spawn at origin with slight Y offset
+    let smoke_init_pos = SetAttributeModifier::new(
+        Attribute::POSITION,
+        writer_smoke.lit(Vec3::new(0.0, 0.1, 0.0)).expr()
+    );
+
+    // Velocity: spread on XZ plane (world-space equivalent of screen-local)
+    // ±12 m/s horizontal, minimal Y
+    let smoke_vel_x = (writer_smoke.rand(ScalarType::Float) * writer_smoke.lit(24.0)) - writer_smoke.lit(12.0);
+    let smoke_vel_y = writer_smoke.rand(ScalarType::Float) * writer_smoke.lit(2.0);  // Slight upward
+    let smoke_vel_z = (writer_smoke.rand(ScalarType::Float) * writer_smoke.lit(24.0)) - writer_smoke.lit(12.0);
+    let smoke_velocity = smoke_vel_x.vec3(smoke_vel_y, smoke_vel_z);
+    let smoke_init_vel = SetAttributeModifier::new(Attribute::VELOCITY, smoke_velocity.expr());
+
+    let smoke_init_age = SetAttributeModifier::new(Attribute::AGE, writer_smoke.lit(0.0).expr());
+    // Lifetime: 0.8-2.5s
+    let smoke_init_lifetime = SetAttributeModifier::new(
+        Attribute::LIFETIME,
+        (writer_smoke.lit(0.8) + writer_smoke.rand(ScalarType::Float) * writer_smoke.lit(1.7)).expr()
+    );
+
+    // Drag and upward acceleration (UE5: drag 2.0, accel Y=0.5)
+    let smoke_drag = LinearDragModifier::new(writer_smoke.lit(2.0).expr());
+    let smoke_accel = AccelModifier::new(writer_smoke.lit(Vec3::new(0.0, 0.5, 0.0)).expr());
+
+    let smoke_texture_slot = writer_smoke.lit(0u32).expr();
+    let mut smoke_module = writer_smoke.finish();
+    smoke_module.add_texture_slot("smoke_texture");
+
+    let ground_smoke_effect = effects.add(
+        EffectAsset::new(32, SpawnerSettings::once(12.0.into()), smoke_module)
+            .with_name("ground_explosion_smoke")
+            .with_alpha_mode(bevy_hanabi::AlphaMode::Blend)
+            .init(smoke_init_pos)
+            .init(smoke_init_vel)
+            .init(smoke_init_age)
+            .init(smoke_init_lifetime)
+            .update(smoke_drag)
+            .update(smoke_accel)
+            .render(OrientModifier::new(OrientMode::FaceCameraPosition))  // Camera facing
+            .render(ParticleTextureModifier {
+                texture_slot: smoke_texture_slot,
+                sample_mapping: ImageSampleMapping::Modulate,
+            })
+            .render(FlipbookModifier { sprite_grid_size: UVec2::new(8, 8) })
+            .render(ColorOverLifetimeModifier::new(smoke_color_gradient))
+            .render(SizeOverLifetimeModifier { gradient: smoke_size_gradient, screen_space_size: false })
+    );
+
+    // === GROUND EXPLOSION GPU WISP PUFFS ===
+    // Replaces CPU wisp entities (3 per explosion) with single GPU effect
+    // CPU behavior (from spawn_wisps):
+    //   Count: 3 particles
+    //   Size: 0→5× scale over life, 0.8-1.8m base (×1.5 scale modifier)
+    //   Velocity: upward (3-6 m/s), horizontal spread (±1 m/s)
+    //   Gravity: 9.8 m/s²
+    //   Lifetime: 1.0-2.0s
+    //   Color: dark grey (0.15, 0.12, 0.10), alpha 3.0→0 fade
+    //   Texture: 8×8 flipbook, 64 frames animated
+    //   Orientation: Camera facing
+
+    // Color: dark grey with HDR alpha fade (3.0→0)
+    let mut wisp_color_gradient = bevy_hanabi::Gradient::new();
+    wisp_color_gradient.add_key(0.0, Vec4::new(0.15, 0.12, 0.10, 3.0));   // Start bright
+    wisp_color_gradient.add_key(0.1, Vec4::new(0.15, 0.12, 0.10, 2.7));   // Quick fade
+    wisp_color_gradient.add_key(0.5, Vec4::new(0.15, 0.12, 0.10, 1.5));
+    wisp_color_gradient.add_key(1.0, Vec4::new(0.15, 0.12, 0.10, 0.0));
+
+    // Size: 0→5× scale, base ~1.3m (midpoint of 0.8-1.8m × 1.5 = 1.2-2.7m)
+    // Use cubic ease-in for scale (t³)
+    let mut wisp_size_gradient = bevy_hanabi::Gradient::new();
+    wisp_size_gradient.add_key(0.0, Vec3::splat(0.0));     // Start at zero
+    wisp_size_gradient.add_key(0.2, Vec3::splat(0.16));    // 0.2³ × 10 = 0.08, ×2 = 0.16
+    wisp_size_gradient.add_key(0.4, Vec3::splat(1.28));    // 0.4³ × 10 = 0.64, ×2 = 1.28
+    wisp_size_gradient.add_key(0.6, Vec3::splat(4.32));    // 0.6³ × 10 = 2.16, ×2 = 4.32
+    wisp_size_gradient.add_key(0.8, Vec3::splat(10.24));   // 0.8³ × 10 = 5.12, ×2 = 10.24
+    wisp_size_gradient.add_key(1.0, Vec3::splat(10.0));    // 5× final (2m base × 5 = 10m)
+
+    let writer_wisp = ExprWriter::new();
+
+    // Position: spawn slightly above ground
+    let wisp_init_pos = SetAttributeModifier::new(
+        Attribute::POSITION,
+        writer_wisp.lit(Vec3::new(0.0, 0.5, 0.0)).expr()
+    );
+
+    // Velocity: gentle upward (3-6 m/s), slight horizontal spread (±1 m/s)
+    // Apply 1.5× scale modifier
+    let wisp_vel_x = (writer_wisp.rand(ScalarType::Float) * writer_wisp.lit(3.0)) - writer_wisp.lit(1.5);  // ±1.5
+    let wisp_vel_y = writer_wisp.lit(4.5) + writer_wisp.rand(ScalarType::Float) * writer_wisp.lit(4.5);    // 4.5-9 (3-6 × 1.5)
+    let wisp_vel_z = (writer_wisp.rand(ScalarType::Float) * writer_wisp.lit(3.0)) - writer_wisp.lit(1.5);  // ±1.5
+    let wisp_velocity = wisp_vel_x.vec3(wisp_vel_y, wisp_vel_z);
+    let wisp_init_vel = SetAttributeModifier::new(Attribute::VELOCITY, wisp_velocity.expr());
+
+    let wisp_init_age = SetAttributeModifier::new(Attribute::AGE, writer_wisp.lit(0.0).expr());
+    // Lifetime: 1.0-2.0s
+    let wisp_init_lifetime = SetAttributeModifier::new(
+        Attribute::LIFETIME,
+        (writer_wisp.lit(1.0) + writer_wisp.rand(ScalarType::Float) * writer_wisp.lit(1.0)).expr()
+    );
+
+    // Gravity: 9.8 m/s² downward
+    let wisp_gravity = AccelModifier::new(writer_wisp.lit(Vec3::new(0.0, -9.8, 0.0)).expr());
+
+    let wisp_texture_slot = writer_wisp.lit(0u32).expr();
+    let mut wisp_module = writer_wisp.finish();
+    wisp_module.add_texture_slot("wisp_texture");
+
+    let ground_wisp_effect = effects.add(
+        EffectAsset::new(8, SpawnerSettings::once(3.0.into()), wisp_module)
+            .with_name("ground_explosion_wisp")
+            .with_alpha_mode(bevy_hanabi::AlphaMode::Blend)
+            .init(wisp_init_pos)
+            .init(wisp_init_vel)
+            .init(wisp_init_age)
+            .init(wisp_init_lifetime)
+            .update(wisp_gravity)
+            .render(OrientModifier::new(OrientMode::FaceCameraPosition))  // Camera facing
+            .render(ParticleTextureModifier {
+                texture_slot: wisp_texture_slot,
+                sample_mapping: ImageSampleMapping::Modulate,
+            })
+            .render(FlipbookModifier { sprite_grid_size: UVec2::new(8, 8) })
+            .render(ColorOverLifetimeModifier::new(wisp_color_gradient))
+            .render(SizeOverLifetimeModifier { gradient: wisp_size_gradient, screen_space_size: false })
+    );
+
     commands.insert_resource(ExplosionParticleEffects {
         debris_effect: debris_effect.clone(),
         sparks_effect: sparks_effect.clone(),
@@ -1256,6 +1416,10 @@ fn setup_particle_effects(
         debug_fireball_effect: debug_fireball_effect.clone(),
         ground_dust_effect: ground_dust_effect.clone(),
         ground_dust_texture: ground_dust_texture.clone(),
+        ground_smoke_effect: ground_smoke_effect.clone(),
+        ground_smoke_texture: ground_smoke_texture.clone(),
+        ground_wisp_effect: ground_wisp_effect.clone(),
+        ground_wisp_texture: ground_wisp_texture.clone(),
     });
 
     // Warmup: Spawn particles far below the map to prime the GPU pipeline
@@ -1356,6 +1520,28 @@ fn setup_particle_effects(
         Visibility::Visible,
         ParticleEffectLifetime { spawn_time: 0.0, duration: 0.5 },
         Name::new("WarmupGroundDust"),
+    ));
+    // Warmup for ground explosion GPU smoke cloud
+    commands.spawn((
+        ParticleEffect::new(ground_smoke_effect),
+        EffectMaterial {
+            images: vec![ground_smoke_texture],
+        },
+        Transform::from_translation(warmup_pos).with_scale(Vec3::splat(0.001)),
+        Visibility::Visible,
+        ParticleEffectLifetime { spawn_time: 0.0, duration: 0.5 },
+        Name::new("WarmupGroundSmoke"),
+    ));
+    // Warmup for ground explosion GPU wisp puffs
+    commands.spawn((
+        ParticleEffect::new(ground_wisp_effect),
+        EffectMaterial {
+            images: vec![ground_wisp_texture],
+        },
+        Transform::from_translation(warmup_pos).with_scale(Vec3::splat(0.001)),
+        Visibility::Visible,
+        ParticleEffectLifetime { spawn_time: 0.0, duration: 0.5 },
+        Name::new("WarmupGroundWisp"),
     ));
 
     info!("✅ Particle effects ready (with warmup)");
@@ -1822,5 +2008,67 @@ pub fn spawn_ground_explosion_gpu_dust(
             duration: 1.0, // 0.1-0.5s particles + buffer
         },
         Name::new("GE_GPU_Dust"),
+    ));
+}
+
+/// Spawn GPU smoke cloud for ground explosion
+/// Replaces CPU smoke entities (10-15) with 1 GPU entity
+pub fn spawn_ground_explosion_gpu_smoke(
+    commands: &mut Commands,
+    particle_effects: &ExplosionParticleEffects,
+    position: Vec3,
+    scale: f32,
+    current_time: f64,
+) {
+    // Generate unique seed from current time
+    let seed = (current_time * 1000000.0) as u32;
+
+    // GPU Smoke Cloud (replaces CPU smoke_cloud - 10-15 entities → 1 GPU effect)
+    commands.spawn((
+        ParticleEffect {
+            handle: particle_effects.ground_smoke_effect.clone(),
+            prng_seed: Some(seed.wrapping_add(555555)),
+        },
+        EffectMaterial {
+            images: vec![particle_effects.ground_smoke_texture.clone()],
+        },
+        Transform::from_translation(position).with_scale(Vec3::splat(scale)),
+        Visibility::Visible,
+        ParticleEffectLifetime {
+            spawn_time: current_time,
+            duration: 4.0, // 0.8-2.5s particles + buffer
+        },
+        Name::new("GE_GPU_Smoke"),
+    ));
+}
+
+/// Spawn GPU wisp puffs for ground explosion
+/// Replaces CPU wisp entities (3) with 1 GPU entity
+pub fn spawn_ground_explosion_gpu_wisp(
+    commands: &mut Commands,
+    particle_effects: &ExplosionParticleEffects,
+    position: Vec3,
+    scale: f32,
+    current_time: f64,
+) {
+    // Generate unique seed from current time
+    let seed = (current_time * 1000000.0) as u32;
+
+    // GPU Wisp Puffs (replaces CPU wisps - 3 entities → 1 GPU effect)
+    commands.spawn((
+        ParticleEffect {
+            handle: particle_effects.ground_wisp_effect.clone(),
+            prng_seed: Some(seed.wrapping_add(666666)),
+        },
+        EffectMaterial {
+            images: vec![particle_effects.ground_wisp_texture.clone()],
+        },
+        Transform::from_translation(position).with_scale(Vec3::splat(scale)),
+        Visibility::Visible,
+        ParticleEffectLifetime {
+            spawn_time: current_time,
+            duration: 3.0, // 1.0-2.0s particles + buffer
+        },
+        Name::new("GE_GPU_Wisp"),
     ));
 }

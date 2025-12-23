@@ -11,7 +11,7 @@ use bevy_hanabi::{ParticleEffect, EffectMaterial};
 use rand::Rng;
 
 use crate::wfx_materials::AdditiveMaterial;
-use crate::particles::{ExplosionParticleEffects, spawn_ground_explosion_gpu_sparks, spawn_ground_explosion_gpu_dirt, spawn_ground_explosion_gpu_fireballs, spawn_ground_explosion_gpu_dust};
+use crate::particles::{ExplosionParticleEffects, spawn_ground_explosion_gpu_sparks, spawn_ground_explosion_gpu_dirt, spawn_ground_explosion_gpu_fireballs, spawn_ground_explosion_gpu_dust, spawn_ground_explosion_gpu_smoke, spawn_ground_explosion_gpu_wisp};
 
 // ===== HELPER FUNCTIONS =====
 
@@ -2819,9 +2819,9 @@ pub fn ground_explosion_debug_menu_system(
         Some((EmitterType::VelocityDirt, "dirt001"))
     } else if keyboard_input.just_pressed(KeyCode::Digit5) && !shift_held {
         Some((EmitterType::Dust, "dust"))
-    } else if keyboard_input.just_pressed(KeyCode::Digit6) {
+    } else if keyboard_input.just_pressed(KeyCode::Digit6) && !shift_held {
         Some((EmitterType::Wisp, "wisp"))
-    } else if keyboard_input.just_pressed(KeyCode::Digit7) {
+    } else if keyboard_input.just_pressed(KeyCode::Digit7) && !shift_held {
         Some((EmitterType::Smoke, "smoke"))
     } else if keyboard_input.just_pressed(KeyCode::Digit0) && !shift_held {
         // CPU parts (only when shift is NOT held)
@@ -2916,6 +2916,56 @@ pub fn ground_explosion_debug_menu_system(
                 Name::new("GE_GPU_Dust_Debug"),
             ));
             info!("[P] Spawned: dust (GPU)");
+        }
+    }
+
+    // 6: wisp (CPU) or Shift+6: wisp (GPU)
+    if keyboard_input.just_pressed(KeyCode::Digit6) && shift_held {
+        if let Some(effects) = gpu_effects.as_ref() {
+            let current_time = time.elapsed_secs_f64();
+            let seed = (current_time * 1000000.0) as u32;
+            commands.spawn((
+                ParticleEffect {
+                    handle: effects.ground_wisp_effect.clone(),
+                    prng_seed: Some(seed),
+                },
+                EffectMaterial {
+                    images: vec![effects.ground_wisp_texture.clone()],
+                },
+                Transform::from_translation(position).with_scale(Vec3::splat(scale)),
+                Visibility::Visible,
+                crate::particles::ParticleEffectLifetime {
+                    spawn_time: current_time,
+                    duration: 3.0,
+                },
+                Name::new("GE_GPU_Wisp_Debug"),
+            ));
+            info!("[P] Spawned: wisp (GPU)");
+        }
+    }
+
+    // 7: smoke (CPU) or Shift+7: smoke (GPU)
+    if keyboard_input.just_pressed(KeyCode::Digit7) && shift_held {
+        if let Some(effects) = gpu_effects.as_ref() {
+            let current_time = time.elapsed_secs_f64();
+            let seed = (current_time * 1000000.0) as u32;
+            commands.spawn((
+                ParticleEffect {
+                    handle: effects.ground_smoke_effect.clone(),
+                    prng_seed: Some(seed),
+                },
+                EffectMaterial {
+                    images: vec![effects.ground_smoke_texture.clone()],
+                },
+                Transform::from_translation(position).with_scale(Vec3::splat(scale)),
+                Visibility::Visible,
+                crate::particles::ParticleEffectLifetime {
+                    spawn_time: current_time,
+                    duration: 4.0,
+                },
+                Name::new("GE_GPU_Smoke_Debug"),
+            ));
+            info!("[P] Spawned: smoke (GPU)");
         }
     }
 
@@ -3085,10 +3135,18 @@ pub fn ground_explosion_debug_menu_system(
         }
     }
 
-    // J: GPU explosion + impact flash (no smoke/wisp)
+    // J: FULL GPU explosion (all emitters converted to GPU)
     if keyboard_input.just_pressed(KeyCode::KeyJ) {
         if let Some(effects) = gpu_effects.as_ref() {
             let current_time = time.elapsed_secs_f64();
+            let mut rng = rand::thread_rng();
+
+            // Play explosion sound
+            let sound = audio_assets.get_random_ground_explosion_sound(&mut rng);
+            commands.spawn((
+                AudioPlayer::new(sound),
+                PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::Linear(crate::constants::VOLUME_EXPLOSION)),
+            ));
 
             // GPU particles (sparks, flash sparks, parts debris)
             spawn_ground_explosion_gpu_sparks(&mut commands, effects, position, scale, current_time);
@@ -3102,10 +3160,16 @@ pub fn ground_explosion_debug_menu_system(
             // GPU dust ring (replaces CPU dust_ring)
             spawn_ground_explosion_gpu_dust(&mut commands, effects, position, scale, current_time);
 
+            // GPU smoke cloud (replaces CPU smoke_cloud)
+            spawn_ground_explosion_gpu_smoke(&mut commands, effects, position, scale, current_time);
+
+            // GPU wisp puffs (replaces CPU wisps)
+            spawn_ground_explosion_gpu_wisp(&mut commands, effects, position, scale, current_time);
+
             // CPU impact flash (point light + glow circle)
             spawn_impact_flash(&mut commands, &assets, &mut flipbook_materials, &mut additive_materials, position, scale, 0.1);
 
-            info!("[P] Spawned: GPU explosion + impact (no smoke/wisp)");
+            info!("[P] Spawned: FULL GPU explosion (all emitters)");
         } else {
             info!("[P] GPU effects not available!");
         }
@@ -3206,7 +3270,7 @@ pub fn ground_explosion_debug_menu_system(
 /// Spawn the debug menu UI (hidden by default)
 pub fn setup_ground_explosion_debug_ui(mut commands: Commands) {
     commands.spawn((
-        Text::new("GROUND EXPLOSION [P]\n─────────────────────\n1: main    2: main001\n3: dirt    4: dirt001\n5: dust    6: wisp\n7: smoke   8: spark\n9: spark_l 0: parts\n─────────────────────\nShift+3/4/5/8/9/0:GPU\nJ: GPU+dust+impact\nK: full explosion\nL: ablation test\nShift+L: GPU barrage\nX: debug velocity\nP: close"),
+        Text::new("GROUND EXPLOSION [P]\n─────────────────────\n1: main    2: main001\n3: dirt    4: dirt001\n5: dust    6: wisp\n7: smoke   8: spark\n9: spark_l 0: parts\n─────────────────────\nShift+1-9/0: GPU ver.\nJ: FULL GPU explosion\nK: full CPU/GPU mix\nL: ablation test\nShift+L: GPU barrage\nX: debug velocity\nP: close"),
         TextFont {
             font_size: 16.0,
             ..default()
