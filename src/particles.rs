@@ -1245,26 +1245,36 @@ fn setup_particle_effects(
 
     // === GROUND EXPLOSION GPU SMOKE CLOUD ===
     // Replaces CPU smoke entities (10-15 per explosion) with single GPU effect
-    // CPU behavior (from spawn_smoke_cloud):
+    // CPU behavior (from update_smoke_color, update_smoke_scale):
     //   Count: 10-15 particles
-    //   Size: 0.5-1.0m base, grows 3× over lifetime
+    //   Size: 0.5-1.0m base, grows 1x→3x using ease-out curve: 1-(1-t)²
     //   Velocity: screen-local spread ±12m/s on XY (we use world XZ)
     //   Lifetime: 0.8-2.5s
-    //   Color: grey (0.4, 0.4, 0.4), alpha 0.6→0 linear fade
+    //   Color: dark brown (0.147, 0.117, 0.089) → tan (0.328, 0.235, 0.156)
+    //   Alpha: smoothstep bell curve 0→0.5→0
     //   Texture: 8×8 flipbook, 35 frames animated
     //   Orientation: Camera facing
     //   Drag: 2.0, slight upward acceleration
 
-    // Color: constant grey with alpha fade 0.6→0
+    // Color: dark brown → tan with smoothstep bell alpha curve (0→0.5→0)
+    // CPU uses: color lerp over t, alpha = smoothstep bell peaking at 0.5
     let mut smoke_color_gradient = bevy_hanabi::Gradient::new();
-    smoke_color_gradient.add_key(0.0, Vec4::new(0.4, 0.4, 0.4, 0.6));
-    smoke_color_gradient.add_key(0.5, Vec4::new(0.4, 0.4, 0.4, 0.4));
-    smoke_color_gradient.add_key(1.0, Vec4::new(0.4, 0.4, 0.4, 0.0));
+    smoke_color_gradient.add_key(0.0, Vec4::new(0.147, 0.117, 0.089, 0.0));   // Dark brown, alpha=0
+    smoke_color_gradient.add_key(0.25, Vec4::new(0.192, 0.147, 0.106, 0.25)); // 25% lerp, alpha rising
+    smoke_color_gradient.add_key(0.5, Vec4::new(0.237, 0.176, 0.123, 0.5));   // 50% lerp, peak alpha
+    smoke_color_gradient.add_key(0.75, Vec4::new(0.283, 0.206, 0.139, 0.25)); // 75% lerp, alpha falling
+    smoke_color_gradient.add_key(1.0, Vec4::new(0.328, 0.235, 0.156, 0.0));   // Tan, alpha=0
 
-    // Size: grow from base (0.5-1.0m → avg 0.75m) to 3× over lifetime
+    // Size: grow from base 0.75m using ease-out curve (1-(1-t)²), 1x→3x
+    // ease_out(t) = 1 - (1-t)², scale = initial * (1 + 2*ease_out)
+    // t=0.0: ease=0.0, scale=0.75 | t=0.25: ease=0.44, scale=1.41
+    // t=0.5: ease=0.75, scale=1.88 | t=0.75: ease=0.94, scale=2.16 | t=1.0: ease=1.0, scale=2.25
     let mut smoke_size_gradient = bevy_hanabi::Gradient::new();
-    smoke_size_gradient.add_key(0.0, Vec3::splat(0.75));   // Starting size
-    smoke_size_gradient.add_key(1.0, Vec3::splat(2.25));   // 3× at end
+    smoke_size_gradient.add_key(0.0, Vec3::splat(0.75));   // 1x
+    smoke_size_gradient.add_key(0.25, Vec3::splat(1.41));  // ease-out at 25%
+    smoke_size_gradient.add_key(0.5, Vec3::splat(1.88));   // ease-out at 50%
+    smoke_size_gradient.add_key(0.75, Vec3::splat(2.16));  // ease-out at 75%
+    smoke_size_gradient.add_key(1.0, Vec3::splat(2.25));   // 3x
 
     let writer_smoke = ExprWriter::new();
 
@@ -1319,32 +1329,37 @@ fn setup_particle_effects(
 
     // === GROUND EXPLOSION GPU WISP PUFFS ===
     // Replaces CPU wisp entities (3 per explosion) with single GPU effect
-    // CPU behavior (from spawn_wisps):
+    // CPU behavior (from update_wisp_scale, update_wisp_alpha):
     //   Count: 3 particles
-    //   Size: 0→5× scale over life, 0.8-1.8m base (×1.5 scale modifier)
-    //   Velocity: upward (3-6 m/s), horizontal spread (±1 m/s)
+    //   Size: 0→5× using SMOOTHSTEP curve: t²(3-2t), base ~2m (0.8-1.8m × 1.5)
+    //   Velocity: upward (3-6 m/s × 1.5), horizontal spread (±1 m/s × 1.5)
     //   Gravity: 9.8 m/s²
     //   Lifetime: 1.0-2.0s
-    //   Color: dark grey (0.15, 0.12, 0.10), alpha 3.0→0 fade
+    //   Color: dark grey (0.15, 0.12, 0.10)
+    //   Alpha: TWO-PHASE: 4→1 fast (0-20%), then 1→0 linear (20-100%)
     //   Texture: 8×8 flipbook, 64 frames animated
     //   Orientation: Camera facing
 
-    // Color: dark grey with HDR alpha fade (3.0→0)
+    // Color: dark grey with two-phase alpha (4→1 fast, then 1→0 linear)
+    // CPU: alpha = if t < 0.2 { 4.0 - (t/0.2)*3.0 } else { 1.0 - (t-0.2)/0.8 }
     let mut wisp_color_gradient = bevy_hanabi::Gradient::new();
-    wisp_color_gradient.add_key(0.0, Vec4::new(0.15, 0.12, 0.10, 3.0));   // Start bright
-    wisp_color_gradient.add_key(0.1, Vec4::new(0.15, 0.12, 0.10, 2.7));   // Quick fade
-    wisp_color_gradient.add_key(0.5, Vec4::new(0.15, 0.12, 0.10, 1.5));
-    wisp_color_gradient.add_key(1.0, Vec4::new(0.15, 0.12, 0.10, 0.0));
+    wisp_color_gradient.add_key(0.0, Vec4::new(0.15, 0.12, 0.10, 4.0));   // Start bright (HDR)
+    wisp_color_gradient.add_key(0.2, Vec4::new(0.15, 0.12, 0.10, 1.0));   // Fast drop to 1.0
+    wisp_color_gradient.add_key(1.0, Vec4::new(0.15, 0.12, 0.10, 0.0));   // Linear fade to 0
 
-    // Size: 0→5× scale, base ~1.3m (midpoint of 0.8-1.8m × 1.5 = 1.2-2.7m)
-    // Use cubic ease-in for scale (t³)
+    // Size: 0→5× using SMOOTHSTEP curve (NOT cubic ease-in!)
+    // smoothstep(t) = t² * (3 - 2t), final_size = base * smoothstep(t) * 5
+    // Base ~2m (midpoint of 0.8-1.8m × 1.5), final = 10m
+    // t=0.0: ss=0.0, size=0 | t=0.2: ss=0.104, size=1.04
+    // t=0.4: ss=0.352, size=3.52 | t=0.6: ss=0.648, size=6.48
+    // t=0.8: ss=0.896, size=8.96 | t=1.0: ss=1.0, size=10
     let mut wisp_size_gradient = bevy_hanabi::Gradient::new();
     wisp_size_gradient.add_key(0.0, Vec3::splat(0.0));     // Start at zero
-    wisp_size_gradient.add_key(0.2, Vec3::splat(0.16));    // 0.2³ × 10 = 0.08, ×2 = 0.16
-    wisp_size_gradient.add_key(0.4, Vec3::splat(1.28));    // 0.4³ × 10 = 0.64, ×2 = 1.28
-    wisp_size_gradient.add_key(0.6, Vec3::splat(4.32));    // 0.6³ × 10 = 2.16, ×2 = 4.32
-    wisp_size_gradient.add_key(0.8, Vec3::splat(10.24));   // 0.8³ × 10 = 5.12, ×2 = 10.24
-    wisp_size_gradient.add_key(1.0, Vec3::splat(10.0));    // 5× final (2m base × 5 = 10m)
+    wisp_size_gradient.add_key(0.2, Vec3::splat(1.04));    // smoothstep(0.2) * 10
+    wisp_size_gradient.add_key(0.4, Vec3::splat(3.52));    // smoothstep(0.4) * 10
+    wisp_size_gradient.add_key(0.6, Vec3::splat(6.48));    // smoothstep(0.6) * 10
+    wisp_size_gradient.add_key(0.8, Vec3::splat(8.96));    // smoothstep(0.8) * 10
+    wisp_size_gradient.add_key(1.0, Vec3::splat(10.0));    // 5× final (2m base × 5)
 
     let writer_wisp = ExprWriter::new();
 
