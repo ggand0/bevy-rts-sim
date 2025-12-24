@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 bevy = { version = "0.16", features = ["dynamic_linking", "wav", "tga", "png"] }
-bevy_hanabi = { path = "../bevy_hanabi" }
+bevy_hanabi = { git = "https://github.com/ggand0/bevy_hanabi.git", rev = "508c90c" }
 rand = "0.8"
 bytemuck = { version = "1.12", features = ["derive"] }
 noise = "0.9"
