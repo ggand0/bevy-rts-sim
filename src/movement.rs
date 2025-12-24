@@ -18,10 +18,12 @@ pub fn animate_march(
     let delta_time = time.delta_secs();
 
     // Collect all droid positions first for soft avoidance lookups (avoids query conflicts)
-    let droid_positions: std::collections::HashMap<Entity, Vec3> = query
-        .iter()
-        .map(|(e, _, t, _)| (e, t.translation))
-        .collect();
+    // Only build HashMap if soft avoidance is enabled
+    let droid_positions: std::collections::HashMap<Entity, Vec3> = if SOFT_AVOIDANCE_STRENGTH > 0.0 {
+        query.iter().map(|(e, _, t, _)| (e, t.translation)).collect()
+    } else {
+        std::collections::HashMap::new()
+    };
 
     for (entity, droid, mut transform, squad_member) in query.iter_mut() {
         // Only move if explicitly commanded (no automatic cycling)

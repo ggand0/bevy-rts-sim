@@ -156,7 +156,7 @@ pub const UNIT_COLLISION_RADIUS: f32 = 0.8;
 /// Soft avoidance starts slowing units at this distance
 pub const SOFT_AVOIDANCE_RADIUS: f32 = 2.0;
 /// Soft avoidance strength: 0.0 = off, 1.0 = full. Adjustable for tuning.
-pub const SOFT_AVOIDANCE_STRENGTH: f32 = 1.0;
+pub const SOFT_AVOIDANCE_STRENGTH: f32 = 0.0;
 /// Push force multiplier for hard collision resolution
 pub const COLLISION_PUSH_STRENGTH: f32 = 8.0;
 /// Default mass for battle droids (future: heavy platforms = 5.0, drones = 0.3)
