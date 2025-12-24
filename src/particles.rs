@@ -1299,6 +1299,17 @@ fn setup_particle_effects(
         (writer_smoke.lit(0.8) + writer_smoke.rand(ScalarType::Float) * writer_smoke.lit(1.7)).expr()
     );
 
+    // Random sprite rotation (0-360°) in camera plane
+    let smoke_random_rot = writer_smoke.rand(ScalarType::Float) * writer_smoke.lit(std::f32::consts::TAU);
+    let smoke_init_rot = SetAttributeModifier::new(Attribute::F32_0, smoke_random_rot.expr());
+    let smoke_rotation = writer_smoke.attr(Attribute::F32_0).expr();
+
+    // Flipbook animation: 35 frames played once over lifetime (CPU: total_frames: 35)
+    let smoke_frame = (writer_smoke.attr(Attribute::AGE) / writer_smoke.attr(Attribute::LIFETIME) * writer_smoke.lit(35.0))
+        .cast(ScalarType::Int)
+        .min(writer_smoke.lit(34i32));
+    let smoke_update_sprite = SetAttributeModifier::new(Attribute::SPRITE_INDEX, smoke_frame.expr());
+
     // Drag and upward acceleration (UE5: drag 2.0, accel Y=0.5)
     let smoke_drag = LinearDragModifier::new(writer_smoke.lit(2.0).expr());
     let smoke_accel = AccelModifier::new(writer_smoke.lit(Vec3::new(0.0, 0.5, 0.0)).expr());
@@ -1315,9 +1326,12 @@ fn setup_particle_effects(
             .init(smoke_init_vel)
             .init(smoke_init_age)
             .init(smoke_init_lifetime)
+            .init(smoke_init_rot)
             .update(smoke_drag)
             .update(smoke_accel)
-            .render(OrientModifier::new(OrientMode::FaceCameraPosition))  // Camera facing
+            .update(smoke_update_sprite)  // Animate sprite index each frame
+            .render(OrientModifier::new(OrientMode::FaceCameraPosition)
+                .with_rotation(smoke_rotation))  // Rotate in camera plane
             .render(ParticleTextureModifier {
                 texture_slot: smoke_texture_slot,
                 sample_mapping: ImageSampleMapping::Modulate,
@@ -1384,6 +1398,20 @@ fn setup_particle_effects(
         (writer_wisp.lit(1.0) + writer_wisp.rand(ScalarType::Float) * writer_wisp.lit(1.0)).expr()
     );
 
+    // Random sprite rotation (0-360°) in camera plane
+    // CPU uses SpriteRotation { angle } applied after billboard orientation
+    // For FaceCameraPosition, use .with_rotation() (not .with_axis_rotation())
+    let wisp_random_rot = writer_wisp.rand(ScalarType::Float) * writer_wisp.lit(std::f32::consts::TAU);
+    let wisp_init_rot = SetAttributeModifier::new(Attribute::F32_0, wisp_random_rot.expr());
+    let wisp_rotation = writer_wisp.attr(Attribute::F32_0).expr();
+
+    // Flipbook animation: 64 frames (8x8) played once over lifetime
+    // CPU: frame_duration = lifetime / 64.0
+    let wisp_frame = (writer_wisp.attr(Attribute::AGE) / writer_wisp.attr(Attribute::LIFETIME) * writer_wisp.lit(64.0))
+        .cast(ScalarType::Int)
+        .min(writer_wisp.lit(63i32));
+    let wisp_init_sprite = SetAttributeModifier::new(Attribute::SPRITE_INDEX, wisp_frame.expr());
+
     // Gravity: 9.8 m/s² downward
     let wisp_gravity = AccelModifier::new(writer_wisp.lit(Vec3::new(0.0, -9.8, 0.0)).expr());
 
@@ -1399,8 +1427,11 @@ fn setup_particle_effects(
             .init(wisp_init_vel)
             .init(wisp_init_age)
             .init(wisp_init_lifetime)
+            .init(wisp_init_rot)
             .update(wisp_gravity)
-            .render(OrientModifier::new(OrientMode::FaceCameraPosition))  // Camera facing
+            .update(wisp_init_sprite)  // Animate sprite index each frame
+            .render(OrientModifier::new(OrientMode::FaceCameraPosition)
+                .with_rotation(wisp_rotation))  // Rotate in camera plane
             .render(ParticleTextureModifier {
                 texture_slot: wisp_texture_slot,
                 sample_mapping: ImageSampleMapping::Modulate,
