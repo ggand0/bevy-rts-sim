@@ -43,8 +43,8 @@ pub const HITSCAN_TRACER_WIDTH: f32 = 0.25;   // Slightly wider than projectiles
 pub const HITSCAN_DAMAGE: f32 = 25.0;         // Damage per hitscan hit (buildings)
 
 // Spatial partitioning settings
-pub const GRID_CELL_SIZE: f32 = 10.0; // Size of each grid cell
-pub const GRID_SIZE: i32 = 100; // Number of cells per side (covers 1000x1000 area)
+pub const GRID_CELL_SIZE: f32 = 5.0; // Size of each grid cell (smaller = fewer neighbors per cell)
+pub const GRID_SIZE: i32 = 200; // Number of cells per side (covers 1000x1000 area)
 
 // Objective system settings
 pub const TOWER_HEIGHT: f32 = 35.0;
@@ -148,3 +148,22 @@ pub const ARTILLERY_SHELL_DELAY_MIN: f32 = 0.3;       // Min delay between shell
 pub const ARTILLERY_SHELL_DELAY_MAX: f32 = 1.5;       // Max delay between shells
 pub const ARTILLERY_LINE_MAX_LENGTH: f32 = 100.0;     // Max line barrage length
 pub const ARTILLERY_LINE_SHELL_SPACING: f32 = 15.0;   // Spacing between shells on line
+
+// ===== UNIT COLLISION SYSTEM =====
+
+/// Master toggle for unit collision system (set to false to disable entirely)
+pub const COLLISION_ENABLED: bool = true;
+/// Physical collision radius for unit-unit collision (slightly less than spacing/2)
+pub const UNIT_COLLISION_RADIUS: f32 = 0.8;
+/// Soft avoidance starts slowing units at this distance
+pub const SOFT_AVOIDANCE_RADIUS: f32 = 2.0;
+/// Soft avoidance strength: 0.0 = off, 1.0 = full. Adjustable for tuning.
+pub const SOFT_AVOIDANCE_STRENGTH: f32 = 0.0;
+/// Push force multiplier for hard collision resolution
+pub const COLLISION_PUSH_STRENGTH: f32 = 8.0;
+/// Default mass for battle droids (future: heavy platforms = 5.0, drones = 0.3)
+pub const DEFAULT_UNIT_MASS: f32 = 1.0;
+/// How often to run collision (1 = every frame, 2 = every other frame, etc.)
+pub const COLLISION_FRAME_SKIP: u32 = 2;
+/// Threshold for considering a unit "stationary" (target ~= spawn)
+pub const STATIONARY_THRESHOLD: f32 = 0.5;

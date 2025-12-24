@@ -23,6 +23,7 @@ mod scenario;
 mod ground_explosion;
 mod area_damage;
 mod artillery;
+mod collision;
 use explosion_shader::ExplosionShaderPlugin;
 use particles::ParticleEffectsPlugin;
 use terrain::TerrainPlugin;
@@ -102,6 +103,10 @@ fn main() {
             movement::update_fps_display,
             movement::rts_camera_movement,
         ))
+        .add_systems(Update,
+            // Unit-to-unit collision resolution (M2TW-style mass-based pushing)
+            collision::unit_collision_system.after(movement::animate_march)
+        )
         .add_systems(Update, (
             // Selection and command systems (Total War style controls)
             selection::selection_input_system,

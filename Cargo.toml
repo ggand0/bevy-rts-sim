@@ -7,6 +7,7 @@ edition = "2021"
 bevy = { version = "0.16", features = ["dynamic_linking", "wav", "tga", "png"] }
 bevy_hanabi = { git = "https://github.com/ggand0/bevy_hanabi.git", rev = "508c90c" }
 rand = "0.8"
+rayon = "1.10"
 bytemuck = { version = "1.12", features = ["derive"] }
 noise = "0.9"
 
