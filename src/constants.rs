@@ -151,6 +151,8 @@ pub const ARTILLERY_LINE_SHELL_SPACING: f32 = 15.0;   // Spacing between shells 
 
 // ===== UNIT COLLISION SYSTEM =====
 
+/// Master toggle for unit collision system (set to false to disable entirely)
+pub const COLLISION_ENABLED: bool = true;
 /// Physical collision radius for unit-unit collision (slightly less than spacing/2)
 pub const UNIT_COLLISION_RADIUS: f32 = 0.8;
 /// Soft avoidance starts slowing units at this distance
