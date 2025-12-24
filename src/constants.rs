@@ -43,8 +43,8 @@ pub const HITSCAN_TRACER_WIDTH: f32 = 0.25;   // Slightly wider than projectiles
 pub const HITSCAN_DAMAGE: f32 = 25.0;         // Damage per hitscan hit (buildings)
 
 // Spatial partitioning settings
-pub const GRID_CELL_SIZE: f32 = 10.0; // Size of each grid cell
-pub const GRID_SIZE: i32 = 100; // Number of cells per side (covers 1000x1000 area)
+pub const GRID_CELL_SIZE: f32 = 5.0; // Size of each grid cell (smaller = fewer neighbors per cell)
+pub const GRID_SIZE: i32 = 200; // Number of cells per side (covers 1000x1000 area)
 
 // Objective system settings
 pub const TOWER_HEIGHT: f32 = 35.0;
