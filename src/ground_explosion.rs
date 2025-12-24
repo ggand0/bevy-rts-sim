@@ -7,9 +7,11 @@ use bevy::pbr::{Material, MaterialPipeline, MaterialPipelineKey, NotShadowCaster
 use bevy::render::mesh::{Indices, MeshVertexBufferLayoutRef, PrimitiveTopology};
 use bevy::render::render_resource::{AsBindGroup, BlendState, RenderPipelineDescriptor, ShaderRef, SpecializedMeshPipelineError};
 use bevy::asset::RenderAssetUsages;
+use bevy_hanabi::{ParticleEffect, EffectMaterial};
 use rand::Rng;
 
 use crate::wfx_materials::AdditiveMaterial;
+use crate::particles::{ExplosionParticleEffects, spawn_ground_explosion_gpu_sparks, spawn_ground_explosion_gpu_dirt, spawn_ground_explosion_gpu_fireballs, spawn_ground_explosion_gpu_dust, spawn_ground_explosion_gpu_smoke, spawn_ground_explosion_gpu_wisp};
 
 // ===== HELPER FUNCTIONS =====
 
@@ -460,6 +462,7 @@ pub fn setup_ground_explosion_assets(
 // ===== MAIN SPAWN FUNCTION =====
 
 /// Spawn a complete UE5-style ground explosion
+/// If `gpu_effects` and `current_time` are provided, uses GPU particles for sparks (better performance)
 pub fn spawn_ground_explosion(
     commands: &mut Commands,
     assets: &GroundExplosionAssets,
@@ -469,6 +472,8 @@ pub fn spawn_ground_explosion(
     scale: f32,
     camera_transform: Option<&GlobalTransform>,
     audio_assets: Option<&crate::types::AudioAssets>,
+    gpu_effects: Option<&ExplosionParticleEffects>,
+    current_time: Option<f64>,
 ) {
     info!("🌋 Spawning ground explosion at {:?} (scale: {})", position, scale);
 
@@ -483,11 +488,18 @@ pub fn spawn_ground_explosion(
         ));
     }
 
-    // Main fireball (9x9 flipbook, velocity aligned, bottom pivot)
-    spawn_main_fireball(commands, assets, flipbook_materials, position, scale, &mut rng);
-
-    // Secondary fireball (8x8 flipbook, velocity aligned, bottom pivot)
-    spawn_secondary_fireball(commands, assets, flipbook_materials, position, scale, &mut rng);
+    // Fireballs - use GPU if available, otherwise CPU
+    if let (Some(effects), Some(time)) = (gpu_effects, current_time) {
+        // GPU fireballs: 1 entity instead of ~16-30 CPU entities
+        // (main: 9-17, secondary: 7-13)
+        spawn_ground_explosion_gpu_fireballs(commands, effects, position, scale, time);
+    } else {
+        // Fallback to CPU fireballs
+        // Main fireball (9x9 flipbook, velocity aligned, bottom pivot)
+        spawn_main_fireball(commands, assets, flipbook_materials, position, scale, &mut rng);
+        // Secondary fireball (8x8 flipbook, velocity aligned, bottom pivot)
+        spawn_secondary_fireball(commands, assets, flipbook_materials, position, scale, &mut rng);
+    }
 
     // Smoke cloud (8x8 flipbook, camera facing) - uses camera-local velocity
     spawn_smoke_cloud(commands, assets, flipbook_materials, position, scale, &mut rng, camera_transform);
@@ -498,25 +510,64 @@ pub fn spawn_ground_explosion(
     // Dust ring (4x1 flipbook, velocity aligned)
     spawn_dust_ring(commands, assets, flipbook_materials, position, scale, &mut rng);
 
-    // Sparks with gravity (single texture, velocity aligned)
-    spawn_sparks(commands, assets, additive_materials, position, scale, &mut rng);
-
-    // Bright flash sparks (single texture, velocity aligned)
-    spawn_flash_sparks(commands, assets, additive_materials, position, scale, &mut rng);
+    // Sparks and parts - use GPU if available, otherwise CPU
+    if let (Some(effects), Some(time)) = (gpu_effects, current_time) {
+        // GPU particles: 3 entities instead of 100-185 CPU entities
+        // (sparks: 30-60, flash_sparks: 20-50, parts: 50-75)
+        spawn_ground_explosion_gpu_sparks(commands, effects, position, scale, time);
+    } else {
+        // Fallback to CPU particles
+        spawn_sparks(commands, assets, additive_materials, position, scale, &mut rng);
+        spawn_flash_sparks(commands, assets, additive_materials, position, scale, &mut rng);
+        spawn_parts(commands, assets, position, scale, &mut rng);
+    }
 
     // Impact ground flash - short duration for full explosion
     spawn_impact_flash(commands, assets, flipbook_materials, additive_materials, position, scale, 0.1);
 
-    // Dirt debris (single texture, camera facing)
-    spawn_dirt_debris(commands, assets, flipbook_materials, position, scale, &mut rng);
+    // Dirt debris - use GPU if available, otherwise CPU
+    if let (Some(effects), Some(time)) = (gpu_effects, current_time) {
+        // GPU dirt: 2 entities instead of ~45-50 CPU entities
+        // (dirt_debris: 35, velocity_dirt: 10-15)
+        spawn_ground_explosion_gpu_dirt(commands, effects, position, scale, time);
+    } else {
+        // Fallback to CPU dirt particles
+        spawn_dirt_debris(commands, assets, flipbook_materials, position, scale, &mut rng);
+        spawn_velocity_dirt(commands, assets, flipbook_materials, position, scale, &mut rng);
+    }
 
-    // Velocity-stretched dirt (single texture, velocity aligned)
-    spawn_velocity_dirt(commands, assets, flipbook_materials, position, scale, &mut rng);
+    let gpu_type = if gpu_effects.is_some() { "GPU" } else { "CPU" };
+    info!("✅ Ground explosion spawned with {} sparks/parts/dirt/fireballs", gpu_type);
+}
 
-    // Parts debris (3D mesh, gravity, bounce)
-    spawn_parts(commands, assets, position, scale, &mut rng);
+/// ABLATION TEST: GPU particles + selected CPU emitters
+/// Use this to isolate which CPU emitters cause the FPS drop
+pub fn spawn_ground_explosion_gpu_only(
+    commands: &mut Commands,
+    assets: &GroundExplosionAssets,
+    flipbook_materials: &mut ResMut<Assets<FlipbookMaterial>>,
+    additive_materials: &mut ResMut<Assets<AdditiveMaterial>>,
+    gpu_effects: &ExplosionParticleEffects,
+    position: Vec3,
+    scale: f32,
+    current_time: f64,
+) {
+    let mut rng = rand::thread_rng();
 
-    info!("✅ Ground explosion spawned with 11 emitters");
+    // GPU particles (sparks, flash sparks, parts debris)
+    spawn_ground_explosion_gpu_sparks(commands, gpu_effects, position, scale, current_time);
+
+    // GPU dirt emitters (replaces CPU dirt_debris + velocity_dirt)
+    spawn_ground_explosion_gpu_dirt(commands, gpu_effects, position, scale, current_time);
+
+    // GPU fireballs (replaces CPU main + secondary fireball)
+    spawn_ground_explosion_gpu_fireballs(commands, gpu_effects, position, scale, current_time);
+
+    // CPU emitters for ablation test: dust + impact
+    spawn_dust_ring(commands, assets, flipbook_materials, position, scale, &mut rng);
+    spawn_impact_flash(commands, assets, flipbook_materials, additive_materials, position, scale, 0.1);
+
+    info!("🧪 ABLATION: GPU sparks/parts/dirt/fireballs + dust/impact at {:?}", position);
 }
 
 // ===== EMITTER SPAWN FUNCTIONS =====
@@ -2698,6 +2749,8 @@ pub fn ground_explosion_debug_menu_system(
     terrain_config: Res<crate::terrain::TerrainConfig>,
     heightmap: Res<crate::terrain::TerrainHeightmap>,
     audio_assets: Res<crate::types::AudioAssets>,
+    gpu_effects: Option<Res<crate::particles::ExplosionParticleEffects>>,
+    time: Res<Time>,
 ) {
     // P key toggles the debug menu
     if keyboard_input.just_pressed(KeyCode::KeyP) {
@@ -2708,7 +2761,9 @@ pub fn ground_explosion_debug_menu_system(
             info!("═══════════════════════════════════════");
             info!("  1: main       2: main001    3: dirt");
             info!("  4: dirt001    5: dust       6: wisp");
-            info!("  7: smoke      8: sparks     9: parts");
+            info!("  7: smoke      8: spark      9: spark_l");
+            info!("  0: parts");
+            info!("  Shift+3/4/8/9/0: GPU versions");
             info!("  J: group 1-6  K: full explosion");
             info!("  P: close");
             info!("═══════════════════════════════════════");
@@ -2750,22 +2805,26 @@ pub fn ground_explosion_debug_menu_system(
     // Get camera transform for local-space velocity calculation
     let camera_transform = camera_query.iter().next();
 
-    // Individual emitter keys (1-9)
-    let emitter = if keyboard_input.just_pressed(KeyCode::Digit1) {
+    let shift_held = keyboard_input.pressed(KeyCode::ShiftLeft) || keyboard_input.pressed(KeyCode::ShiftRight);
+
+    // Individual emitter keys (1-7, 0 without shift for CPU parts)
+    // 1, 2, 3, 4, 8, 9, 0 with shift are handled separately for GPU versions
+    let emitter = if keyboard_input.just_pressed(KeyCode::Digit1) && !shift_held {
         Some((EmitterType::MainFireball, "main"))
-    } else if keyboard_input.just_pressed(KeyCode::Digit2) {
+    } else if keyboard_input.just_pressed(KeyCode::Digit2) && !shift_held {
         Some((EmitterType::SecondaryFireball, "main001"))
-    } else if keyboard_input.just_pressed(KeyCode::Digit3) {
+    } else if keyboard_input.just_pressed(KeyCode::Digit3) && !shift_held {
         Some((EmitterType::Dirt, "dirt"))
-    } else if keyboard_input.just_pressed(KeyCode::Digit4) {
+    } else if keyboard_input.just_pressed(KeyCode::Digit4) && !shift_held {
         Some((EmitterType::VelocityDirt, "dirt001"))
-    } else if keyboard_input.just_pressed(KeyCode::Digit5) {
+    } else if keyboard_input.just_pressed(KeyCode::Digit5) && !shift_held {
         Some((EmitterType::Dust, "dust"))
-    } else if keyboard_input.just_pressed(KeyCode::Digit6) {
+    } else if keyboard_input.just_pressed(KeyCode::Digit6) && !shift_held {
         Some((EmitterType::Wisp, "wisp"))
-    } else if keyboard_input.just_pressed(KeyCode::Digit7) {
+    } else if keyboard_input.just_pressed(KeyCode::Digit7) && !shift_held {
         Some((EmitterType::Smoke, "smoke"))
-    } else if keyboard_input.just_pressed(KeyCode::Digit9) {
+    } else if keyboard_input.just_pressed(KeyCode::Digit0) && !shift_held {
+        // CPU parts (only when shift is NOT held)
         Some((EmitterType::Parts, "parts"))
     } else {
         None
@@ -2785,57 +2844,340 @@ pub fn ground_explosion_debug_menu_system(
         info!("[P] Spawned: {}", name);
     }
 
-    // 8: Both spark emitters
-    if keyboard_input.just_pressed(KeyCode::Digit8) {
-        spawn_single_emitter(
-            &mut commands,
-            &assets,
-            &mut flipbook_materials,
-            &mut additive_materials,
-            EmitterType::Spark,
-            position,
-            scale,
-            camera_transform,
-        );
-        spawn_single_emitter(
-            &mut commands,
-            &assets,
-            &mut flipbook_materials,
-            &mut additive_materials,
-            EmitterType::FlashSpark,
-            position,
-            scale,
-            camera_transform,
-        );
-        info!("[P] Spawned: sparks (both)");
+    // 3: dirt (CPU) or Shift+3: dirt (GPU)
+    if keyboard_input.just_pressed(KeyCode::Digit3) && shift_held {
+        if let Some(effects) = gpu_effects.as_ref() {
+            let current_time = time.elapsed_secs_f64();
+            let seed = (current_time * 1000000.0) as u32;
+            commands.spawn((
+                ParticleEffect {
+                    handle: effects.ground_dirt_effect.clone(),
+                    prng_seed: Some(seed),
+                },
+                EffectMaterial {
+                    images: vec![effects.ground_dirt_texture.clone()],
+                },
+                Transform::from_translation(position).with_scale(Vec3::splat(scale)),
+                Visibility::Visible,
+                crate::particles::ParticleEffectLifetime {
+                    spawn_time: current_time,
+                    duration: 5.0,
+                },
+                Name::new("GE_GPU_Dirt_Debug"),
+            ));
+            info!("[P] Spawned: dirt (GPU)");
+        }
     }
 
-    // J: Emitter group 1-6 (main, main001, dirt, dirt001, dust, wisp)
-    if keyboard_input.just_pressed(KeyCode::KeyJ) {
-        for emitter_type in [
-            EmitterType::MainFireball,
-            EmitterType::SecondaryFireball,
-            EmitterType::Dirt,
-            EmitterType::VelocityDirt,
-            EmitterType::Dust,
-            EmitterType::Wisp,
-        ] {
+    // 4: velocity dirt (CPU) or Shift+4: velocity dirt (GPU)
+    if keyboard_input.just_pressed(KeyCode::Digit4) && shift_held {
+        if let Some(effects) = gpu_effects.as_ref() {
+            let current_time = time.elapsed_secs_f64();
+            let seed = (current_time * 1000000.0) as u32;
+            commands.spawn((
+                ParticleEffect {
+                    handle: effects.ground_vdirt_effect.clone(),
+                    prng_seed: Some(seed),
+                },
+                EffectMaterial {
+                    images: vec![effects.ground_dirt_texture.clone()],
+                },
+                Transform::from_translation(position).with_scale(Vec3::splat(scale)),
+                Visibility::Visible,
+                crate::particles::ParticleEffectLifetime {
+                    spawn_time: current_time,
+                    duration: 3.0,
+                },
+                Name::new("GE_GPU_VDirt_Debug"),
+            ));
+            info!("[P] Spawned: dirt001 (GPU)");
+        }
+    }
+
+    // 5: dust (CPU) or Shift+5: dust (GPU)
+    if keyboard_input.just_pressed(KeyCode::Digit5) && shift_held {
+        if let Some(effects) = gpu_effects.as_ref() {
+            let current_time = time.elapsed_secs_f64();
+            let seed = (current_time * 1000000.0) as u32;
+            commands.spawn((
+                ParticleEffect {
+                    handle: effects.ground_dust_effect.clone(),
+                    prng_seed: Some(seed),
+                },
+                EffectMaterial {
+                    images: vec![effects.ground_dust_texture.clone()],
+                },
+                Transform::from_translation(position).with_scale(Vec3::splat(scale)),
+                Visibility::Visible,
+                crate::particles::ParticleEffectLifetime {
+                    spawn_time: current_time,
+                    duration: 1.0,
+                },
+                Name::new("GE_GPU_Dust_Debug"),
+            ));
+            info!("[P] Spawned: dust (GPU)");
+        }
+    }
+
+    // 6: wisp (CPU) or Shift+6: wisp (GPU)
+    if keyboard_input.just_pressed(KeyCode::Digit6) && shift_held {
+        if let Some(effects) = gpu_effects.as_ref() {
+            let current_time = time.elapsed_secs_f64();
+            let seed = (current_time * 1000000.0) as u32;
+            commands.spawn((
+                ParticleEffect {
+                    handle: effects.ground_wisp_effect.clone(),
+                    prng_seed: Some(seed),
+                },
+                EffectMaterial {
+                    images: vec![effects.ground_wisp_texture.clone()],
+                },
+                Transform::from_translation(position).with_scale(Vec3::splat(scale)),
+                Visibility::Visible,
+                crate::particles::ParticleEffectLifetime {
+                    spawn_time: current_time,
+                    duration: 3.0,
+                },
+                Name::new("GE_GPU_Wisp_Debug"),
+            ));
+            info!("[P] Spawned: wisp (GPU)");
+        }
+    }
+
+    // 7: smoke (CPU) or Shift+7: smoke (GPU)
+    if keyboard_input.just_pressed(KeyCode::Digit7) && shift_held {
+        if let Some(effects) = gpu_effects.as_ref() {
+            let current_time = time.elapsed_secs_f64();
+            let seed = (current_time * 1000000.0) as u32;
+            commands.spawn((
+                ParticleEffect {
+                    handle: effects.ground_smoke_effect.clone(),
+                    prng_seed: Some(seed),
+                },
+                EffectMaterial {
+                    images: vec![effects.ground_smoke_texture.clone()],
+                },
+                Transform::from_translation(position).with_scale(Vec3::splat(scale)),
+                Visibility::Visible,
+                crate::particles::ParticleEffectLifetime {
+                    spawn_time: current_time,
+                    duration: 4.0,
+                },
+                Name::new("GE_GPU_Smoke_Debug"),
+            ));
+            info!("[P] Spawned: smoke (GPU)");
+        }
+    }
+
+    // 1: main fireball (CPU) or Shift+1: fireball (GPU)
+    if keyboard_input.just_pressed(KeyCode::Digit1) && shift_held {
+        if let Some(effects) = gpu_effects.as_ref() {
+            let current_time = time.elapsed_secs_f64();
+            let seed = (current_time * 1000000.0) as u32;
+            commands.spawn((
+                ParticleEffect {
+                    handle: effects.ground_fireball_effect.clone(),
+                    prng_seed: Some(seed),
+                },
+                EffectMaterial {
+                    images: vec![effects.ground_fireball_texture.clone()],
+                },
+                Transform::from_translation(position).with_scale(Vec3::splat(scale)),
+                Visibility::Visible,
+                crate::particles::ParticleEffectLifetime {
+                    spawn_time: current_time,
+                    duration: 2.0,
+                },
+                Name::new("GE_GPU_Fireball_Debug"),
+            ));
+            info!("[P] Spawned: fireball (GPU) - combined main+secondary");
+        }
+    }
+
+    // 2: secondary fireball (CPU) or Shift+2: secondary fireball (GPU)
+    if keyboard_input.just_pressed(KeyCode::Digit2) && shift_held {
+        if let Some(effects) = gpu_effects.as_ref() {
+            let current_time = time.elapsed_secs_f64();
+            let seed = (current_time * 1000000.0) as u32;
+            commands.spawn((
+                ParticleEffect {
+                    handle: effects.ground_fireball_effect.clone(),
+                    prng_seed: Some(seed),
+                },
+                EffectMaterial {
+                    images: vec![effects.ground_fireball_secondary_texture.clone()],
+                },
+                Transform::from_translation(position).with_scale(Vec3::splat(scale)),
+                Visibility::Visible,
+                crate::particles::ParticleEffectLifetime {
+                    spawn_time: current_time,
+                    duration: 2.0,
+                },
+                Name::new("GE_GPU_Secondary_Fireball"),
+            ));
+            info!("[P] Spawned: secondary fireball (GPU)");
+        }
+    }
+
+    // 8: spark (CPU) or Shift+8: spark (GPU)
+    if keyboard_input.just_pressed(KeyCode::Digit8) {
+        if shift_held {
+            // GPU spark (replaces CPU spawn_sparks / SparkColorOverLife)
+            if let Some(effects) = gpu_effects.as_ref() {
+                let current_time = time.elapsed_secs_f64();
+                // Generate unique seed from current time to ensure randomization
+                let seed = (current_time * 1000000.0) as u32;
+                commands.spawn((
+                    bevy_hanabi::ParticleEffect {
+                        handle: effects.ground_sparks_effect.clone(),
+                        prng_seed: Some(seed),
+                    },
+                    bevy_hanabi::EffectMaterial {
+                        images: vec![effects.ground_sparks_texture.clone()],
+                    },
+                    Transform::from_translation(position).with_scale(Vec3::splat(scale)),
+                    Visibility::Visible,
+                    crate::particles::ParticleEffectLifetime {
+                        spawn_time: current_time,
+                        duration: 3.0,
+                    },
+                    Name::new("GE_GPU_Spark_Debug"),
+                ));
+                info!("[P] Spawned: spark (GPU)");
+            } else {
+                warn!("[P] GPU effects not available!");
+            }
+        } else {
+            // CPU spark
             spawn_single_emitter(
                 &mut commands,
                 &assets,
                 &mut flipbook_materials,
                 &mut additive_materials,
-                emitter_type,
+                EmitterType::Spark,
                 position,
                 scale,
                 camera_transform,
             );
+            info!("[P] Spawned: spark (CPU)");
         }
-        info!("[P] Spawned: group 1-6 (main, main001, dirt, dirt001, dust, wisp)");
+    }
+
+    // 9: spark_l (CPU) or Shift+9: spark_l (GPU)
+    if keyboard_input.just_pressed(KeyCode::Digit9) {
+        if shift_held {
+            // GPU spark_l (replaces CPU spawn_flash_sparks / SparkLColorOverLife)
+            if let Some(effects) = gpu_effects.as_ref() {
+                let current_time = time.elapsed_secs_f64();
+                // Generate unique seed from current time to ensure randomization
+                let seed = (current_time * 1000000.0) as u32;
+                commands.spawn((
+                    bevy_hanabi::ParticleEffect {
+                        handle: effects.ground_flash_sparks_effect.clone(),
+                        prng_seed: Some(seed),
+                    },
+                    bevy_hanabi::EffectMaterial {
+                        images: vec![effects.ground_sparks_texture.clone()],
+                    },
+                    Transform::from_translation(position).with_scale(Vec3::splat(scale)),
+                    Visibility::Visible,
+                    crate::particles::ParticleEffectLifetime {
+                        spawn_time: current_time,
+                        duration: 2.0,
+                    },
+                    Name::new("GE_GPU_SparkL_Debug"),
+                ));
+                info!("[P] Spawned: spark_l (GPU)");
+            } else {
+                warn!("[P] GPU effects not available!");
+            }
+        } else {
+            // CPU spark_l
+            spawn_single_emitter(
+                &mut commands,
+                &assets,
+                &mut flipbook_materials,
+                &mut additive_materials,
+                EmitterType::FlashSpark,
+                position,
+                scale,
+                camera_transform,
+            );
+            info!("[P] Spawned: spark_l (CPU)");
+        }
+    }
+
+    // 0: parts (CPU) or Shift+0: parts (GPU)
+    if keyboard_input.just_pressed(KeyCode::Digit0) && shift_held {
+        // GPU parts (replaces CPU spawn_parts / PartsPhysics)
+        if let Some(effects) = gpu_effects.as_ref() {
+            let current_time = time.elapsed_secs_f64();
+            let seed = (current_time * 1000000.0) as u32;
+            commands.spawn((
+                bevy_hanabi::ParticleEffect {
+                    handle: effects.ground_parts_effect.clone(),
+                    prng_seed: Some(seed),
+                },
+                bevy_hanabi::EffectMaterial {
+                    images: vec![effects.ground_parts_texture.clone()],
+                },
+                Transform::from_translation(position).with_scale(Vec3::splat(scale)),
+                Visibility::Visible,
+                crate::particles::ParticleEffectLifetime {
+                    spawn_time: current_time,
+                    duration: 2.0,
+                },
+                Name::new("GE_GPU_Parts_Debug"),
+            ));
+            info!("[P] Spawned: parts (GPU)");
+        } else {
+            warn!("[P] GPU effects not available!");
+        }
+    }
+
+    // J: FULL GPU explosion (all emitters converted to GPU)
+    if keyboard_input.just_pressed(KeyCode::KeyJ) {
+        if let Some(effects) = gpu_effects.as_ref() {
+            let current_time = time.elapsed_secs_f64();
+            let mut rng = rand::thread_rng();
+
+            // Play explosion sound
+            let sound = audio_assets.get_random_ground_explosion_sound(&mut rng);
+            commands.spawn((
+                AudioPlayer::new(sound),
+                PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::Linear(crate::constants::VOLUME_EXPLOSION)),
+            ));
+
+            // GPU particles (sparks, flash sparks, parts debris)
+            spawn_ground_explosion_gpu_sparks(&mut commands, effects, position, scale, current_time);
+
+            // GPU dirt emitters (replaces CPU dirt_debris + velocity_dirt)
+            spawn_ground_explosion_gpu_dirt(&mut commands, effects, position, scale, current_time);
+
+            // GPU fireballs (replaces CPU main + secondary fireball)
+            spawn_ground_explosion_gpu_fireballs(&mut commands, effects, position, scale, current_time);
+
+            // GPU dust ring (replaces CPU dust_ring)
+            spawn_ground_explosion_gpu_dust(&mut commands, effects, position, scale, current_time);
+
+            // GPU smoke cloud (replaces CPU smoke_cloud)
+            spawn_ground_explosion_gpu_smoke(&mut commands, effects, position, scale, current_time);
+
+            // GPU wisp puffs (replaces CPU wisps)
+            spawn_ground_explosion_gpu_wisp(&mut commands, effects, position, scale, current_time);
+
+            // CPU impact flash (point light + glow circle)
+            spawn_impact_flash(&mut commands, &assets, &mut flipbook_materials, &mut additive_materials, position, scale, 0.1);
+
+            info!("[P] Spawned: FULL GPU explosion (all emitters)");
+        } else {
+            info!("[P] GPU effects not available!");
+        }
     }
 
     // K: Full explosion (all emitters)
     if keyboard_input.just_pressed(KeyCode::KeyK) {
+        let current_time = time.elapsed_secs_f64();
         spawn_ground_explosion(
             &mut commands,
             &assets,
@@ -2845,15 +3187,90 @@ pub fn ground_explosion_debug_menu_system(
             1.0,  // Default scale
             camera_transform,
             Some(&audio_assets),
+            gpu_effects.as_deref(),
+            Some(current_time),
         );
         info!("[P] Spawned: FULL EXPLOSION");
+    }
+
+    // Shift+L: ABLATION - GPU + fireballs/dust/impact scatter barrage (8 explosions)
+    // Check shift first to avoid triggering single explosion
+    if keyboard_input.just_pressed(KeyCode::KeyL) && shift_held {
+        if let Some(effects) = gpu_effects.as_ref() {
+            let current_time = time.elapsed_secs_f64();
+            let mut rng = rand::thread_rng();
+            let scatter_radius = 30.0; // Same as artillery scatter
+
+            for i in 0..8 {
+                // Random offset within scatter radius
+                let angle = rng.gen_range(0.0..std::f32::consts::TAU);
+                let dist = rng.gen_range(0.0..scatter_radius);
+                let offset = Vec3::new(angle.cos() * dist, 0.0, angle.sin() * dist);
+                let spawn_pos = position + offset;
+
+                spawn_ground_explosion_gpu_only(
+                    &mut commands,
+                    &assets,
+                    &mut flipbook_materials,
+                    &mut additive_materials,
+                    effects,
+                    spawn_pos,
+                    1.0,
+                    current_time + (i as f64 * 0.001), // Tiny offset for unique seeds
+                );
+            }
+            info!("[P] ABLATION: GPU + fireballs/dust/impact barrage (8 explosions)");
+        } else {
+            info!("[P] ABLATION: GPU effects not available");
+        }
+    } else if keyboard_input.just_pressed(KeyCode::KeyL) {
+        // L: ABLATION - GPU + fireballs/dust/impact single explosion
+        if let Some(effects) = gpu_effects.as_ref() {
+            let current_time = time.elapsed_secs_f64();
+            spawn_ground_explosion_gpu_only(
+                &mut commands,
+                &assets,
+                &mut flipbook_materials,
+                &mut additive_materials,
+                effects,
+                position,
+                1.0,
+                current_time,
+            );
+            info!("[P] ABLATION: GPU + fireballs/dust/impact explosion");
+        } else {
+            info!("[P] ABLATION: GPU effects not available");
+        }
+    }
+
+    // X: Debug GPU fireball (velocity colors, no texture, small quads)
+    if keyboard_input.just_pressed(KeyCode::KeyX) {
+        if let Some(effects) = gpu_effects.as_ref() {
+            let current_time = time.elapsed_secs_f64();
+            let seed = (current_time * 1000000.0) as u32;
+            commands.spawn((
+                ParticleEffect {
+                    handle: effects.debug_fireball_effect.clone(),
+                    prng_seed: Some(seed),
+                },
+                // No EffectMaterial - uses vertex colors only
+                Transform::from_translation(position),  // No scale - use raw 5m hemisphere
+                Visibility::Visible,
+                crate::particles::ParticleEffectLifetime {
+                    spawn_time: current_time,
+                    duration: 6.0,
+                },
+                Name::new("GE_GPU_Debug_Fireball"),
+            ));
+            info!("[P] DEBUG: velocity-colored fireball (5m hemisphere, 0.3m quads)");
+        }
     }
 }
 
 /// Spawn the debug menu UI (hidden by default)
 pub fn setup_ground_explosion_debug_ui(mut commands: Commands) {
     commands.spawn((
-        Text::new("GROUND EXPLOSION [P]\n─────────────────────\n1: main    2: main001\n3: dirt    4: dirt001\n5: dust    6: wisp\n7: smoke   8: sparks\n9: parts\n─────────────────────\nJ: group 1-6\nK: full explosion\nP: close"),
+        Text::new("GROUND EXPLOSION [P]\n─────────────────────\n1: main    2: main001\n3: dirt    4: dirt001\n5: dust    6: wisp\n7: smoke   8: spark\n9: spark_l 0: parts\n─────────────────────\nShift+1-9/0: GPU ver.\nJ: FULL GPU explosion\nK: full CPU/GPU mix\nL: ablation test\nShift+L: GPU barrage\nX: debug velocity\nP: close"),
         TextFont {
             font_size: 16.0,
             ..default()

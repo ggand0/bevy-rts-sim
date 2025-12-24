@@ -328,8 +328,8 @@ pub fn debug_warfx_test_system(
     terrain_config: Res<crate::terrain::TerrainConfig>,
     heightmap: Res<crate::terrain::TerrainHeightmap>,
 ) {
-    // 0 key: Toggle explosion debug mode
-    if keyboard_input.just_pressed(KeyCode::Digit0) {
+    // O key: Toggle explosion debug mode (WFX)
+    if keyboard_input.just_pressed(KeyCode::KeyO) {
         debug_mode.explosion_mode = !debug_mode.explosion_mode;
         return;
     }
@@ -527,6 +527,8 @@ pub fn debug_ground_explosion_system(
     debug_mode: Res<ExplosionDebugMode>,
     camera_query: Query<&GlobalTransform, With<Camera>>,
     audio_assets: Res<crate::types::AudioAssets>,
+    gpu_effects: Option<Res<crate::particles::ExplosionParticleEffects>>,
+    time: Res<Time>,
 ) {
     // Only work when debug mode is active
     if !debug_mode.explosion_mode {
@@ -557,6 +559,8 @@ pub fn debug_ground_explosion_system(
             scale,
             camera_transform,
             Some(&audio_assets),
+            gpu_effects.as_deref(),
+            Some(time.elapsed_secs_f64()),
         );
 
         info!("🌋 UE5 Ground explosion spawned at (0, 0, 0) with scale {}", scale);
