@@ -463,4 +463,5 @@ pub struct AreaDamageEvent {
 /// Unit mass for M2TW-style collision physics
 /// Heavier units push lighter units more
 #[derive(Component)]
-pub struct UnitMass(pub f32); 
+pub struct UnitMass(pub f32);
+ 

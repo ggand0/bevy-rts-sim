@@ -163,3 +163,7 @@ pub const SOFT_AVOIDANCE_STRENGTH: f32 = 0.0;
 pub const COLLISION_PUSH_STRENGTH: f32 = 8.0;
 /// Default mass for battle droids (future: heavy platforms = 5.0, drones = 0.3)
 pub const DEFAULT_UNIT_MASS: f32 = 1.0;
+/// How often to run collision (1 = every frame, 2 = every other frame, etc.)
+pub const COLLISION_FRAME_SKIP: u32 = 2;
+/// Threshold for considering a unit "stationary" (target ~= spawn)
+pub const STATIONARY_THRESHOLD: f32 = 0.5;

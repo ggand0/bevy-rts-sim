@@ -6,13 +6,10 @@
 use bevy::prelude::*;
 use rayon::prelude::*;
 use crate::types::{BattleDroid, UnitMass, SpatialGrid, KnockbackState, RagdollDeath};
-use crate::constants::{COLLISION_ENABLED, UNIT_COLLISION_RADIUS, COLLISION_PUSH_STRENGTH, DEFAULT_UNIT_MASS};
-
-/// Threshold for considering a unit "stationary" (target ~= spawn)
-const STATIONARY_THRESHOLD: f32 = 0.5;
-
-/// How often to run collision (1 = every frame, 2 = every other frame, etc.)
-const COLLISION_FRAME_SKIP: u32 = 2;
+use crate::constants::{
+    COLLISION_ENABLED, UNIT_COLLISION_RADIUS, COLLISION_PUSH_STRENGTH,
+    DEFAULT_UNIT_MASS, COLLISION_FRAME_SKIP, STATIONARY_THRESHOLD
+};
 
 /// Hard collision resolution system - pushes overlapping units apart
 /// Runs after animate_march to resolve any remaining overlaps
@@ -43,31 +40,26 @@ pub fn unit_collision_system(
         return;
     }
 
-    // Collect all droid positions and masses (for neighbor lookups)
-    let all_droids: Vec<(Entity, Vec3, f32)> = droids
-        .iter()
-        .map(|(e, t, _, m)| (e, t.translation, m.map(|m| m.0).unwrap_or(DEFAULT_UNIT_MASS)))
-        .collect();
+    // Single pass: collect all droids and determine which are moving
+    // This avoids iterating over 10k units twice
+    let mut moving_droids: Vec<(Entity, Vec3, f32)> = Vec::new();
+    let mut pos_lookup: std::collections::HashMap<Entity, (Vec3, f32)> = std::collections::HashMap::new();
 
-    // Only iterate over moving units (stationary units don't initiate collisions)
-    // Moving units will still collide with stationary neighbors
-    let moving_droids: Vec<(Entity, Vec3, f32)> = droids
-        .iter()
-        .filter(|(_, _, droid, _)| {
-            // Unit is moving if target differs from spawn significantly
-            let dx = droid.target_position.x - droid.spawn_position.x;
-            let dz = droid.target_position.z - droid.spawn_position.z;
-            let target_spawn_dist = (dx * dx + dz * dz).sqrt();
-            target_spawn_dist > STATIONARY_THRESHOLD || droid.returning_to_spawn
-        })
-        .map(|(e, t, _, m)| (e, t.translation, m.map(|m| m.0).unwrap_or(DEFAULT_UNIT_MASS)))
-        .collect();
+    for (entity, transform, droid, mass) in droids.iter() {
+        let pos = transform.translation;
+        let mass_val = mass.map(|m| m.0).unwrap_or(DEFAULT_UNIT_MASS);
 
-    // Build a lookup for ALL droids (moving + stationary) for neighbor checks
-    let pos_lookup: std::collections::HashMap<Entity, (Vec3, f32)> = all_droids
-        .iter()
-        .map(|(e, pos, mass)| (*e, (*pos, *mass)))
-        .collect();
+        // Add to lookup (all droids)
+        pos_lookup.insert(entity, (pos, mass_val));
+
+        // Check if moving
+        let dx = droid.target_position.x - droid.spawn_position.x;
+        let dz = droid.target_position.z - droid.spawn_position.z;
+        let target_spawn_dist = (dx * dx + dz * dz).sqrt();
+        if target_spawn_dist > STATIONARY_THRESHOLD || droid.returning_to_spawn {
+            moving_droids.push((entity, pos, mass_val));
+        }
+    }
 
     let collision_dist = UNIT_COLLISION_RADIUS * 2.0;
     let collision_dist_sq = collision_dist * collision_dist;
