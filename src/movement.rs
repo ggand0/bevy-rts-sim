@@ -11,12 +11,19 @@ pub fn animate_march(
     time: Res<Time>,
     squad_manager: Res<SquadManager>,
     heightmap: Option<Res<TerrainHeightmap>>,
-    mut query: Query<(&mut BattleDroid, &mut Transform, &SquadMember), (Without<KnockbackState>, Without<RagdollDeath>)>,
+    spatial_grid: Res<SpatialGrid>,
+    mut query: Query<(Entity, &mut BattleDroid, &mut Transform, &SquadMember), (Without<KnockbackState>, Without<RagdollDeath>)>,
 ) {
     let time_seconds = time.elapsed_secs();
     let delta_time = time.delta_secs();
 
-    for (droid, mut transform, squad_member) in query.iter_mut() {
+    // Collect all droid positions first for soft avoidance lookups (avoids query conflicts)
+    let droid_positions: std::collections::HashMap<Entity, Vec3> = query
+        .iter()
+        .map(|(e, _, t, _)| (e, t.translation))
+        .collect();
+
+    for (entity, droid, mut transform, squad_member) in query.iter_mut() {
         // Only move if explicitly commanded (no automatic cycling)
         let should_move = if droid.returning_to_spawn {
             // Moving back to spawn position (use horizontal distance)
@@ -48,8 +55,35 @@ pub fn animate_march(
                 current_target.z - transform.translation.z,
             ).normalize_or_zero();
 
+            // Calculate effective speed with soft avoidance
+            let mut effective_speed = MARCH_SPEED * droid.march_speed;
+
+            // Soft avoidance - slow down when near other units (configurable, can be turned off)
+            if SOFT_AVOIDANCE_STRENGTH > 0.0 {
+                let current_pos = transform.translation;
+                let nearby = spatial_grid.get_nearby_droids(current_pos);
+                let mut speed_multiplier: f32 = 1.0;
+
+                for other_entity in nearby {
+                    if other_entity == entity { continue; }
+                    if let Some(&other_pos) = droid_positions.get(&other_entity) {
+                        let dx = current_pos.x - other_pos.x;
+                        let dz = current_pos.z - other_pos.z;
+                        let dist = (dx * dx + dz * dz).sqrt();
+
+                        if dist < SOFT_AVOIDANCE_RADIUS && dist > 0.001 {
+                            let factor = dist / SOFT_AVOIDANCE_RADIUS;
+                            // Blend based on strength setting
+                            let adjusted = 1.0 - (1.0 - factor) * SOFT_AVOIDANCE_STRENGTH;
+                            speed_multiplier = speed_multiplier.min(adjusted);
+                        }
+                    }
+                }
+                effective_speed *= speed_multiplier;
+            }
+
             // Move horizontally towards target
-            let movement = horizontal_dir * MARCH_SPEED * delta_time * droid.march_speed;
+            let movement = horizontal_dir * effective_speed * delta_time;
             transform.translation.x += movement.x;
             transform.translation.z += movement.z;
 

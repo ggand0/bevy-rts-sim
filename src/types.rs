@@ -456,4 +456,11 @@ pub struct RagdollDeath {
 pub struct AreaDamageEvent {
     pub position: Vec3,
     pub scale: f32,  // Multiplier for damage radii
-} 
+}
+
+// ===== UNIT COLLISION SYSTEM =====
+
+/// Unit mass for M2TW-style collision physics
+/// Heavier units push lighter units more
+#[derive(Component)]
+pub struct UnitMass(pub f32); 

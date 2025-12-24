@@ -353,6 +353,7 @@ pub fn spawn_single_squad(
                 local_offset: formation_offset,
                 target_world_position: unit_position,
             },
+            UnitMass(DEFAULT_UNIT_MASS),
         )).id();
 
         // Add unit to squad manager
@@ -590,11 +591,12 @@ fn spawn_team_squads(
                     local_offset: formation_offset,
                     target_world_position: unit_position,
                 },
+                UnitMass(DEFAULT_UNIT_MASS),
             )).id();
-            
+
             // Add unit to squad manager
             squad_manager.add_unit_to_squad(squad_id, droid_entity);
-            
+
             // Set commander if this is the commander unit
             if is_commander {
                 if let Some(squad) = squad_manager.get_squad_mut(squad_id) {
