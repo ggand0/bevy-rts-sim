@@ -8,7 +8,15 @@ use rand::Rng;
 
 use crate::area_damage::sample_terrain_height;
 use crate::constants::*;
-use crate::ground_explosion::{spawn_ground_explosion, FlipbookMaterial, GroundExplosionAssets};
+use crate::ground_explosion::{spawn_ground_explosion, spawn_impact_flash, FlipbookMaterial, GroundExplosionAssets};
+use crate::particles::{
+    spawn_ground_explosion_gpu_sparks,
+    spawn_ground_explosion_gpu_dirt,
+    spawn_ground_explosion_gpu_fireballs,
+    spawn_ground_explosion_gpu_dust,
+    spawn_ground_explosion_gpu_smoke,
+    spawn_ground_explosion_gpu_wisp,
+};
 use crate::selection::utils::screen_to_ground_with_heightmap;
 use crate::selection::visuals::movement::create_arrow_mesh;
 use crate::terrain::TerrainHeightmap;
@@ -372,19 +380,40 @@ pub fn artillery_spawn_system(
         let camera_transform = camera_query.single().ok();
 
         for (position, scale) in shells_to_spawn {
-            // Spawn ground explosion with GPU sparks if available
-            spawn_ground_explosion(
-                &mut commands,
-                assets,
-                &mut flipbook_materials,
-                &mut additive_materials,
-                position,
-                scale,
-                camera_transform,
-                audio_assets.as_deref(),
-                gpu_effects.as_deref(),
-                Some(current_time),
-            );
+            // Play explosion sound
+            if let Some(audio) = audio_assets.as_ref() {
+                let mut rng = rand::thread_rng();
+                let sound = audio.get_random_ground_explosion_sound(&mut rng);
+                commands.spawn((
+                    AudioPlayer::new(sound),
+                    PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::Linear(VOLUME_EXPLOSION)),
+                ));
+            }
+
+            // Spawn FULL GPU explosion (all emitters)
+            if let Some(effects) = gpu_effects.as_ref() {
+                spawn_ground_explosion_gpu_sparks(&mut commands, effects, position, scale, current_time);
+                spawn_ground_explosion_gpu_dirt(&mut commands, effects, position, scale, current_time);
+                spawn_ground_explosion_gpu_fireballs(&mut commands, effects, position, scale, current_time);
+                spawn_ground_explosion_gpu_dust(&mut commands, effects, position, scale, current_time);
+                spawn_ground_explosion_gpu_smoke(&mut commands, effects, position, scale, current_time);
+                spawn_ground_explosion_gpu_wisp(&mut commands, effects, position, scale, current_time);
+                spawn_impact_flash(&mut commands, assets, &mut flipbook_materials, &mut additive_materials, position, scale, 0.1);
+            } else {
+                // Fallback to CPU/GPU mix if GPU effects not available
+                spawn_ground_explosion(
+                    &mut commands,
+                    assets,
+                    &mut flipbook_materials,
+                    &mut additive_materials,
+                    position,
+                    scale,
+                    camera_transform,
+                    audio_assets.as_deref(),
+                    None, // No GPU effects in fallback
+                    Some(current_time),
+                );
+            }
 
             // Fire area damage event
             area_damage_events.write(AreaDamageEvent { position, scale });
