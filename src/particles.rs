@@ -3,6 +3,31 @@
 use bevy::prelude::*;
 use bevy_hanabi::prelude::*;
 
+// =============================================================================
+// Color Constants for Particle Effects
+// =============================================================================
+
+/// Dark brown color for dirt/debris particles
+const COLOR_DIRT_BROWN: Vec3 = Vec3::new(0.082, 0.063, 0.050);
+
+/// White for untinted sprites (parts debris uses texture color)
+const COLOR_WHITE: Vec3 = Vec3::new(1.0, 1.0, 1.0);
+
+// =============================================================================
+// Gradient Helpers
+// =============================================================================
+
+/// Creates a color gradient that fades in, holds, then fades out.
+/// Pattern: 0% invisible → fade_in% visible → hold_end% visible → 100% invisible
+fn gradient_fade_in_hold_out(color: Vec3, fade_in: f32, hold_end: f32) -> bevy_hanabi::Gradient<Vec4> {
+    let mut gradient = bevy_hanabi::Gradient::new();
+    gradient.add_key(0.0, color.extend(0.0));       // Start invisible
+    gradient.add_key(fade_in, color.extend(1.0));  // Fade in
+    gradient.add_key(hold_end, color.extend(1.0)); // Hold visible
+    gradient.add_key(1.0, color.extend(0.0));      // Fade out
+    gradient
+}
+
 pub struct ParticleEffectsPlugin;
 
 impl Plugin for ParticleEffectsPlugin {
@@ -712,11 +737,7 @@ fn setup_particle_effects(
     let ground_parts_texture: Handle<Image> = asset_server.load("textures/generated/debris_sprites.png");
 
     // Color gradient: white (texture provides color), alpha for fade in/out
-    let mut parts_color_gradient = bevy_hanabi::Gradient::new();
-    parts_color_gradient.add_key(0.0, Vec4::new(1.0, 1.0, 1.0, 0.0));   // Start invisible
-    parts_color_gradient.add_key(0.1, Vec4::new(1.0, 1.0, 1.0, 1.0));   // Fade in by 10%
-    parts_color_gradient.add_key(0.9, Vec4::new(1.0, 1.0, 1.0, 1.0));   // Hold visible
-    parts_color_gradient.add_key(1.0, Vec4::new(1.0, 1.0, 1.0, 0.0));   // Fade out at end
+    let parts_color_gradient = gradient_fade_in_hold_out(COLOR_WHITE, 0.1, 0.9);
 
     // Size gradient: grow-in, hold, shrink-out matching CPU scale curve
     let mut parts_size_gradient = bevy_hanabi::Gradient::new();
@@ -805,11 +826,7 @@ fn setup_particle_effects(
     let ground_dirt_texture: Handle<Image> = asset_server.load("textures/premium/ground_explosion/dirt.png");
 
     // Color gradient: dark brown with alpha fade-in/out
-    let mut dirt_color_gradient = bevy_hanabi::Gradient::new();
-    dirt_color_gradient.add_key(0.0, Vec4::new(0.082, 0.063, 0.050, 0.0));   // Start invisible
-    dirt_color_gradient.add_key(0.1, Vec4::new(0.082, 0.063, 0.050, 1.0));   // Fade in
-    dirt_color_gradient.add_key(0.7, Vec4::new(0.082, 0.063, 0.050, 1.0));   // Hold
-    dirt_color_gradient.add_key(1.0, Vec4::new(0.082, 0.063, 0.050, 0.0));   // Fade out
+    let dirt_color_gradient = gradient_fade_in_hold_out(COLOR_DIRT_BROWN, 0.1, 0.7);
 
     // Size gradient: shrink over lifetime (CPU uses scale curve)
     // Non-uniform size handled by initial SIZE3 attribute
@@ -887,11 +904,7 @@ fn setup_particle_effects(
     //   Orientation: VelocityAligned
 
     // Color gradient: same dark brown with alpha fade
-    let mut vdirt_color_gradient = bevy_hanabi::Gradient::new();
-    vdirt_color_gradient.add_key(0.0, Vec4::new(0.082, 0.063, 0.050, 0.0));
-    vdirt_color_gradient.add_key(0.1, Vec4::new(0.082, 0.063, 0.050, 1.0));
-    vdirt_color_gradient.add_key(0.7, Vec4::new(0.082, 0.063, 0.050, 1.0));
-    vdirt_color_gradient.add_key(1.0, Vec4::new(0.082, 0.063, 0.050, 0.0));
+    let vdirt_color_gradient = gradient_fade_in_hold_out(COLOR_DIRT_BROWN, 0.1, 0.7);
 
     // Size gradient for velocity-aligned particles
     // CPU Dirt001ScaleOverLife: Linear GROWTH from 1.0 to 2.0 (opposite of dirt!)
@@ -1868,6 +1881,41 @@ fn cleanup_finished_particle_effects(
     let _ = (start, entity_count); // suppress warnings
 }
 
+// =============================================================================
+// GPU Effect Spawn Helpers
+// =============================================================================
+
+/// Helper to spawn a single GPU particle effect with standard components
+fn spawn_gpu_effect(
+    commands: &mut Commands,
+    effect: Handle<EffectAsset>,
+    texture: Handle<Image>,
+    position: Vec3,
+    scale: f32,
+    current_time: f64,
+    seed_offset: u32,
+    duration: f32,
+    name: &'static str,
+) {
+    let seed = (current_time * 1000000.0) as u32;
+    commands.spawn((
+        ParticleEffect {
+            handle: effect,
+            prng_seed: Some(seed.wrapping_add(seed_offset)),
+        },
+        EffectMaterial {
+            images: vec![texture],
+        },
+        Transform::from_translation(position).with_scale(Vec3::splat(scale)),
+        Visibility::Visible,
+        ParticleEffectLifetime {
+            spawn_time: current_time,
+            duration,
+        },
+        Name::new(name),
+    ));
+}
+
 /// Spawns GPU-based particles for ground explosions
 /// Replaces CPU spark and parts entities with 3 GPU particle effects:
 /// - Sparks: 30-60 CPU entities → 1 GPU effect
@@ -1881,64 +1929,29 @@ pub fn spawn_ground_explosion_gpu_sparks(
     scale: f32,
     current_time: f64,
 ) {
-    // Generate unique seeds from current time to ensure randomization per spawn
-    let seed = (current_time * 1000000.0) as u32;
-
     // GPU Sparks (replaces spawn_sparks - 30-60 entities → 1 GPU effect)
-    commands.spawn((
-        ParticleEffect {
-            handle: particle_effects.ground_sparks_effect.clone(),
-            prng_seed: Some(seed),
-        },
-        EffectMaterial {
-            images: vec![particle_effects.ground_sparks_texture.clone()],
-        },
-        Transform::from_translation(position).with_scale(Vec3::splat(scale)),
-        Visibility::Visible,
-        ParticleEffectLifetime {
-            spawn_time: current_time,
-            duration: 3.0,
-        },
-        Name::new("GE_GPU_Sparks"),
-    ));
+    spawn_gpu_effect(
+        commands,
+        particle_effects.ground_sparks_effect.clone(),
+        particle_effects.ground_sparks_texture.clone(),
+        position, scale, current_time, 0, 3.0, "GE_GPU_Sparks",
+    );
 
     // GPU Flash Sparks (replaces spawn_flash_sparks - 20-50 entities → 1 GPU effect)
-    // Use different seed to avoid correlation
-    commands.spawn((
-        ParticleEffect {
-            handle: particle_effects.ground_flash_sparks_effect.clone(),
-            prng_seed: Some(seed.wrapping_add(12345)),
-        },
-        EffectMaterial {
-            images: vec![particle_effects.ground_sparks_texture.clone()],
-        },
-        Transform::from_translation(position).with_scale(Vec3::splat(scale)),
-        Visibility::Visible,
-        ParticleEffectLifetime {
-            spawn_time: current_time,
-            duration: 2.0,
-        },
-        Name::new("GE_GPU_FlashSparks"),
-    ));
+    spawn_gpu_effect(
+        commands,
+        particle_effects.ground_flash_sparks_effect.clone(),
+        particle_effects.ground_sparks_texture.clone(),
+        position, scale, current_time, 12345, 2.0, "GE_GPU_FlashSparks",
+    );
 
     // GPU Parts Debris (replaces spawn_parts - 50-75 entities → 1 GPU effect)
-    // Uses sprite sheet of baked 3D debris meshes
-    commands.spawn((
-        ParticleEffect {
-            handle: particle_effects.ground_parts_effect.clone(),
-            prng_seed: Some(seed.wrapping_add(67890)),
-        },
-        EffectMaterial {
-            images: vec![particle_effects.ground_parts_texture.clone()],
-        },
-        Transform::from_translation(position).with_scale(Vec3::splat(scale)),
-        Visibility::Visible,
-        ParticleEffectLifetime {
-            spawn_time: current_time,
-            duration: 2.0,
-        },
-        Name::new("GE_GPU_Parts"),
-    ));
+    spawn_gpu_effect(
+        commands,
+        particle_effects.ground_parts_effect.clone(),
+        particle_effects.ground_parts_texture.clone(),
+        position, scale, current_time, 67890, 2.0, "GE_GPU_Parts",
+    );
 }
 
 /// Spawns GPU-based dirt particles for ground explosions
@@ -1953,44 +1966,21 @@ pub fn spawn_ground_explosion_gpu_dirt(
     scale: f32,
     current_time: f64,
 ) {
-    // Generate unique seeds from current time to ensure randomization per spawn
-    let seed = (current_time * 1000000.0) as u32;
-
     // GPU Dirt Debris (replaces spawn_dirt_debris - 35 entities → 1 GPU effect)
-    commands.spawn((
-        ParticleEffect {
-            handle: particle_effects.ground_dirt_effect.clone(),
-            prng_seed: Some(seed.wrapping_add(111111)),
-        },
-        EffectMaterial {
-            images: vec![particle_effects.ground_dirt_texture.clone()],
-        },
-        Transform::from_translation(position).with_scale(Vec3::splat(scale)),
-        Visibility::Visible,
-        ParticleEffectLifetime {
-            spawn_time: current_time,
-            duration: 5.0, // Longer lifetime for dirt (1-4s particles)
-        },
-        Name::new("GE_GPU_Dirt"),
-    ));
+    spawn_gpu_effect(
+        commands,
+        particle_effects.ground_dirt_effect.clone(),
+        particle_effects.ground_dirt_texture.clone(),
+        position, scale, current_time, 111111, 5.0, "GE_GPU_Dirt",
+    );
 
     // GPU Velocity Dirt (replaces spawn_velocity_dirt - 10-15 entities → 1 GPU effect)
-    commands.spawn((
-        ParticleEffect {
-            handle: particle_effects.ground_vdirt_effect.clone(),
-            prng_seed: Some(seed.wrapping_add(222222)),
-        },
-        EffectMaterial {
-            images: vec![particle_effects.ground_dirt_texture.clone()],
-        },
-        Transform::from_translation(position).with_scale(Vec3::splat(scale)),
-        Visibility::Visible,
-        ParticleEffectLifetime {
-            spawn_time: current_time,
-            duration: 3.0, // Shorter lifetime for velocity dirt (0.8-1.7s particles)
-        },
-        Name::new("GE_GPU_VDirt"),
-    ));
+    spawn_gpu_effect(
+        commands,
+        particle_effects.ground_vdirt_effect.clone(),
+        particle_effects.ground_dirt_texture.clone(),
+        position, scale, current_time, 222222, 3.0, "GE_GPU_VDirt",
+    );
 }
 
 /// Spawns GPU fireball particles for ground explosions
@@ -2002,28 +1992,13 @@ pub fn spawn_ground_explosion_gpu_fireballs(
     scale: f32,
     current_time: f64,
 ) {
-    // Generate unique seed from current time
-    let seed = (current_time * 1000000.0) as u32;
-
     // GPU Fireballs (replaces CPU main + secondary fireball - ~16-30 entities → 1 GPU effect)
-    // Note: Position offset to simulate bottom pivot (fireball expands from bottom)
-    // CPU bottom pivot moved transform down by half height, we approximate with Y offset
-    commands.spawn((
-        ParticleEffect {
-            handle: particle_effects.ground_fireball_effect.clone(),
-            prng_seed: Some(seed.wrapping_add(333333)),
-        },
-        EffectMaterial {
-            images: vec![particle_effects.ground_fireball_texture.clone()],
-        },
-        Transform::from_translation(position).with_scale(Vec3::splat(scale)),
-        Visibility::Visible,
-        ParticleEffectLifetime {
-            spawn_time: current_time,
-            duration: 2.0, // 1.5s particles + buffer
-        },
-        Name::new("GE_GPU_Fireball"),
-    ));
+    spawn_gpu_effect(
+        commands,
+        particle_effects.ground_fireball_effect.clone(),
+        particle_effects.ground_fireball_texture.clone(),
+        position, scale, current_time, 333333, 2.0, "GE_GPU_Fireball",
+    );
 }
 
 /// Spawn GPU dust ring effect (replaces CPU dust_ring - 2-3 entities → 1 GPU effect)
@@ -2035,26 +2010,13 @@ pub fn spawn_ground_explosion_gpu_dust(
     scale: f32,
     current_time: f64,
 ) {
-    // Generate unique seed from current time
-    let seed = (current_time * 1000000.0) as u32;
-
     // GPU Dust Ring (replaces CPU dust_ring - 2-3 entities → 1 GPU effect)
-    commands.spawn((
-        ParticleEffect {
-            handle: particle_effects.ground_dust_effect.clone(),
-            prng_seed: Some(seed.wrapping_add(444444)),
-        },
-        EffectMaterial {
-            images: vec![particle_effects.ground_dust_texture.clone()],
-        },
-        Transform::from_translation(position).with_scale(Vec3::splat(scale)),
-        Visibility::Visible,
-        ParticleEffectLifetime {
-            spawn_time: current_time,
-            duration: 1.0, // 0.1-0.5s particles + buffer
-        },
-        Name::new("GE_GPU_Dust"),
-    ));
+    spawn_gpu_effect(
+        commands,
+        particle_effects.ground_dust_effect.clone(),
+        particle_effects.ground_dust_texture.clone(),
+        position, scale, current_time, 444444, 1.0, "GE_GPU_Dust",
+    );
 }
 
 /// Spawn GPU smoke cloud for ground explosion
@@ -2066,26 +2028,13 @@ pub fn spawn_ground_explosion_gpu_smoke(
     scale: f32,
     current_time: f64,
 ) {
-    // Generate unique seed from current time
-    let seed = (current_time * 1000000.0) as u32;
-
     // GPU Smoke Cloud (replaces CPU smoke_cloud - 10-15 entities → 1 GPU effect)
-    commands.spawn((
-        ParticleEffect {
-            handle: particle_effects.ground_smoke_effect.clone(),
-            prng_seed: Some(seed.wrapping_add(555555)),
-        },
-        EffectMaterial {
-            images: vec![particle_effects.ground_smoke_texture.clone()],
-        },
-        Transform::from_translation(position).with_scale(Vec3::splat(scale)),
-        Visibility::Visible,
-        ParticleEffectLifetime {
-            spawn_time: current_time,
-            duration: 4.0, // 0.8-2.5s particles + buffer
-        },
-        Name::new("GE_GPU_Smoke"),
-    ));
+    spawn_gpu_effect(
+        commands,
+        particle_effects.ground_smoke_effect.clone(),
+        particle_effects.ground_smoke_texture.clone(),
+        position, scale, current_time, 555555, 4.0, "GE_GPU_Smoke",
+    );
 }
 
 /// Spawn GPU wisp puffs for ground explosion
@@ -2097,24 +2046,11 @@ pub fn spawn_ground_explosion_gpu_wisp(
     scale: f32,
     current_time: f64,
 ) {
-    // Generate unique seed from current time
-    let seed = (current_time * 1000000.0) as u32;
-
     // GPU Wisp Puffs (replaces CPU wisps - 3 entities → 1 GPU effect)
-    commands.spawn((
-        ParticleEffect {
-            handle: particle_effects.ground_wisp_effect.clone(),
-            prng_seed: Some(seed.wrapping_add(666666)),
-        },
-        EffectMaterial {
-            images: vec![particle_effects.ground_wisp_texture.clone()],
-        },
-        Transform::from_translation(position).with_scale(Vec3::splat(scale)),
-        Visibility::Visible,
-        ParticleEffectLifetime {
-            spawn_time: current_time,
-            duration: 3.0, // 1.0-2.0s particles + buffer
-        },
-        Name::new("GE_GPU_Wisp"),
-    ));
+    spawn_gpu_effect(
+        commands,
+        particle_effects.ground_wisp_effect.clone(),
+        particle_effects.ground_wisp_texture.clone(),
+        position, scale, current_time, 666666, 3.0, "GE_GPU_Wisp",
+    );
 }
