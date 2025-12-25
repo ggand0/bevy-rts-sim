@@ -98,8 +98,10 @@ fn main() {
             update_commander_markers_system,
         ))
         .add_systems(Update, (
+            // Movement tracking for accuracy system (must run before animate_march)
+            movement::update_movement_tracker,
             // Animation and movement systems run after formation corrections
-            movement::animate_march,
+            movement::animate_march.after(movement::update_movement_tracker),
             movement::update_fps_display,
             movement::rts_camera_movement,
         ))
@@ -113,6 +115,7 @@ fn main() {
             selection::box_selection_update_system,
             selection::move_command_system,
             selection::group_command_system,
+            selection::hold_command_system,
         ).chain())
         .add_systems(Update, (
             // Selection visual feedback

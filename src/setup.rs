@@ -354,6 +354,8 @@ pub fn spawn_single_squad(
                 target_world_position: unit_position,
             },
             UnitMass(DEFAULT_UNIT_MASS),
+            MovementMode::default(),
+            MovementTracker::new(unit_position),
         )).id();
 
         // Add unit to squad manager
@@ -592,6 +594,8 @@ fn spawn_team_squads(
                     target_world_position: unit_position,
                 },
                 UnitMass(DEFAULT_UNIT_MASS),
+                MovementMode::default(),
+                MovementTracker::new(unit_position),
             )).id();
 
             // Add unit to squad manager

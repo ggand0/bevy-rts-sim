@@ -7,12 +7,37 @@ use crate::terrain::TerrainHeightmap;
 
 /// Unit Y offset above terrain (mesh origin is now at feet, so no offset needed)
 
+/// Updates MovementTracker for all droids - tracks stationary state for accuracy bonuses
+pub fn update_movement_tracker(
+    time: Res<Time>,
+    mut query: Query<(&Transform, &mut MovementTracker), With<BattleDroid>>,
+) {
+    let delta_time = time.delta_secs();
+
+    for (transform, mut tracker) in query.iter_mut() {
+        let current_pos = transform.translation;
+        let distance_moved = (current_pos - tracker.last_position).length();
+
+        if distance_moved < ACCURACY_MOVEMENT_THRESHOLD {
+            // Unit hasn't moved significantly - accumulate stationary time
+            tracker.stationary_timer += delta_time;
+            tracker.is_stationary = tracker.stationary_timer >= ACCURACY_STATIONARY_TIME_THRESHOLD;
+        } else {
+            // Unit moved - reset stationary timer
+            tracker.stationary_timer = 0.0;
+            tracker.is_stationary = false;
+        }
+
+        tracker.last_position = current_pos;
+    }
+}
+
 pub fn animate_march(
     time: Res<Time>,
     squad_manager: Res<SquadManager>,
     heightmap: Option<Res<TerrainHeightmap>>,
     spatial_grid: Res<SpatialGrid>,
-    mut query: Query<(Entity, &mut BattleDroid, &mut Transform, &SquadMember), (Without<KnockbackState>, Without<RagdollDeath>)>,
+    mut query: Query<(Entity, &mut BattleDroid, &mut Transform, &SquadMember, &MovementMode, &CombatUnit), (Without<KnockbackState>, Without<RagdollDeath>)>,
 ) {
     let time_seconds = time.elapsed_secs();
     let delta_time = time.delta_secs();
@@ -20,14 +45,23 @@ pub fn animate_march(
     // Collect all droid positions first for soft avoidance lookups (avoids query conflicts)
     // Only build HashMap if soft avoidance is enabled
     let droid_positions: std::collections::HashMap<Entity, Vec3> = if SOFT_AVOIDANCE_STRENGTH > 0.0 {
-        query.iter().map(|(e, _, t, _)| (e, t.translation)).collect()
+        query.iter().map(|(e, _, t, _, _, _)| (e, t.translation)).collect()
     } else {
         std::collections::HashMap::new()
     };
 
-    for (entity, droid, mut transform, squad_member) in query.iter_mut() {
+    for (entity, droid, mut transform, squad_member, movement_mode, combat_unit) in query.iter_mut() {
+        // Check movement mode - Hold always stops, AttackMove stops when engaged
+        let mode_allows_movement = match movement_mode {
+            MovementMode::Hold => false,
+            MovementMode::AttackMove => combat_unit.current_target.is_none(), // Stop if engaged
+            MovementMode::Move => true, // Always allow movement
+        };
+
         // Only move if explicitly commanded (no automatic cycling)
-        let should_move = if droid.returning_to_spawn {
+        let should_move = if !mode_allows_movement {
+            false
+        } else if droid.returning_to_spawn {
             // Moving back to spawn position (use horizontal distance)
             let dx = transform.translation.x - droid.spawn_position.x;
             let dz = transform.translation.z - droid.spawn_position.z;

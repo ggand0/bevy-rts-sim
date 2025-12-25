@@ -233,3 +233,59 @@ pub fn box_selection_update_system(
         selection_state.is_box_selecting = true;
     }
 }
+
+/// System: Toggle Hold mode for selected squads with H key
+pub fn hold_command_system(
+    keyboard: Res<ButtonInput<KeyCode>>,
+    selection_state: Res<SelectionState>,
+    squad_manager: Res<SquadManager>,
+    mut droid_query: Query<(&SquadMember, &mut MovementMode), With<BattleDroid>>,
+) {
+    if keyboard.just_pressed(KeyCode::KeyH) {
+        if selection_state.selected_squads.is_empty() {
+            return;
+        }
+
+        // Count current hold/move states to determine toggle direction
+        let mut hold_count = 0;
+        let mut move_count = 0;
+
+        for &squad_id in &selection_state.selected_squads {
+            if squad_manager.get_squad(squad_id).is_some() {
+                // Count modes for units in this squad
+                for (squad_member, mode) in droid_query.iter() {
+                    if squad_member.squad_id == squad_id {
+                        match *mode {
+                            MovementMode::Hold => hold_count += 1,
+                            _ => move_count += 1,
+                        }
+                    }
+                }
+            }
+        }
+
+        // Toggle: if more are holding, switch to Move; otherwise switch to Hold
+        let new_mode = if hold_count > move_count {
+            MovementMode::Move
+        } else {
+            MovementMode::Hold
+        };
+
+        // Apply new mode to all units in selected squads
+        let mut units_affected = 0;
+        for (squad_member, mut mode) in droid_query.iter_mut() {
+            if selection_state.selected_squads.contains(&squad_member.squad_id) {
+                *mode = new_mode;
+                units_affected += 1;
+            }
+        }
+
+        if units_affected > 0 {
+            info!(
+                "Toggled {} units to {:?} mode",
+                units_affected,
+                new_mode
+            );
+        }
+    }
+}

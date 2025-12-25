@@ -128,6 +128,7 @@ pub struct LaserProjectile {
     pub velocity: Vec3,
     pub lifetime: f32,
     pub team: Team, // Track which team fired this laser
+    pub origin: Vec3, // Where the shot originated (for accuracy calculations)
 }
 
 #[derive(Component)]
@@ -464,4 +465,46 @@ pub struct AreaDamageEvent {
 /// Heavier units push lighter units more
 #[derive(Component)]
 pub struct UnitMass(pub f32);
+
+// ===== MOVEMENT MODES (EaW-style) =====
+
+/// Movement mode for units - controls behavior when engaging enemies
+#[derive(Component, Default, Clone, Copy, PartialEq, Eq, Debug)]
+pub enum MovementMode {
+    #[default]
+    Move,        // March to destination, fire on the move (default behavior)
+    AttackMove,  // Stop when engaged with an enemy
+    Hold,        // Stay in position, don't move at all
+}
+
+// ===== ACCURACY SYSTEM =====
+
+/// Tracks unit movement for accuracy calculations
+/// Stationary units get accuracy bonuses, moving units/targets get penalties
+#[derive(Component)]
+pub struct MovementTracker {
+    pub last_position: Vec3,
+    pub stationary_timer: f32,  // Time spent not moving (seconds)
+    pub is_stationary: bool,    // True if stationary > threshold
+}
+
+impl Default for MovementTracker {
+    fn default() -> Self {
+        Self {
+            last_position: Vec3::ZERO,
+            stationary_timer: 0.0,
+            is_stationary: true,  // Start as stationary (just spawned)
+        }
+    }
+}
+
+impl MovementTracker {
+    pub fn new(position: Vec3) -> Self {
+        Self {
+            last_position: position,
+            stationary_timer: 0.0,
+            is_stationary: true,
+        }
+    }
+}
  

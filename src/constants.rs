@@ -167,3 +167,29 @@ pub const DEFAULT_UNIT_MASS: f32 = 1.0;
 pub const COLLISION_FRAME_SKIP: u32 = 2;
 /// Threshold for considering a unit "stationary" (target ~= spawn)
 pub const STATIONARY_THRESHOLD: f32 = 0.5;
+
+// ===== ACCURACY SYSTEM =====
+
+/// Infantry base hit chance (70%)
+pub const INFANTRY_BASE_ACCURACY: f32 = 0.70;
+/// Turret base hit chance (80% - stationary emplacements are more accurate)
+pub const TURRET_BASE_ACCURACY: f32 = 0.80;
+/// Bonus for shooter being stationary (+15%)
+pub const ACCURACY_STATIONARY_BONUS: f32 = 0.15;
+/// Bonus for having high ground (+10%) - shooter must be 3+ units higher
+pub const ACCURACY_HIGH_GROUND_BONUS: f32 = 0.10;
+/// Height difference required for high ground bonus
+pub const HIGH_GROUND_HEIGHT_THRESHOLD: f32 = 3.0;
+/// Penalty for target moving (-10%)
+pub const ACCURACY_TARGET_MOVING_PENALTY: f32 = 0.10;
+/// Range falloff: -5% per 50 units beyond 50 units
+pub const ACCURACY_RANGE_FALLOFF_START: f32 = 50.0;
+pub const ACCURACY_RANGE_FALLOFF_PER_50U: f32 = 0.05;
+/// Minimum accuracy (30%) - always some hit chance
+pub const ACCURACY_MIN: f32 = 0.30;
+/// Maximum accuracy (95%) - always some miss chance
+pub const ACCURACY_MAX: f32 = 0.95;
+/// Time threshold for unit to be considered "stationary" for accuracy bonus (seconds)
+pub const ACCURACY_STATIONARY_TIME_THRESHOLD: f32 = 0.5;
+/// Movement distance threshold - moved more than this = not stationary
+pub const ACCURACY_MOVEMENT_THRESHOLD: f32 = 0.3;
