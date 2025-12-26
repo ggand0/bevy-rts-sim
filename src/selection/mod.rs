@@ -16,6 +16,7 @@ mod movement;
 pub mod visuals;
 mod obb;
 pub mod utils;
+mod ui;
 
 // Re-export main types for external use
 pub use state::SelectionState;
@@ -34,3 +35,4 @@ pub use visuals::{
     update_group_bounding_box_debug,
     update_squad_path_arrows,
 };
+pub use ui::{spawn_squad_details_ui, update_squad_details_ui};

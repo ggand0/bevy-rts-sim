@@ -7,6 +7,7 @@ use crate::types::*;
 use crate::constants::*;
 use crate::formation::*;
 use crate::terrain::TerrainHeightmap;
+use crate::selection::spawn_squad_details_ui;
 
 pub fn setup_scene(
     mut commands: Commands,
@@ -116,6 +117,9 @@ pub fn setup_scene(
         BackgroundColor(Color::NONE),  // Transparent background
         FpsText,
     ));
+
+    // Squad details UI (bottom-left, for debugging)
+    spawn_squad_details_ui(&mut commands);
 }
 
 pub fn spawn_army_with_squads(
