@@ -343,6 +343,7 @@ pub fn spawn_single_squad(
                 target_scan_timer: rng.gen_range(0.0..TARGET_SCAN_INTERVAL),
                 auto_fire_timer: rng.gen_range(0.0..AUTO_FIRE_INTERVAL),
                 current_target: None,
+                blocked_timer: 0.0,
             },
             SquadMember {
                 squad_id,
@@ -583,6 +584,7 @@ fn spawn_team_squads(
                     target_scan_timer: rng.gen_range(0.0..TARGET_SCAN_INTERVAL),
                     auto_fire_timer: rng.gen_range(0.0..AUTO_FIRE_INTERVAL),
                     current_target: None,
+                    blocked_timer: 0.0,
                 },
                 SquadMember {
                     squad_id,

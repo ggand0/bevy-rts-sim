@@ -193,3 +193,6 @@ pub const ACCURACY_MAX: f32 = 0.95;
 pub const ACCURACY_STATIONARY_TIME_THRESHOLD: f32 = 0.5;
 /// Movement distance threshold - moved more than this = not stationary
 pub const ACCURACY_MOVEMENT_THRESHOLD: f32 = 0.3;
+/// Time before clearing target if unit can't fire (stuck prevention for AttackMove)
+/// Should be longer than AUTO_FIRE_INTERVAL to allow normal fire cycles
+pub const BLOCKED_TARGET_TIMEOUT: f32 = 3.0;

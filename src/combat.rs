@@ -777,6 +777,9 @@ pub fn hitscan_fire_system(
                         continue;
                     }
 
+                    // Successfully firing - reset blocked timer (stuck prevention)
+                    combat_unit.blocked_timer = 0.0;
+
                     // === ACCURACY CHECK ===
                     let hit_chance = calculate_hit_chance(
                         INFANTRY_BASE_ACCURACY,
@@ -1297,5 +1300,29 @@ pub fn visualize_collision_spheres_system(
             Transform::from_translation(global_transform.translation()),
             DebugCollisionSphere,
         ));
+    }
+}
+
+/// System: Clear targets that have been blocked for too long
+/// Prevents AttackMove units from getting stuck when they can't shoot
+pub fn clear_blocked_targets_system(
+    time: Res<Time>,
+    mut query: Query<&mut CombatUnit, With<BattleDroid>>,
+) {
+    let delta_time = time.delta_secs();
+
+    for mut combat in query.iter_mut() {
+        if combat.current_target.is_some() {
+            combat.blocked_timer += delta_time;
+
+            // If blocked for too long, give up on this target
+            if combat.blocked_timer > BLOCKED_TARGET_TIMEOUT {
+                combat.current_target = None;
+                combat.blocked_timer = 0.0;
+            }
+        } else {
+            // No target - reset timer
+            combat.blocked_timer = 0.0;
+        }
     }
 } 

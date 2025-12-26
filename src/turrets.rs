@@ -119,6 +119,7 @@ fn spawn_mg_turret_internal(
             target_scan_timer: 0.0,
             auto_fire_timer: 0.3, // Faster fire rate for MG
             current_target: None,
+            blocked_timer: 0.0,
         },
         TurretRotatingAssembly {
             current_barrel_index: 0,
@@ -217,6 +218,7 @@ fn spawn_heavy_turret_internal(
             target_scan_timer: 0.0,
             auto_fire_timer: 2.0,
             current_target: None,
+            blocked_timer: 0.0,
         },
         TurretRotatingAssembly {
             current_barrel_index: 0,

@@ -136,6 +136,7 @@ pub struct CombatUnit {
     pub target_scan_timer: f32,
     pub auto_fire_timer: f32,
     pub current_target: Option<Entity>,
+    pub blocked_timer: f32,  // Time with target but no successful fire (for stuck prevention)
 }
 
 // Audio resources

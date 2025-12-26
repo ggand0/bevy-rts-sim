@@ -130,6 +130,7 @@ fn main() {
         .add_systems(Update, (
             // Combat systems
             target_acquisition_system,
+            clear_blocked_targets_system, // Stuck prevention for AttackMove
             hitscan_fire_system,      // Infantry use hitscan (instant damage + visual tracer)
             auto_fire_system,         // Turrets still use projectiles
             volley_fire_system,
