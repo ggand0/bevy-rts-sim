@@ -63,6 +63,7 @@ fn main() {
         .insert_resource(GameState::default())
         .insert_resource(ExplosionDebugMode::default())
         .insert_resource(selection::SelectionState::default())
+        .insert_resource(selection::SquadCombatCache::default())
         .insert_resource(ground_explosion::GroundExplosionDebugMenu::default())
         .insert_resource(artillery::ArtilleryState::default())
         .add_event::<AreaDamageEvent>()

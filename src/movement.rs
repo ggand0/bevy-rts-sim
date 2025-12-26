@@ -18,7 +18,8 @@ pub fn update_movement_tracker(
         let current_pos = transform.translation;
         let distance_moved = (current_pos - tracker.last_position).length();
 
-        if distance_moved < ACCURACY_MOVEMENT_THRESHOLD {
+        // Threshold is units/second, so multiply by delta_time for per-frame check
+        if distance_moved < ACCURACY_MOVEMENT_THRESHOLD * delta_time {
             // Unit hasn't moved significantly - accumulate stationary time
             tracker.stationary_timer += delta_time;
             tracker.is_stationary = tracker.stationary_timer >= ACCURACY_STATIONARY_TIME_THRESHOLD;
