@@ -5,10 +5,11 @@ use std::collections::HashMap;
 
 use crate::types::{BattleDroid, CombatUnit, MovementMode, MovementTracker, SquadManager, SquadMember, Team};
 use crate::constants::{
-    INFANTRY_BASE_ACCURACY, ACCURACY_STATIONARY_BONUS, ACCURACY_HIGH_GROUND_BONUS,
+    SQUAD_SIZE, INFANTRY_BASE_ACCURACY, ACCURACY_STATIONARY_BONUS, ACCURACY_HIGH_GROUND_BONUS,
     ACCURACY_TARGET_MOVING_PENALTY, ACCURACY_RANGE_FALLOFF_START, ACCURACY_RANGE_FALLOFF_PER_50U,
-    HIGH_GROUND_HEIGHT_THRESHOLD, ACCURACY_MIN, ACCURACY_MAX,
+    HIGH_GROUND_HEIGHT_THRESHOLD,
 };
+use crate::combat::calculate_hit_chance;
 use super::state::SelectionState;
 
 /// Marker component for the squad details UI panel
@@ -54,6 +55,117 @@ impl ColoredSegment {
     fn default_color(text: impl Into<String>) -> Self {
         Self { text: text.into(), color: COLOR_DEFAULT }
     }
+}
+
+/// Wrapper to call calculate_hit_chance with pre-computed boolean conditions.
+/// Constructs synthetic positions that yield the same results as the booleans.
+fn ui_accuracy_estimate(
+    shooter_stationary: bool,
+    has_high_ground: bool,
+    target_stationary: bool,
+    avg_distance: f32,
+) -> f32 {
+    // Construct positions that yield correct high_ground check in calculate_hit_chance
+    let height = if has_high_ground { HIGH_GROUND_HEIGHT_THRESHOLD + 1.0 } else { 0.0 };
+    let shooter_pos = Vec3::new(0.0, height, 0.0);
+    // Adjust horizontal distance so 3D distance approximates avg_distance
+    let horiz_dist = (avg_distance.powi(2) - height.powi(2)).max(0.0).sqrt();
+    let target_pos = Vec3::new(horiz_dist, 0.0, 0.0);
+
+    calculate_hit_chance(INFANTRY_BASE_ACCURACY, shooter_pos, target_pos, shooter_stationary, target_stationary)
+}
+
+/// Build accuracy modifier segments for engaged combat state
+fn build_accuracy_segments_engaged(
+    segments: &mut Vec<ColoredSegment>,
+    has_stationary_bonus: bool,
+    has_high_ground: bool,
+    targets_moving: bool,
+    avg_distance: f32,
+    avg_height_diff: f32,
+) {
+    // High ground - green if active, grey if not
+    if has_high_ground {
+        segments.push(ColoredSegment::new(format!("\n  +High Ground: +{:.0}%", ACCURACY_HIGH_GROUND_BONUS * 100.0), COLOR_GREEN));
+    } else {
+        segments.push(ColoredSegment::new("\n  High Ground: --".to_string(), COLOR_GREY));
+    }
+
+    // Target moving - red penalty if active, grey if not
+    if targets_moving {
+        segments.push(ColoredSegment::new(format!("\n  -Target Moving: -{:.0}%", ACCURACY_TARGET_MOVING_PENALTY * 100.0), COLOR_RED));
+    } else {
+        segments.push(ColoredSegment::new("\n  Target Moving: --".to_string(), COLOR_GREY));
+    }
+
+    // Range penalty - red if active, grey if not
+    if avg_distance > ACCURACY_RANGE_FALLOFF_START {
+        let range_penalty = ((avg_distance - ACCURACY_RANGE_FALLOFF_START) / 50.0) * ACCURACY_RANGE_FALLOFF_PER_50U;
+        segments.push(ColoredSegment::new(format!("\n  -Range ({:.0}u): -{:.0}%", avg_distance, range_penalty * 100.0), COLOR_RED));
+    } else {
+        segments.push(ColoredSegment::new(format!("\n  Range ({:.0}u): --", avg_distance), COLOR_GREY));
+    }
+
+    let final_acc = ui_accuracy_estimate(has_stationary_bonus, has_high_ground, !targets_moving, avg_distance);
+    segments.push(ColoredSegment::default_color(format!("\n  = Hit Chance: {:.0}%", final_acc * 100.0)));
+
+    // Height indicator with color
+    let sign = if avg_height_diff >= 0.0 { "+" } else { "" };
+    let height_color = if has_high_ground { COLOR_GREEN } else { COLOR_GREY };
+    segments.push(ColoredSegment::new(format!("\n  Height: {}{}m", sign, avg_height_diff as i32), height_color));
+}
+
+/// Build accuracy modifier segments for cached (last known) combat state
+fn build_accuracy_segments_cached(
+    segments: &mut Vec<ColoredSegment>,
+    has_stationary_bonus: bool,
+    cached: &CachedCombatState,
+) {
+    // High ground from cache
+    if cached.has_high_ground {
+        segments.push(ColoredSegment::new(format!("\n  +High Ground: +{:.0}% (last)", ACCURACY_HIGH_GROUND_BONUS * 100.0), COLOR_GREEN));
+    } else {
+        segments.push(ColoredSegment::new("\n  High Ground: -- (last)".to_string(), COLOR_GREY));
+    }
+
+    // Target moving from cache
+    if cached.targets_moving {
+        segments.push(ColoredSegment::new(format!("\n  -Target Moving: -{:.0}% (last)", ACCURACY_TARGET_MOVING_PENALTY * 100.0), COLOR_RED));
+    } else {
+        segments.push(ColoredSegment::new("\n  Target Moving: -- (last)".to_string(), COLOR_GREY));
+    }
+
+    // Range from cache
+    if cached.avg_distance > ACCURACY_RANGE_FALLOFF_START {
+        let range_penalty = ((cached.avg_distance - ACCURACY_RANGE_FALLOFF_START) / 50.0) * ACCURACY_RANGE_FALLOFF_PER_50U;
+        segments.push(ColoredSegment::new(format!("\n  -Range ({:.0}u): -{:.0}% (last)", cached.avg_distance, range_penalty * 100.0), COLOR_RED));
+    } else {
+        segments.push(ColoredSegment::new(format!("\n  Range ({:.0}u): -- (last)", cached.avg_distance), COLOR_GREY));
+    }
+
+    let final_acc = ui_accuracy_estimate(has_stationary_bonus, cached.has_high_ground, !cached.targets_moving, cached.avg_distance);
+    segments.push(ColoredSegment::default_color(format!("\n  = Hit Chance: {:.0}% (last)", final_acc * 100.0)));
+
+    // Height from cache with color
+    let sign = if cached.avg_height_diff >= 0.0 { "+" } else { "" };
+    let height_color = if cached.has_high_ground { COLOR_GREEN } else { COLOR_GREY };
+    segments.push(ColoredSegment::new(format!("\n  Height: {}{}m (last)", sign, cached.avg_height_diff as i32), height_color));
+}
+
+/// Build accuracy modifier segments for idle state (no combat data)
+fn build_accuracy_segments_idle(
+    segments: &mut Vec<ColoredSegment>,
+    has_stationary_bonus: bool,
+    avg_pos: Vec3,
+) {
+    segments.push(ColoredSegment::new("\n  High Ground: --".to_string(), COLOR_GREY));
+    segments.push(ColoredSegment::new("\n  Target Moving: --".to_string(), COLOR_GREY));
+    segments.push(ColoredSegment::new("\n  Range: --".to_string(), COLOR_GREY));
+
+    // Idle accuracy: base + stationary bonus if applicable, no combat modifiers
+    let final_acc = ui_accuracy_estimate(has_stationary_bonus, false, true, 0.0);
+    segments.push(ColoredSegment::default_color(format!("\n  = Hit Chance: {:.0}% (idle)", final_acc * 100.0)));
+    segments.push(ColoredSegment::new(format!("\n  Height: {}m", avg_pos.y as i32), COLOR_GREY));
 }
 
 /// Spawn the squad details UI panel (bottom-left corner)
@@ -178,7 +290,7 @@ pub fn update_squad_details_ui(
 
         segments.push(ColoredSegment::default_color(format!("\n\nSquad #{}", squad_id)));
         segments.push(ColoredSegment::default_color(format!("\n  Team: {}", team_str)));
-        segments.push(ColoredSegment::default_color(format!("\n  Units: {}/50 alive", alive_count)));
+        segments.push(ColoredSegment::default_color(format!("\n  Units: {}/{} alive", alive_count, SQUAD_SIZE)));
         segments.push(ColoredSegment::default_color(format!("\n  Mode: {} ({}/{})", mode_str,
             if mode_str == "Hold" { hold_count }
             else if mode_str == "AttackMove" { attack_move_count }
@@ -222,76 +334,20 @@ pub fn update_squad_details_ui(
                 avg_height_diff,
             });
 
-            // High ground - green if active, grey if not
-            if has_high_ground {
-                segments.push(ColoredSegment::new(format!("\n  +High Ground: +{:.0}%", ACCURACY_HIGH_GROUND_BONUS * 100.0), COLOR_GREEN));
-            } else {
-                segments.push(ColoredSegment::new("\n  High Ground: --".to_string(), COLOR_GREY));
-            }
-
-            // Target moving - red penalty if active, grey if not
-            if targets_moving {
-                segments.push(ColoredSegment::new(format!("\n  -Target Moving: -{:.0}%", ACCURACY_TARGET_MOVING_PENALTY * 100.0), COLOR_RED));
-            } else {
-                segments.push(ColoredSegment::new("\n  Target Moving: --".to_string(), COLOR_GREY));
-            }
-
-            // Range penalty - red if active, grey if not
-            if avg_distance > ACCURACY_RANGE_FALLOFF_START {
-                let range_penalty = ((avg_distance - ACCURACY_RANGE_FALLOFF_START) / 50.0) * ACCURACY_RANGE_FALLOFF_PER_50U;
-                segments.push(ColoredSegment::new(format!("\n  -Range ({:.0}u): -{:.0}%", avg_distance, range_penalty * 100.0), COLOR_RED));
-            } else {
-                segments.push(ColoredSegment::new(format!("\n  Range ({:.0}u): --", avg_distance), COLOR_GREY));
-            }
-
-            let final_acc = calculate_squad_accuracy(has_stationary_bonus, has_high_ground, targets_moving, avg_distance);
-            segments.push(ColoredSegment::default_color(format!("\n  = Hit Chance: {:.0}%", final_acc * 100.0)));
-
-            // Height indicator with color
-            let sign = if avg_height_diff >= 0.0 { "+" } else { "" };
-            let height_color = if has_high_ground { COLOR_GREEN } else { COLOR_GREY };
-            segments.push(ColoredSegment::new(format!("\n  Height: {}{}m", sign, avg_height_diff as i32), height_color));
+            build_accuracy_segments_engaged(
+                &mut segments,
+                has_stationary_bonus,
+                has_high_ground,
+                targets_moving,
+                avg_distance,
+                avg_height_diff,
+            );
         } else {
             // Not engaged - show cached combat state if available
             if let Some(cached) = combat_cache.cache.get(&squad_id) {
-                // High ground from cache
-                if cached.has_high_ground {
-                    segments.push(ColoredSegment::new(format!("\n  +High Ground: +{:.0}% (last)", ACCURACY_HIGH_GROUND_BONUS * 100.0), COLOR_GREEN));
-                } else {
-                    segments.push(ColoredSegment::new("\n  High Ground: -- (last)".to_string(), COLOR_GREY));
-                }
-
-                // Target moving from cache
-                if cached.targets_moving {
-                    segments.push(ColoredSegment::new(format!("\n  -Target Moving: -{:.0}% (last)", ACCURACY_TARGET_MOVING_PENALTY * 100.0), COLOR_RED));
-                } else {
-                    segments.push(ColoredSegment::new("\n  Target Moving: -- (last)".to_string(), COLOR_GREY));
-                }
-
-                // Range from cache
-                if cached.avg_distance > ACCURACY_RANGE_FALLOFF_START {
-                    let range_penalty = ((cached.avg_distance - ACCURACY_RANGE_FALLOFF_START) / 50.0) * ACCURACY_RANGE_FALLOFF_PER_50U;
-                    segments.push(ColoredSegment::new(format!("\n  -Range ({:.0}u): -{:.0}% (last)", cached.avg_distance, range_penalty * 100.0), COLOR_RED));
-                } else {
-                    segments.push(ColoredSegment::new(format!("\n  Range ({:.0}u): -- (last)", cached.avg_distance), COLOR_GREY));
-                }
-
-                let final_acc = calculate_squad_accuracy(has_stationary_bonus, cached.has_high_ground, cached.targets_moving, cached.avg_distance);
-                segments.push(ColoredSegment::default_color(format!("\n  = Hit Chance: {:.0}% (last)", final_acc * 100.0)));
-
-                // Height from cache with color
-                let sign = if cached.avg_height_diff >= 0.0 { "+" } else { "" };
-                let height_color = if cached.has_high_ground { COLOR_GREEN } else { COLOR_GREY };
-                segments.push(ColoredSegment::new(format!("\n  Height: {}{}m (last)", sign, cached.avg_height_diff as i32), height_color));
+                build_accuracy_segments_cached(&mut segments, has_stationary_bonus, cached);
             } else {
-                // No cached state
-                segments.push(ColoredSegment::new("\n  High Ground: --".to_string(), COLOR_GREY));
-                segments.push(ColoredSegment::new("\n  Target Moving: --".to_string(), COLOR_GREY));
-                segments.push(ColoredSegment::new("\n  Range: --".to_string(), COLOR_GREY));
-
-                let theoretical = INFANTRY_BASE_ACCURACY + if has_stationary_bonus { ACCURACY_STATIONARY_BONUS } else { 0.0 };
-                segments.push(ColoredSegment::default_color(format!("\n  = Hit Chance: {:.0}% (idle)", theoretical.clamp(ACCURACY_MIN, ACCURACY_MAX) * 100.0)));
-                segments.push(ColoredSegment::new(format!("\n  Height: {}m", avg_pos.y as i32), COLOR_GREY));
+                build_accuracy_segments_idle(&mut segments, has_stationary_bonus, avg_pos);
             }
         }
 
@@ -320,33 +376,4 @@ pub fn update_squad_details_ui(
         )).id();
         commands.entity(ui_entity).add_child(span);
     }
-}
-
-/// Calculate squad-level accuracy estimate
-fn calculate_squad_accuracy(
-    shooter_stationary: bool,
-    has_high_ground: bool,
-    target_moving: bool,
-    avg_distance: f32,
-) -> f32 {
-    let mut accuracy = INFANTRY_BASE_ACCURACY;
-
-    if shooter_stationary {
-        accuracy += ACCURACY_STATIONARY_BONUS;
-    }
-
-    if has_high_ground {
-        accuracy += ACCURACY_HIGH_GROUND_BONUS;
-    }
-
-    if target_moving {
-        accuracy -= ACCURACY_TARGET_MOVING_PENALTY;
-    }
-
-    if avg_distance > ACCURACY_RANGE_FALLOFF_START {
-        let range_penalty = ((avg_distance - ACCURACY_RANGE_FALLOFF_START) / 50.0) * ACCURACY_RANGE_FALLOFF_PER_50U;
-        accuracy -= range_penalty;
-    }
-
-    accuracy.clamp(ACCURACY_MIN, ACCURACY_MAX)
 }
