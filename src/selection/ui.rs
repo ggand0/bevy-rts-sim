@@ -318,7 +318,7 @@ pub fn update_squad_details_ui(
         if has_stationary_bonus {
             segments.push(ColoredSegment::new(format!("\n  +Stationary: +{:.0}%", ACCURACY_STATIONARY_BONUS * 100.0), COLOR_GREEN));
         } else {
-            segments.push(ColoredSegment::new(format!("\n  Stationary: --"), COLOR_GREY));
+            segments.push(ColoredSegment::new("\n  Stationary: --".to_string(), COLOR_GREY));
         }
 
         // If engaged, show combat-specific accuracy modifiers
