@@ -330,7 +330,7 @@ pub fn update_projectiles(
 
 pub fn target_acquisition_system(
     time: Res<Time>,
-    mut combat_query: Query<(Entity, &GlobalTransform, &BattleDroid, &mut CombatUnit)>,
+    mut combat_query: Query<(Entity, &GlobalTransform, &BattleDroid, &mut CombatUnit), Without<crate::types::TurretRotatingAssembly>>,
     tower_query: Query<(Entity, &GlobalTransform, &UplinkTower), With<UplinkTower>>,
     turret_query: Query<(Entity, &GlobalTransform, &TurretBase), With<TurretBase>>,
     heightmap: Option<Res<TerrainHeightmap>>,
