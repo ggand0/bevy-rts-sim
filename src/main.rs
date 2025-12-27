@@ -128,6 +128,7 @@ fn main() {
             selection::update_group_bounding_box_debug,
             selection::update_squad_path_arrows,
             selection::update_squad_details_ui,
+            selection::update_turret_details_ui,
         ))
         .add_systems(Update, (
             // Combat systems

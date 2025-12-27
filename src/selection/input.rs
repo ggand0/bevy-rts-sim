@@ -9,6 +9,9 @@ use crate::artillery::{ArtilleryState, ArtilleryMode};
 use super::state::{SelectionState, SelectionVisual};
 use super::utils::{screen_to_ground_with_heightmap, calculate_squad_centers, find_squad_at_position};
 
+/// Click radius for turret selection (turrets are larger than squad centers)
+const TURRET_CLICK_RADIUS: f32 = 8.0;
+
 /// System: Handle left-click selection input
 pub fn selection_input_system(
     mouse_button: Res<ButtonInput<MouseButton>>,
@@ -16,6 +19,7 @@ pub fn selection_input_system(
     window_query: Query<&Window, With<PrimaryWindow>>,
     camera_query: Query<(&Camera, &GlobalTransform), With<RtsCamera>>,
     unit_query: Query<(&Transform, &SquadMember), (With<BattleDroid>, Without<SelectionVisual>)>,
+    turret_query: Query<(Entity, &Transform, &TurretBase)>,
     squad_manager: Res<SquadManager>,
     mut selection_state: ResMut<SelectionState>,
     heightmap: Option<Res<TerrainHeightmap>>,
@@ -53,68 +57,98 @@ pub fn selection_input_system(
                 if let Some(world_pos) = screen_to_ground_with_heightmap(cursor_pos, camera, camera_transform, hm) {
                     let shift_held = keyboard.pressed(KeyCode::ShiftLeft) || keyboard.pressed(KeyCode::ShiftRight);
 
-                    // Calculate actual squad centers from unit positions
-                    let squad_centers = calculate_squad_centers(&unit_query);
+                    // First check for turret click (only player's turrets - Team::A)
+                    let clicked_turret = turret_query.iter()
+                        .filter(|(_, _, turret_base)| turret_base.team == Team::A)
+                        .find(|(_, transform, _)| {
+                            let dx = world_pos.x - transform.translation.x;
+                            let dz = world_pos.z - transform.translation.z;
+                            (dx * dx + dz * dz).sqrt() < TURRET_CLICK_RADIUS
+                        })
+                        .map(|(entity, _, _)| entity);
 
-                    // Only select player's team (Team::A)
-                    if let Some(squad_id) = find_squad_at_position(world_pos, &squad_centers, &squad_manager, SELECTION_CLICK_RADIUS, Team::A) {
-                        // Check if clicked squad is part of a group
-                        let group_squads = if let Some(&group_id) = selection_state.squad_to_group.get(&squad_id) {
-                            if let Some(group) = selection_state.groups.get(&group_id) {
-                                Some(group.squad_ids.clone())
+                    if let Some(turret_entity) = clicked_turret {
+                        // Clicked on a turret - select it
+                        if !shift_held {
+                            selection_state.selected_squads.clear();
+                        }
+                        if selection_state.selected_turret == Some(turret_entity) && shift_held {
+                            // Shift-click on already selected turret - deselect
+                            selection_state.selected_turret = None;
+                            info!("Deselected turret");
+                        } else {
+                            selection_state.selected_turret = Some(turret_entity);
+                            info!("Selected turret {:?}", turret_entity);
+                        }
+                    } else {
+                        // No turret clicked - check for squad
+                        // Calculate actual squad centers from unit positions
+                        let squad_centers = calculate_squad_centers(&unit_query);
+
+                        // Only select player's team (Team::A)
+                        if let Some(squad_id) = find_squad_at_position(world_pos, &squad_centers, &squad_manager, SELECTION_CLICK_RADIUS, Team::A) {
+                            // Clear turret selection when selecting squads
+                            selection_state.selected_turret = None;
+
+                            // Check if clicked squad is part of a group
+                            let group_squads = if let Some(&group_id) = selection_state.squad_to_group.get(&squad_id) {
+                                if let Some(group) = selection_state.groups.get(&group_id) {
+                                    Some(group.squad_ids.clone())
+                                } else {
+                                    None
+                                }
                             } else {
                                 None
-                            }
-                        } else {
-                            None
-                        };
+                            };
 
-                        if shift_held {
-                            // Toggle selection (entire group if grouped)
-                            if let Some(group_squads) = group_squads {
-                                // Check if entire group is already selected
-                                let all_selected = group_squads.iter().all(|id| selection_state.selected_squads.contains(id));
-                                if all_selected {
-                                    // Deselect entire group
-                                    for squad_id in &group_squads {
-                                        selection_state.selected_squads.retain(|&id| id != *squad_id);
-                                    }
-                                    info!("Deselected group with {} squads", group_squads.len());
-                                } else {
-                                    // Select entire group
-                                    for squad_id in group_squads {
-                                        if !selection_state.selected_squads.contains(&squad_id) {
-                                            selection_state.selected_squads.push(squad_id);
+                            if shift_held {
+                                // Toggle selection (entire group if grouped)
+                                if let Some(group_squads) = group_squads {
+                                    // Check if entire group is already selected
+                                    let all_selected = group_squads.iter().all(|id| selection_state.selected_squads.contains(id));
+                                    if all_selected {
+                                        // Deselect entire group
+                                        for squad_id in &group_squads {
+                                            selection_state.selected_squads.retain(|&id| id != *squad_id);
                                         }
+                                        info!("Deselected group with {} squads", group_squads.len());
+                                    } else {
+                                        // Select entire group
+                                        for squad_id in group_squads {
+                                            if !selection_state.selected_squads.contains(&squad_id) {
+                                                selection_state.selected_squads.push(squad_id);
+                                            }
+                                        }
+                                        info!("Added group to selection ({} total)", selection_state.selected_squads.len());
                                     }
-                                    info!("Added group to selection ({} total)", selection_state.selected_squads.len());
+                                } else {
+                                    // Single squad toggle
+                                    if let Some(pos) = selection_state.selected_squads.iter().position(|&id| id == squad_id) {
+                                        selection_state.selected_squads.remove(pos);
+                                        info!("Deselected squad {}", squad_id);
+                                    } else {
+                                        selection_state.selected_squads.push(squad_id);
+                                        info!("Added squad {} to selection ({} total)", squad_id, selection_state.selected_squads.len());
+                                    }
                                 }
                             } else {
-                                // Single squad toggle
-                                if let Some(pos) = selection_state.selected_squads.iter().position(|&id| id == squad_id) {
-                                    selection_state.selected_squads.remove(pos);
-                                    info!("Deselected squad {}", squad_id);
+                                // Clear and select (entire group if grouped)
+                                selection_state.selected_squads.clear();
+                                if let Some(group_squads) = group_squads {
+                                    selection_state.selected_squads.extend(group_squads.iter());
+                                    info!("Selected group with {} squads", group_squads.len());
                                 } else {
                                     selection_state.selected_squads.push(squad_id);
-                                    info!("Added squad {} to selection ({} total)", squad_id, selection_state.selected_squads.len());
+                                    info!("Selected squad {}", squad_id);
                                 }
                             }
-                        } else {
-                            // Clear and select (entire group if grouped)
-                            selection_state.selected_squads.clear();
-                            if let Some(group_squads) = group_squads {
-                                selection_state.selected_squads.extend(group_squads.iter());
-                                info!("Selected group with {} squads", group_squads.len());
-                            } else {
-                                selection_state.selected_squads.push(squad_id);
-                                info!("Selected squad {}", squad_id);
+                        } else if !shift_held {
+                            // Clicked on empty ground without shift - clear selection
+                            selection_state.selected_turret = None;
+                            if !selection_state.selected_squads.is_empty() {
+                                selection_state.selected_squads.clear();
+                                info!("Selection cleared");
                             }
-                        }
-                    } else if !shift_held {
-                        // Clicked on empty ground without shift - clear selection
-                        if !selection_state.selected_squads.is_empty() {
-                            selection_state.selected_squads.clear();
-                            info!("Selection cleared");
                         }
                     }
                 }

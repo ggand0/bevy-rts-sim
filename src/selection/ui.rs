@@ -3,9 +3,9 @@
 use bevy::prelude::*;
 use std::collections::HashMap;
 
-use crate::types::{BattleDroid, CombatUnit, MovementMode, MovementTracker, SquadManager, SquadMember, Team};
+use crate::types::{BattleDroid, CombatUnit, MovementMode, MovementTracker, SquadManager, SquadMember, Team, TurretBase, MgTurret, Health};
 use crate::constants::{
-    SQUAD_SIZE, INFANTRY_BASE_ACCURACY, ACCURACY_STATIONARY_BONUS, ACCURACY_HIGH_GROUND_BONUS,
+    SQUAD_SIZE, INFANTRY_BASE_ACCURACY, TURRET_BASE_ACCURACY, ACCURACY_STATIONARY_BONUS, ACCURACY_HIGH_GROUND_BONUS,
     ACCURACY_TARGET_MOVING_PENALTY, ACCURACY_RANGE_FALLOFF_START, ACCURACY_RANGE_FALLOFF_PER_50U,
     HIGH_GROUND_HEIGHT_THRESHOLD,
 };
@@ -376,4 +376,212 @@ pub fn update_squad_details_ui(
         )).id();
         commands.entity(ui_entity).add_child(span);
     }
+}
+
+// ============================================================================
+// TURRET DETAILS UI
+// ============================================================================
+
+/// Marker component for the turret details UI panel
+#[derive(Component)]
+pub struct TurretDetailsUI;
+
+/// Marker for turret text span children
+#[derive(Component)]
+pub struct TurretDetailsSpan;
+
+/// Spawn the turret details UI panel (bottom-right corner)
+pub fn spawn_turret_details_ui(commands: &mut Commands) {
+    commands.spawn((
+        Text::new(""),
+        TextFont {
+            font_size: 14.0,
+            ..default()
+        },
+        TextColor(COLOR_DEFAULT),
+        Node {
+            position_type: PositionType::Absolute,
+            bottom: Val::Px(10.0),
+            right: Val::Px(10.0),
+            ..default()
+        },
+        BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.6)),
+        TurretDetailsUI,
+    ));
+}
+
+/// Update the turret details UI with selected turret information
+pub fn update_turret_details_ui(
+    mut commands: Commands,
+    selection_state: Res<SelectionState>,
+    ui_query: Query<Entity, With<TurretDetailsUI>>,
+    span_query: Query<Entity, With<TurretDetailsSpan>>,
+    mut text_query: Query<&mut Text, With<TurretDetailsUI>>,
+    turret_base_query: Query<(&Transform, &TurretBase, &Health, &Children)>,
+    turret_assembly_query: Query<(&CombatUnit, Option<&MgTurret>, &MovementTracker)>,
+    target_query: Query<(&Transform, &MovementTracker), With<BattleDroid>>,
+) {
+    let Ok(ui_entity) = ui_query.single() else { return };
+    let Ok(mut root_text) = text_query.single_mut() else { return };
+
+    // Despawn old span children
+    for span_entity in span_query.iter() {
+        commands.entity(span_entity).despawn();
+    }
+
+    // Check if a turret is selected
+    let Some(turret_entity) = selection_state.selected_turret else {
+        **root_text = "".to_string();
+        return;
+    };
+
+    // Get turret base info
+    let Ok((transform, turret_base, health, children)) = turret_base_query.get(turret_entity) else {
+        **root_text = "".to_string();
+        return;
+    };
+
+    // Find the rotating assembly (child with CombatUnit)
+    let mut assembly_info = None;
+    for child in children.iter() {
+        if let Ok(info) = turret_assembly_query.get(child) {
+            assembly_info = Some(info);
+            break;
+        }
+    }
+
+    // Build colored segments
+    let mut segments: Vec<ColoredSegment> = Vec::new();
+    segments.push(ColoredSegment::default_color("=== Selected Turret ===".to_string()));
+
+    let team_str = match turret_base.team {
+        Team::A => "A (Blue)",
+        Team::B => "B (Red)",
+    };
+    segments.push(ColoredSegment::default_color(format!("\n  Team: {}", team_str)));
+
+    // Health with color
+    let health_pct = (health.current / health.max * 100.0) as i32;
+    let health_color = if health_pct > 50 {
+        COLOR_GREEN
+    } else if health_pct > 25 {
+        Color::srgba(0.9, 0.7, 0.2, 1.0) // Yellow-orange
+    } else {
+        COLOR_RED
+    };
+    segments.push(ColoredSegment::new(format!("\n  Health: {:.0}/{:.0} ({}%)", health.current, health.max, health_pct), health_color));
+
+    // Position
+    segments.push(ColoredSegment::default_color(format!("\n  Pos: ({:.0}, {:.0}, h={:.0})", transform.translation.x, transform.translation.z, transform.translation.y)));
+
+    // Combat info from assembly
+    if let Some((combat_unit, mg_turret, _tracker)) = assembly_info {
+        // Target info
+        if let Some(target_entity) = combat_unit.current_target {
+            if let Ok((target_transform, target_tracker)) = target_query.get(target_entity) {
+                let distance = transform.translation.distance(target_transform.translation);
+                let height_diff = transform.translation.y - target_transform.translation.y;
+
+                segments.push(ColoredSegment::new("\n  Target: ENGAGED".to_string(), COLOR_GREEN));
+                segments.push(ColoredSegment::default_color(format!("\n  Distance: {:.0}u", distance)));
+
+                // Accuracy calculation for turrets
+                let has_high_ground = height_diff > HIGH_GROUND_HEIGHT_THRESHOLD;
+                let target_moving = !target_tracker.is_stationary;
+
+                segments.push(ColoredSegment::default_color("\n  --- Accuracy ---".to_string()));
+                segments.push(ColoredSegment::default_color(format!("\n  Base: {:.0}%", TURRET_BASE_ACCURACY * 100.0)));
+
+                // Stationary - turrets are always stationary (built into base accuracy)
+                segments.push(ColoredSegment::new("\n  Stationary: (built-in)".to_string(), COLOR_GREY));
+
+                // High ground
+                if has_high_ground {
+                    segments.push(ColoredSegment::new(format!("\n  +High Ground: +{:.0}%", ACCURACY_HIGH_GROUND_BONUS * 100.0), COLOR_GREEN));
+                } else {
+                    segments.push(ColoredSegment::new("\n  High Ground: --".to_string(), COLOR_GREY));
+                }
+
+                // Target moving
+                if target_moving {
+                    segments.push(ColoredSegment::new(format!("\n  -Target Moving: -{:.0}%", ACCURACY_TARGET_MOVING_PENALTY * 100.0), COLOR_RED));
+                } else {
+                    segments.push(ColoredSegment::new("\n  Target Moving: --".to_string(), COLOR_GREY));
+                }
+
+                // Range
+                if distance > ACCURACY_RANGE_FALLOFF_START {
+                    let range_penalty = ((distance - ACCURACY_RANGE_FALLOFF_START) / 50.0) * ACCURACY_RANGE_FALLOFF_PER_50U;
+                    segments.push(ColoredSegment::new(format!("\n  -Range ({:.0}u): -{:.0}%", distance, range_penalty * 100.0), COLOR_RED));
+                } else {
+                    segments.push(ColoredSegment::new(format!("\n  Range ({:.0}u): --", distance), COLOR_GREY));
+                }
+
+                // Final accuracy
+                let final_acc = turret_accuracy_estimate(has_high_ground, !target_moving, distance);
+                segments.push(ColoredSegment::default_color(format!("\n  = Hit Chance: {:.0}%", final_acc * 100.0)));
+
+                // Height indicator
+                let sign = if height_diff >= 0.0 { "+" } else { "" };
+                let height_color = if has_high_ground { COLOR_GREEN } else { COLOR_GREY };
+                segments.push(ColoredSegment::new(format!("\n  Height: {}{}m", sign, height_diff as i32), height_color));
+            } else {
+                segments.push(ColoredSegment::new("\n  Target: INVALID".to_string(), COLOR_GREY));
+            }
+        } else {
+            segments.push(ColoredSegment::new("\n  Target: None".to_string(), COLOR_GREY));
+
+            // Show base accuracy when idle
+            segments.push(ColoredSegment::default_color("\n  --- Accuracy ---".to_string()));
+            segments.push(ColoredSegment::default_color(format!("\n  Base: {:.0}%", TURRET_BASE_ACCURACY * 100.0)));
+            segments.push(ColoredSegment::new("\n  Stationary: (built-in)".to_string(), COLOR_GREY));
+            segments.push(ColoredSegment::new("\n  High Ground: --".to_string(), COLOR_GREY));
+            segments.push(ColoredSegment::new("\n  Target Moving: --".to_string(), COLOR_GREY));
+            segments.push(ColoredSegment::new("\n  Range: --".to_string(), COLOR_GREY));
+            segments.push(ColoredSegment::default_color(format!("\n  = Hit Chance: {:.0}% (idle)", TURRET_BASE_ACCURACY * 100.0)));
+        }
+
+        // MG turret specific info
+        if let Some(mg) = mg_turret {
+            segments.push(ColoredSegment::default_color("\n  --- MG Status ---".to_string()));
+            segments.push(ColoredSegment::default_color(format!("\n  Burst: {}/{}", mg.shots_in_burst, mg.max_burst_shots)));
+            if mg.cooldown_timer > 0.0 {
+                segments.push(ColoredSegment::new(format!("\n  Cooldown: {:.1}s", mg.cooldown_timer), COLOR_GREY));
+            } else {
+                segments.push(ColoredSegment::new("\n  Ready to fire".to_string(), COLOR_GREEN));
+            }
+        } else {
+            segments.push(ColoredSegment::default_color("\n  Type: Heavy Turret".to_string()));
+        }
+    }
+
+    // Set root text to first segment, spawn rest as TextSpan children
+    if let Some(first) = segments.first() {
+        **root_text = first.text.clone();
+        commands.entity(ui_entity).insert(TextColor(first.color));
+    }
+
+    // Spawn remaining segments as TextSpan children
+    for segment in segments.iter().skip(1) {
+        let span = commands.spawn((
+            TextSpan::new(segment.text.clone()),
+            TextFont {
+                font_size: 14.0,
+                ..default()
+            },
+            TextColor(segment.color),
+            TurretDetailsSpan,
+        )).id();
+        commands.entity(ui_entity).add_child(span);
+    }
+}
+
+/// Calculate turret accuracy estimate (turrets are always stationary)
+fn turret_accuracy_estimate(has_high_ground: bool, target_stationary: bool, distance: f32) -> f32 {
+    let height = if has_high_ground { HIGH_GROUND_HEIGHT_THRESHOLD + 1.0 } else { 0.0 };
+    let shooter_pos = Vec3::new(0.0, height, 0.0);
+    let horiz_dist = (distance.powi(2) - height.powi(2)).max(0.0).sqrt();
+    let target_pos = Vec3::new(horiz_dist, 0.0, 0.0);
+
+    calculate_hit_chance(TURRET_BASE_ACCURACY, shooter_pos, target_pos, true, target_stationary)
 }
