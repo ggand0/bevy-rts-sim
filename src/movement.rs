@@ -5,8 +5,6 @@ use crate::types::*;
 use crate::constants::*;
 use crate::terrain::TerrainHeightmap;
 
-/// Unit Y offset above terrain (mesh origin is now at feet, so no offset needed)
-
 /// Updates MovementTracker for all droids - tracks stationary state for accuracy bonuses
 pub fn update_movement_tracker(
     time: Res<Time>,
