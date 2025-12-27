@@ -35,6 +35,12 @@ pub struct SquadCombatCache {
     pub cache: HashMap<u32, CachedCombatState>,
 }
 
+/// Resource to cache last combat state per turret
+#[derive(Resource, Default)]
+pub struct TurretCombatCache {
+    pub cache: HashMap<Entity, CachedCombatState>,
+}
+
 // Colors for UI elements
 const COLOR_DEFAULT: Color = Color::srgba(0.9, 0.9, 0.9, 0.9);
 const COLOR_GREEN: Color = Color::srgba(0.4, 0.9, 0.4, 1.0);
@@ -414,11 +420,12 @@ pub fn spawn_turret_details_ui(commands: &mut Commands) {
 pub fn update_turret_details_ui(
     mut commands: Commands,
     selection_state: Res<SelectionState>,
+    mut turret_cache: ResMut<TurretCombatCache>,
     ui_query: Query<Entity, With<TurretDetailsUI>>,
     span_query: Query<Entity, With<TurretDetailsSpan>>,
     mut text_query: Query<&mut Text, With<TurretDetailsUI>>,
     turret_base_query: Query<(&Transform, &TurretBase, &Health, &Children)>,
-    turret_assembly_query: Query<(&CombatUnit, Option<&MgTurret>, &MovementTracker)>,
+    turret_assembly_query: Query<(&CombatUnit, Option<&MgTurret>)>,
     target_query: Query<(&Transform, &MovementTracker), With<BattleDroid>>,
 ) {
     let Ok(ui_entity) = ui_query.single() else { return };
@@ -475,7 +482,7 @@ pub fn update_turret_details_ui(
     segments.push(ColoredSegment::default_color(format!("\n  Pos: ({:.0}, {:.0}, h={:.0})", transform.translation.x, transform.translation.z, transform.translation.y)));
 
     // Combat info from assembly
-    if let Some((combat_unit, mg_turret, _tracker)) = assembly_info {
+    if let Some((combat_unit, mg_turret)) = assembly_info {
         // Target info
         if let Some(target_entity) = combat_unit.current_target {
             if let Ok((target_transform, target_tracker)) = target_query.get(target_entity) {
@@ -488,6 +495,14 @@ pub fn update_turret_details_ui(
                 // Accuracy calculation for turrets
                 let has_high_ground = height_diff > HIGH_GROUND_HEIGHT_THRESHOLD;
                 let target_moving = !target_tracker.is_stationary;
+
+                // Cache combat state
+                turret_cache.cache.insert(turret_entity, CachedCombatState {
+                    has_high_ground,
+                    targets_moving: target_moving,
+                    avg_distance: distance,
+                    avg_height_diff: height_diff,
+                });
 
                 segments.push(ColoredSegment::default_color("\n  --- Accuracy ---".to_string()));
                 segments.push(ColoredSegment::default_color(format!("\n  Base: {:.0}%", TURRET_BASE_ACCURACY * 100.0)));
@@ -531,14 +546,46 @@ pub fn update_turret_details_ui(
         } else {
             segments.push(ColoredSegment::new("\n  Target: None".to_string(), COLOR_GREY));
 
-            // Show base accuracy when idle
+            // Show cached combat state if available, otherwise idle
             segments.push(ColoredSegment::default_color("\n  --- Accuracy ---".to_string()));
             segments.push(ColoredSegment::default_color(format!("\n  Base: {:.0}%", TURRET_BASE_ACCURACY * 100.0)));
             segments.push(ColoredSegment::new("\n  Stationary: (built-in)".to_string(), COLOR_GREY));
-            segments.push(ColoredSegment::new("\n  High Ground: --".to_string(), COLOR_GREY));
-            segments.push(ColoredSegment::new("\n  Target Moving: --".to_string(), COLOR_GREY));
-            segments.push(ColoredSegment::new("\n  Range: --".to_string(), COLOR_GREY));
-            segments.push(ColoredSegment::default_color(format!("\n  = Hit Chance: {:.0}% (idle)", TURRET_BASE_ACCURACY * 100.0)));
+
+            if let Some(cached) = turret_cache.cache.get(&turret_entity) {
+                // Show cached state with "(last)" suffix
+                if cached.has_high_ground {
+                    segments.push(ColoredSegment::new(format!("\n  +High Ground: +{:.0}% (last)", ACCURACY_HIGH_GROUND_BONUS * 100.0), COLOR_GREEN));
+                } else {
+                    segments.push(ColoredSegment::new("\n  High Ground: -- (last)".to_string(), COLOR_GREY));
+                }
+
+                if cached.targets_moving {
+                    segments.push(ColoredSegment::new(format!("\n  -Target Moving: -{:.0}% (last)", ACCURACY_TARGET_MOVING_PENALTY * 100.0), COLOR_RED));
+                } else {
+                    segments.push(ColoredSegment::new("\n  Target Moving: -- (last)".to_string(), COLOR_GREY));
+                }
+
+                if cached.avg_distance > ACCURACY_RANGE_FALLOFF_START {
+                    let range_penalty = ((cached.avg_distance - ACCURACY_RANGE_FALLOFF_START) / 50.0) * ACCURACY_RANGE_FALLOFF_PER_50U;
+                    segments.push(ColoredSegment::new(format!("\n  -Range ({:.0}u): -{:.0}% (last)", cached.avg_distance, range_penalty * 100.0), COLOR_RED));
+                } else {
+                    segments.push(ColoredSegment::new(format!("\n  Range ({:.0}u): -- (last)", cached.avg_distance), COLOR_GREY));
+                }
+
+                let final_acc = turret_accuracy_estimate(cached.has_high_ground, !cached.targets_moving, cached.avg_distance);
+                segments.push(ColoredSegment::default_color(format!("\n  = Hit Chance: {:.0}% (last)", final_acc * 100.0)));
+
+                // Height from cache
+                let sign = if cached.avg_height_diff >= 0.0 { "+" } else { "" };
+                let height_color = if cached.has_high_ground { COLOR_GREEN } else { COLOR_GREY };
+                segments.push(ColoredSegment::new(format!("\n  Height: {}{}m (last)", sign, cached.avg_height_diff as i32), height_color));
+            } else {
+                // No cached state - show idle
+                segments.push(ColoredSegment::new("\n  High Ground: --".to_string(), COLOR_GREY));
+                segments.push(ColoredSegment::new("\n  Target Moving: --".to_string(), COLOR_GREY));
+                segments.push(ColoredSegment::new("\n  Range: --".to_string(), COLOR_GREY));
+                segments.push(ColoredSegment::default_color(format!("\n  = Hit Chance: {:.0}% (idle)", TURRET_BASE_ACCURACY * 100.0)));
+            }
         }
 
         // MG turret specific info
