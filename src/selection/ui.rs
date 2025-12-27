@@ -6,10 +6,9 @@ use std::collections::HashMap;
 use crate::types::{BattleDroid, CombatUnit, MovementMode, MovementTracker, SquadManager, SquadMember, Team, TurretBase, MgTurret, Health};
 use crate::constants::{
     SQUAD_SIZE, INFANTRY_BASE_ACCURACY, TURRET_BASE_ACCURACY, ACCURACY_STATIONARY_BONUS, ACCURACY_HIGH_GROUND_BONUS,
-    ACCURACY_TARGET_MOVING_PENALTY, ACCURACY_RANGE_FALLOFF_START, ACCURACY_RANGE_FALLOFF_PER_50U,
-    HIGH_GROUND_HEIGHT_THRESHOLD,
+    ACCURACY_TARGET_MOVING_PENALTY, HIGH_GROUND_HEIGHT_THRESHOLD,
 };
-use crate::combat::calculate_hit_chance;
+use crate::combat::{calculate_hit_chance, calculate_range_penalty};
 use super::state::SelectionState;
 
 /// Marker component for the squad details UI panel
@@ -105,8 +104,8 @@ fn build_accuracy_segments_engaged(
     }
 
     // Range penalty - red if active, grey if not
-    if avg_distance > ACCURACY_RANGE_FALLOFF_START {
-        let range_penalty = ((avg_distance - ACCURACY_RANGE_FALLOFF_START) / 50.0) * ACCURACY_RANGE_FALLOFF_PER_50U;
+    let range_penalty = calculate_range_penalty(avg_distance);
+    if range_penalty > 0.0 {
         segments.push(ColoredSegment::new(format!("\n  -Range ({:.0}u): -{:.0}%", avg_distance, range_penalty * 100.0), COLOR_RED));
     } else {
         segments.push(ColoredSegment::new(format!("\n  Range ({:.0}u): --", avg_distance), COLOR_GREY));
@@ -142,8 +141,8 @@ fn build_accuracy_segments_cached(
     }
 
     // Range from cache
-    if cached.avg_distance > ACCURACY_RANGE_FALLOFF_START {
-        let range_penalty = ((cached.avg_distance - ACCURACY_RANGE_FALLOFF_START) / 50.0) * ACCURACY_RANGE_FALLOFF_PER_50U;
+    let range_penalty = calculate_range_penalty(cached.avg_distance);
+    if range_penalty > 0.0 {
         segments.push(ColoredSegment::new(format!("\n  -Range ({:.0}u): -{:.0}% (last)", cached.avg_distance, range_penalty * 100.0), COLOR_RED));
     } else {
         segments.push(ColoredSegment::new(format!("\n  Range ({:.0}u): -- (last)", cached.avg_distance), COLOR_GREY));
@@ -525,8 +524,8 @@ pub fn update_turret_details_ui(
                 }
 
                 // Range
-                if distance > ACCURACY_RANGE_FALLOFF_START {
-                    let range_penalty = ((distance - ACCURACY_RANGE_FALLOFF_START) / 50.0) * ACCURACY_RANGE_FALLOFF_PER_50U;
+                let range_penalty = calculate_range_penalty(distance);
+                if range_penalty > 0.0 {
                     segments.push(ColoredSegment::new(format!("\n  -Range ({:.0}u): -{:.0}%", distance, range_penalty * 100.0), COLOR_RED));
                 } else {
                     segments.push(ColoredSegment::new(format!("\n  Range ({:.0}u): --", distance), COLOR_GREY));
@@ -565,8 +564,8 @@ pub fn update_turret_details_ui(
                     segments.push(ColoredSegment::new("\n  Target Moving: -- (last)".to_string(), COLOR_GREY));
                 }
 
-                if cached.avg_distance > ACCURACY_RANGE_FALLOFF_START {
-                    let range_penalty = ((cached.avg_distance - ACCURACY_RANGE_FALLOFF_START) / 50.0) * ACCURACY_RANGE_FALLOFF_PER_50U;
+                let range_penalty = calculate_range_penalty(cached.avg_distance);
+                if range_penalty > 0.0 {
                     segments.push(ColoredSegment::new(format!("\n  -Range ({:.0}u): -{:.0}% (last)", cached.avg_distance, range_penalty * 100.0), COLOR_RED));
                 } else {
                     segments.push(ColoredSegment::new(format!("\n  Range ({:.0}u): -- (last)", cached.avg_distance), COLOR_GREY));

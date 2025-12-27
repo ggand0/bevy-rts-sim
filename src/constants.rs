@@ -31,7 +31,7 @@ pub const LASER_LENGTH: f32 = 3.0;
 pub const LASER_WIDTH: f32 = 0.2;
 
 // Combat settings
-pub const TARGETING_RANGE: f32 = 150.0;
+pub const TARGETING_RANGE: f32 = 200.0;
 pub const TARGET_SCAN_INTERVAL: f32 = 2.0;
 pub const COLLISION_RADIUS: f32 = 1.0;
 pub const AUTO_FIRE_INTERVAL: f32 = 2.0;
@@ -182,13 +182,25 @@ pub const ACCURACY_HIGH_GROUND_BONUS: f32 = 0.10;
 pub const HIGH_GROUND_HEIGHT_THRESHOLD: f32 = 2.0;
 /// Penalty for target moving (-10%)
 pub const ACCURACY_TARGET_MOVING_PENALTY: f32 = 0.10;
-/// Range falloff: -5% per 50 units beyond 50 units
-pub const ACCURACY_RANGE_FALLOFF_START: f32 = 50.0;
-pub const ACCURACY_RANGE_FALLOFF_PER_50U: f32 = 0.05;
 /// Minimum accuracy (30%) - always some hit chance
 pub const ACCURACY_MIN: f32 = 0.30;
 /// Maximum accuracy (95%) - always some miss chance
 pub const ACCURACY_MAX: f32 = 0.95;
+/// Range accuracy segments - explicit breakpoints for fine-tuning
+/// Each segment defines: (max_range, cumulative_penalty)
+/// Penalty is interpolated linearly within each segment
+///
+/// Segment 0: 0-100u   = no penalty (optimal range)
+/// Segment 1: 100-150u = -20% total (moderate falloff)
+/// Segment 2: 150-200u = -40% total (steep falloff, hits minimum)
+pub const RANGE_SEGMENT_0_END: f32 = 100.0;   // Optimal range - no penalty
+pub const RANGE_SEGMENT_0_PENALTY: f32 = 0.0;
+
+pub const RANGE_SEGMENT_1_END: f32 = 150.0;   // Moderate range
+pub const RANGE_SEGMENT_1_PENALTY: f32 = 0.20; // -20% at 150u
+
+pub const RANGE_SEGMENT_2_END: f32 = 200.0;   // Long range (should match TARGETING_RANGE)
+pub const RANGE_SEGMENT_2_PENALTY: f32 = 0.40; // -40% at 200u (hits minimum)
 /// Time threshold for unit to be considered "stationary" for accuracy bonus (seconds)
 pub const ACCURACY_STATIONARY_TIME_THRESHOLD: f32 = 0.5;
 /// Movement speed threshold (units/second) - moving faster than this = not stationary

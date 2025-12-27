@@ -66,14 +66,32 @@ pub fn calculate_hit_chance(
         accuracy -= ACCURACY_TARGET_MOVING_PENALTY;
     }
 
-    // Range falloff (-5% per 50 units beyond 50)
+    // Range falloff - segment-based interpolation
     let distance = shooter_pos.distance(target_pos);
-    if distance > ACCURACY_RANGE_FALLOFF_START {
-        let range_penalty = ((distance - ACCURACY_RANGE_FALLOFF_START) / 50.0) * ACCURACY_RANGE_FALLOFF_PER_50U;
-        accuracy -= range_penalty;
-    }
+    let range_penalty = calculate_range_penalty(distance);
+    accuracy -= range_penalty;
 
     accuracy.clamp(ACCURACY_MIN, ACCURACY_MAX)
+}
+
+/// Calculate range penalty using segment-based interpolation
+/// Returns penalty as a positive value (0.0 to RANGE_SEGMENT_2_PENALTY)
+pub fn calculate_range_penalty(distance: f32) -> f32 {
+    if distance <= RANGE_SEGMENT_0_END {
+        // Segment 0: no penalty
+        RANGE_SEGMENT_0_PENALTY
+    } else if distance <= RANGE_SEGMENT_1_END {
+        // Segment 1: interpolate from 0 to segment 1 penalty
+        let t = (distance - RANGE_SEGMENT_0_END) / (RANGE_SEGMENT_1_END - RANGE_SEGMENT_0_END);
+        RANGE_SEGMENT_0_PENALTY + t * (RANGE_SEGMENT_1_PENALTY - RANGE_SEGMENT_0_PENALTY)
+    } else if distance <= RANGE_SEGMENT_2_END {
+        // Segment 2: interpolate from segment 1 to segment 2 penalty
+        let t = (distance - RANGE_SEGMENT_1_END) / (RANGE_SEGMENT_2_END - RANGE_SEGMENT_1_END);
+        RANGE_SEGMENT_1_PENALTY + t * (RANGE_SEGMENT_2_PENALTY - RANGE_SEGMENT_1_PENALTY)
+    } else {
+        // Beyond max range: cap at segment 2 penalty
+        RANGE_SEGMENT_2_PENALTY
+    }
 }
 
 // Helper function to calculate proper laser orientation
