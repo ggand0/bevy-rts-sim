@@ -35,4 +35,4 @@ pub use visuals::{
     update_group_bounding_box_debug,
     update_squad_path_arrows,
 };
-pub use ui::{spawn_squad_details_ui, update_squad_details_ui, SquadCombatCache, spawn_turret_details_ui, update_turret_details_ui, TurretCombatCache};
+pub use ui::{spawn_squad_details_ui, update_squad_details_ui, SquadCombatCache, spawn_turret_details_ui, update_turret_details_ui, TurretCombatCache, UiUpdateTimer};
