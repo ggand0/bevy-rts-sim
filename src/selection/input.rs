@@ -269,6 +269,7 @@ pub fn box_selection_update_system(
 }
 
 /// System: Update hovered squad based on mouse cursor position (for details UI)
+/// Finds the closest individual unit to cursor and returns its squad.
 pub fn update_hovered_squad_system(
     window_query: Query<&Window, With<PrimaryWindow>>,
     camera_query: Query<(&Camera, &GlobalTransform), With<RtsCamera>>,
@@ -297,15 +298,30 @@ pub fn update_hovered_squad_system(
         return;
     };
 
-    // Calculate squad centers and find closest squad under cursor
-    let squad_centers = calculate_squad_centers(&unit_query);
-    selection_state.hovered_squad = find_squad_at_position(
-        world_pos,
-        &squad_centers,
-        &squad_manager,
-        SELECTION_CLICK_RADIUS,
-        Team::A, // Player squads only for now
-    );
+    // Find the closest individual unit to cursor, then return its squad
+    let mut closest_squad: Option<u32> = None;
+    let mut closest_distance = SELECTION_CLICK_RADIUS;
+
+    for (transform, squad_member) in unit_query.iter() {
+        // Only consider player squads (Team::A)
+        if let Some(squad) = squad_manager.get_squad(squad_member.squad_id) {
+            if squad.team != Team::A {
+                continue;
+            }
+        }
+
+        // Horizontal distance (ignore Y)
+        let dx = world_pos.x - transform.translation.x;
+        let dz = world_pos.z - transform.translation.z;
+        let distance = (dx * dx + dz * dz).sqrt();
+
+        if distance < closest_distance {
+            closest_distance = distance;
+            closest_squad = Some(squad_member.squad_id);
+        }
+    }
+
+    selection_state.hovered_squad = closest_squad;
 }
 
 /// System: Toggle Hold mode for selected squads with H key
