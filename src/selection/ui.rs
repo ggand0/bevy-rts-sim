@@ -54,6 +54,9 @@ impl Default for UiUpdateTimer {
 /// Maximum squads to show detailed info for (performance optimization)
 const MAX_DETAILED_SQUADS: usize = 1;
 
+/// Maximum squads to display in UI (column height limit)
+const MAX_DISPLAYED_SQUADS: usize = 7;
+
 // Colors for UI elements
 const COLOR_DEFAULT: Color = Color::srgba(0.9, 0.9, 0.9, 0.9);
 const COLOR_GREEN: Color = Color::srgba(0.4, 0.9, 0.4, 1.0);
@@ -305,7 +308,15 @@ pub fn update_squad_details_ui(
     }
 
     // Now build UI from precomputed stats
+    let total_squads = selection_state.selected_squads.len();
     for (idx, &squad_id) in selection_state.selected_squads.iter().enumerate() {
+        // Stop displaying after MAX_DISPLAYED_SQUADS to fit in column
+        if idx >= MAX_DISPLAYED_SQUADS {
+            let remaining = total_squads - MAX_DISPLAYED_SQUADS;
+            segments.push(ColoredSegment::new(format!("\n\n... and {} more squad(s)", remaining), COLOR_GREY));
+            break;
+        }
+
         let Some(squad) = squad_manager.get_squad(squad_id) else { continue };
         let Some(stats) = squad_stats.get(&squad_id) else { continue };
 
