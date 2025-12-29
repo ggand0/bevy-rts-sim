@@ -12,6 +12,9 @@ use super::utils::{screen_to_ground_with_heightmap, calculate_squad_centers, fin
 /// Click radius for turret selection (turrets are larger than squad centers)
 const TURRET_CLICK_RADIUS: f32 = 8.0;
 
+/// Hover radius for unit inspection (tighter than click selection)
+const HOVER_RADIUS: f32 = 3.0;
+
 /// System: Handle left-click selection input
 pub fn selection_input_system(
     mouse_button: Res<ButtonInput<MouseButton>>,
@@ -300,7 +303,7 @@ pub fn update_hovered_squad_system(
 
     // Find the closest individual unit to cursor, then return its squad
     let mut closest_squad: Option<u32> = None;
-    let mut closest_distance = SELECTION_CLICK_RADIUS;
+    let mut closest_distance = HOVER_RADIUS;
 
     for (transform, squad_member) in unit_query.iter() {
         // Only consider player squads (Team::A)
