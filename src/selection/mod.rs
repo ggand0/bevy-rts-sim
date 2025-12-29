@@ -23,7 +23,7 @@ pub use state::SelectionState;
 pub use utils::screen_to_ground_with_heightmap;
 
 // Re-export systems for main.rs
-pub use input::{selection_input_system, box_selection_update_system, hold_command_system};
+pub use input::{selection_input_system, box_selection_update_system, hold_command_system, update_hovered_squad_system};
 pub use movement::move_command_system;
 pub use groups::group_command_system;
 pub use visuals::{

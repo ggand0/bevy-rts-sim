@@ -268,6 +268,46 @@ pub fn box_selection_update_system(
     }
 }
 
+/// System: Update hovered squad based on mouse cursor position (for details UI)
+pub fn update_hovered_squad_system(
+    window_query: Query<&Window, With<PrimaryWindow>>,
+    camera_query: Query<(&Camera, &GlobalTransform), With<RtsCamera>>,
+    unit_query: Query<(&Transform, &SquadMember), (With<BattleDroid>, Without<SelectionVisual>)>,
+    squad_manager: Res<SquadManager>,
+    mut selection_state: ResMut<SelectionState>,
+    heightmap: Option<Res<TerrainHeightmap>>,
+) {
+    let Ok(window) = window_query.single() else {
+        selection_state.hovered_squad = None;
+        return;
+    };
+    let Ok((camera, camera_transform)) = camera_query.single() else {
+        selection_state.hovered_squad = None;
+        return;
+    };
+    let Some(cursor_pos) = window.cursor_position() else {
+        selection_state.hovered_squad = None;
+        return;
+    };
+
+    let hm = heightmap.as_ref().map(|h| h.as_ref());
+
+    let Some(world_pos) = screen_to_ground_with_heightmap(cursor_pos, camera, camera_transform, hm) else {
+        selection_state.hovered_squad = None;
+        return;
+    };
+
+    // Calculate squad centers and find closest squad under cursor
+    let squad_centers = calculate_squad_centers(&unit_query);
+    selection_state.hovered_squad = find_squad_at_position(
+        world_pos,
+        &squad_centers,
+        &squad_manager,
+        SELECTION_CLICK_RADIUS,
+        Team::A, // Player squads only for now
+    );
+}
+
 /// System: Toggle Hold mode for selected squads with H key
 pub fn hold_command_system(
     keyboard: Res<ButtonInput<KeyCode>>,

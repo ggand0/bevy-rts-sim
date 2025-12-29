@@ -51,12 +51,6 @@ impl Default for UiUpdateTimer {
     }
 }
 
-/// Maximum squads to show detailed info for (performance optimization)
-const MAX_DETAILED_SQUADS: usize = 1;
-
-/// Maximum squads to display in UI (column height limit)
-const MAX_DISPLAYED_SQUADS: usize = 7;
-
 // Colors for UI elements
 const COLOR_DEFAULT: Color = Color::srgba(0.9, 0.9, 0.9, 0.9);
 const COLOR_GREEN: Color = Color::srgba(0.4, 0.9, 0.4, 1.0);
@@ -198,7 +192,7 @@ pub fn spawn_squad_details_ui(commands: &mut Commands) {
     ));
 }
 
-/// Update the squad details UI with selected squad information
+/// Update the squad details UI with hovered squad information (Total War style)
 pub fn update_squad_details_ui(
     mut commands: Commands,
     time: Res<Time>,
@@ -227,193 +221,153 @@ pub fn update_squad_details_ui(
         }
     }
 
-    if selection_state.selected_squads.is_empty() {
-        **root_text = "No squad selected".to_string();
+    // Show details for hovered squad (Total War style hover-to-inspect)
+    let Some(squad_id) = selection_state.hovered_squad else {
+        **root_text = "".to_string();
         return;
-    }
+    };
 
-    // Build colored segments
-    let mut segments: Vec<ColoredSegment> = Vec::new();
-    segments.push(ColoredSegment::default_color(format!("=== Selected: {} squad(s) ===", selection_state.selected_squads.len())));
+    let Some(squad) = squad_manager.get_squad(squad_id) else {
+        **root_text = "".to_string();
+        return;
+    };
 
-    // PERFORMANCE: Aggregate all squad stats in a SINGLE pass over droids
-    // This changes O(selected_squads * all_droids) to O(all_droids)
-    struct SquadStats {
-        alive_count: u32,
-        hold_count: u32,
-        attack_move_count: u32,
-        move_count: u32,
-        engaged_count: u32,
-        stationary_count: u32,
-        avg_pos: Vec3,
-        total_distance: f32,
-        target_moving_count: u32,
-        high_ground_count: u32,
-        targets_sampled: u32,
-        total_height_diff: f32,
-    }
+    // Gather stats for the hovered squad
+    let mut alive_count: u32 = 0;
+    let mut hold_count: u32 = 0;
+    let mut attack_move_count: u32 = 0;
+    let mut move_count: u32 = 0;
+    let mut engaged_count: u32 = 0;
+    let mut stationary_count: u32 = 0;
+    let mut avg_pos = Vec3::ZERO;
+    let mut total_distance: f32 = 0.0;
+    let mut target_moving_count: u32 = 0;
+    let mut high_ground_count: u32 = 0;
+    let mut targets_sampled: u32 = 0;
+    let mut total_height_diff: f32 = 0.0;
 
-    let mut squad_stats: HashMap<u32, SquadStats> = HashMap::new();
-
-    // Initialize stats for selected squads only
-    for &squad_id in &selection_state.selected_squads {
-        squad_stats.insert(squad_id, SquadStats {
-            alive_count: 0,
-            hold_count: 0,
-            attack_move_count: 0,
-            move_count: 0,
-            engaged_count: 0,
-            stationary_count: 0,
-            avg_pos: Vec3::ZERO,
-            total_distance: 0.0,
-            target_moving_count: 0,
-            high_ground_count: 0,
-            targets_sampled: 0,
-            total_height_diff: 0.0,
-        });
-    }
-
-    // Single pass over all droids
     for (sm, _droid, transform, mode, combat, tracker) in droid_query.iter() {
-        let Some(stats) = squad_stats.get_mut(&sm.squad_id) else { continue };
+        if sm.squad_id != squad_id {
+            continue;
+        }
 
-        stats.alive_count += 1;
-        stats.avg_pos += transform.translation;
+        alive_count += 1;
+        avg_pos += transform.translation;
 
         match mode {
-            MovementMode::Hold => stats.hold_count += 1,
-            MovementMode::AttackMove => stats.attack_move_count += 1,
-            MovementMode::Move => stats.move_count += 1,
+            MovementMode::Hold => hold_count += 1,
+            MovementMode::AttackMove => attack_move_count += 1,
+            MovementMode::Move => move_count += 1,
         }
 
         if let Some(target_entity) = combat.current_target {
-            stats.engaged_count += 1;
+            engaged_count += 1;
 
             if let Ok((target_transform, target_tracker)) = target_query.get(target_entity) {
-                stats.targets_sampled += 1;
-                stats.total_distance += transform.translation.distance(target_transform.translation);
-                stats.total_height_diff += transform.translation.y - target_transform.translation.y;
+                targets_sampled += 1;
+                total_distance += transform.translation.distance(target_transform.translation);
+                total_height_diff += transform.translation.y - target_transform.translation.y;
                 if !target_tracker.is_stationary {
-                    stats.target_moving_count += 1;
+                    target_moving_count += 1;
                 }
                 if transform.translation.y > target_transform.translation.y + HIGH_GROUND_HEIGHT_THRESHOLD {
-                    stats.high_ground_count += 1;
+                    high_ground_count += 1;
                 }
             }
         }
 
         if tracker.is_stationary {
-            stats.stationary_count += 1;
+            stationary_count += 1;
         }
     }
 
-    // Now build UI from precomputed stats
-    let total_squads = selection_state.selected_squads.len();
-    for (idx, &squad_id) in selection_state.selected_squads.iter().enumerate() {
-        // Stop displaying after MAX_DISPLAYED_SQUADS to fit in column
-        if idx >= MAX_DISPLAYED_SQUADS {
-            let remaining = total_squads - MAX_DISPLAYED_SQUADS;
-            segments.push(ColoredSegment::new(format!("\n\n... and {} more squad(s)", remaining), COLOR_GREY));
-            break;
-        }
+    if alive_count > 0 {
+        avg_pos /= alive_count as f32;
+    }
 
-        let Some(squad) = squad_manager.get_squad(squad_id) else { continue };
-        let Some(stats) = squad_stats.get(&squad_id) else { continue };
+    // Build colored segments for hovered squad
+    let mut segments: Vec<ColoredSegment> = Vec::new();
 
-        let alive_count = stats.alive_count;
-        let mut avg_pos = stats.avg_pos;
-        if alive_count > 0 {
-            avg_pos /= alive_count as f32;
-        }
+    // Determine dominant mode
+    let mode_str = if hold_count > attack_move_count && hold_count > move_count {
+        "Hold"
+    } else if attack_move_count > move_count {
+        "AttackMove"
+    } else {
+        "Move"
+    };
 
-        // Determine dominant mode
-        let mode_str = if stats.hold_count > stats.attack_move_count && stats.hold_count > stats.move_count {
-            "Hold"
-        } else if stats.attack_move_count > stats.move_count {
-            "AttackMove"
+    let team_str = match squad.team {
+        Team::A => "A (Blue)",
+        Team::B => "B (Red)",
+    };
+
+    segments.push(ColoredSegment::default_color(format!("=== Squad #{} ===", squad_id)));
+    segments.push(ColoredSegment::default_color(format!("\n  Team: {}", team_str)));
+    segments.push(ColoredSegment::default_color(format!("\n  Units: {}/{} alive", alive_count, SQUAD_SIZE)));
+    segments.push(ColoredSegment::default_color(format!("\n  Mode: {} ({}/{})", mode_str,
+        if mode_str == "Hold" { hold_count }
+        else if mode_str == "AttackMove" { attack_move_count }
+        else { move_count },
+        alive_count
+    )));
+    segments.push(ColoredSegment::default_color(format!("\n  Engaged: {}", engaged_count)));
+    segments.push(ColoredSegment::default_color(format!("\n  Stationary: {}/{}", stationary_count, alive_count)));
+    segments.push(ColoredSegment::default_color(format!("\n  Pos: ({:.0}, {:.0}, h={:.0})", avg_pos.x, avg_pos.z, avg_pos.y)));
+    segments.push(ColoredSegment::default_color(format!("\n  Target: ({:.0}, {:.0})", squad.target_position.x, squad.target_position.z)));
+
+    // Accuracy breakdown
+    segments.push(ColoredSegment::default_color("\n  --- Accuracy ---".to_string()));
+    segments.push(ColoredSegment::default_color(format!("\n  Base: {:.0}%", INFANTRY_BASE_ACCURACY * 100.0)));
+
+    let stationary_ratio = if alive_count > 0 { stationary_count as f32 / alive_count as f32 } else { 0.0 };
+    let has_stationary_bonus = stationary_ratio > 0.5;
+
+    // Stationary bonus - green if active, grey if not
+    if has_stationary_bonus {
+        segments.push(ColoredSegment::new(format!("\n  +Stationary: +{:.0}%", ACCURACY_STATIONARY_BONUS * 100.0), COLOR_GREEN));
+    } else {
+        segments.push(ColoredSegment::new("\n  Stationary: --".to_string(), COLOR_GREY));
+    }
+
+    // If engaged, show combat-specific accuracy modifiers
+    if targets_sampled > 0 {
+        let avg_distance = total_distance / targets_sampled as f32;
+        let avg_height_diff = total_height_diff / targets_sampled as f32;
+        let high_ground_ratio = high_ground_count as f32 / targets_sampled as f32;
+        let target_moving_ratio = target_moving_count as f32 / targets_sampled as f32;
+
+        let has_high_ground = high_ground_ratio > 0.5;
+        let targets_moving = target_moving_ratio > 0.5;
+
+        // Cache combat state
+        combat_cache.cache.insert(squad_id, CachedCombatState {
+            has_high_ground,
+            targets_moving,
+            avg_distance,
+            avg_height_diff,
+        });
+
+        build_accuracy_segments_engaged(
+            &mut segments,
+            has_stationary_bonus,
+            has_high_ground,
+            targets_moving,
+            avg_distance,
+            avg_height_diff,
+        );
+    } else {
+        // Not engaged - show cached combat state if available
+        if let Some(cached) = combat_cache.cache.get(&squad_id) {
+            build_accuracy_segments_cached(&mut segments, has_stationary_bonus, cached);
         } else {
-            "Move"
-        };
-
-        let team_str = match squad.team {
-            Team::A => "A (Blue)",
-            Team::B => "B (Red)",
-        };
-
-        segments.push(ColoredSegment::default_color(format!("\n\nSquad #{}", squad_id)));
-        segments.push(ColoredSegment::default_color(format!("\n  Team: {}", team_str)));
-        segments.push(ColoredSegment::default_color(format!("\n  Units: {}/{} alive", alive_count, SQUAD_SIZE)));
-        segments.push(ColoredSegment::default_color(format!("\n  Mode: {} ({}/{})", mode_str,
-            if mode_str == "Hold" { stats.hold_count }
-            else if mode_str == "AttackMove" { stats.attack_move_count }
-            else { stats.move_count },
-            alive_count
-        )));
-
-        // Only show detailed stats for first MAX_DETAILED_SQUADS (performance optimization)
-        if idx >= MAX_DETAILED_SQUADS {
-            segments.push(ColoredSegment::new("\n  (detailed stats hidden)".to_string(), COLOR_GREY));
-            continue;
+            build_accuracy_segments_idle(&mut segments, has_stationary_bonus, avg_pos);
         }
+    }
 
-        segments.push(ColoredSegment::default_color(format!("\n  Engaged: {}", stats.engaged_count)));
-        segments.push(ColoredSegment::default_color(format!("\n  Stationary: {}/{}", stats.stationary_count, alive_count)));
-        segments.push(ColoredSegment::default_color(format!("\n  Pos: ({:.0}, {:.0}, h={:.0})", avg_pos.x, avg_pos.z, avg_pos.y)));
-        segments.push(ColoredSegment::default_color(format!("\n  Target: ({:.0}, {:.0})", squad.target_position.x, squad.target_position.z)));
-
-        // Accuracy breakdown
-        segments.push(ColoredSegment::default_color("\n  --- Accuracy ---".to_string()));
-        segments.push(ColoredSegment::default_color(format!("\n  Base: {:.0}%", INFANTRY_BASE_ACCURACY * 100.0)));
-
-        let stationary_ratio = if alive_count > 0 { stats.stationary_count as f32 / alive_count as f32 } else { 0.0 };
-        let has_stationary_bonus = stationary_ratio > 0.5;
-
-        // Stationary bonus - green if active, grey if not
-        if has_stationary_bonus {
-            segments.push(ColoredSegment::new(format!("\n  +Stationary: +{:.0}%", ACCURACY_STATIONARY_BONUS * 100.0), COLOR_GREEN));
-        } else {
-            segments.push(ColoredSegment::new("\n  Stationary: --".to_string(), COLOR_GREY));
-        }
-
-        // If engaged, show combat-specific accuracy modifiers
-        if stats.targets_sampled > 0 {
-            let avg_distance = stats.total_distance / stats.targets_sampled as f32;
-            let avg_height_diff = stats.total_height_diff / stats.targets_sampled as f32;
-            let high_ground_ratio = stats.high_ground_count as f32 / stats.targets_sampled as f32;
-            let target_moving_ratio = stats.target_moving_count as f32 / stats.targets_sampled as f32;
-
-            let has_high_ground = high_ground_ratio > 0.5;
-            let targets_moving = target_moving_ratio > 0.5;
-
-            // Cache combat state
-            combat_cache.cache.insert(squad_id, CachedCombatState {
-                has_high_ground,
-                targets_moving,
-                avg_distance,
-                avg_height_diff,
-            });
-
-            build_accuracy_segments_engaged(
-                &mut segments,
-                has_stationary_bonus,
-                has_high_ground,
-                targets_moving,
-                avg_distance,
-                avg_height_diff,
-            );
-        } else {
-            // Not engaged - show cached combat state if available
-            if let Some(cached) = combat_cache.cache.get(&squad_id) {
-                build_accuracy_segments_cached(&mut segments, has_stationary_bonus, cached);
-            } else {
-                build_accuracy_segments_idle(&mut segments, has_stationary_bonus, avg_pos);
-            }
-        }
-
-        // Group info
-        if let Some(&group_id) = selection_state.squad_to_group.get(&squad_id) {
-            segments.push(ColoredSegment::default_color(format!("\n  Group: #{}", group_id)));
-        }
+    // Group info
+    if let Some(&group_id) = selection_state.squad_to_group.get(&squad_id) {
+        segments.push(ColoredSegment::default_color(format!("\n  Group: #{}", group_id)));
     }
 
     // Set root text to first segment, spawn rest as TextSpan children

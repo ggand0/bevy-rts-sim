@@ -119,6 +119,7 @@ fn main() {
             selection::move_command_system,
             selection::group_command_system,
             selection::hold_command_system,
+            selection::update_hovered_squad_system,
         ).chain())
         .add_systems(Update, (
             // Selection visual feedback
