@@ -15,9 +15,6 @@ use super::state::SelectionState;
 #[derive(Component)]
 pub struct SquadDetailsUI;
 
-/// Marker for text span children (so we can despawn them on update)
-#[derive(Component)]
-pub struct SquadDetailsSpan;
 
 /// Cached combat state for a squad (shown when idle)
 #[derive(Clone, Default)]
@@ -385,7 +382,6 @@ pub fn update_squad_details_ui(
                 ..default()
             },
             TextColor(segment.color),
-            SquadDetailsSpan,
         )).id();
         commands.entity(ui_entity).add_child(span);
     }
@@ -398,10 +394,6 @@ pub fn update_squad_details_ui(
 /// Marker component for the turret details UI panel
 #[derive(Component)]
 pub struct TurretDetailsUI;
-
-/// Marker for turret text span children
-#[derive(Component)]
-pub struct TurretDetailsSpan;
 
 /// Spawn the turret details UI panel (bottom-right corner)
 pub fn spawn_turret_details_ui(commands: &mut Commands) {
@@ -581,7 +573,6 @@ pub fn update_turret_details_ui(
                 ..default()
             },
             TextColor(segment.color),
-            TurretDetailsSpan,
         )).id();
         commands.entity(ui_entity).add_child(span);
     }
