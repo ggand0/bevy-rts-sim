@@ -63,6 +63,9 @@ fn main() {
         .insert_resource(GameState::default())
         .insert_resource(ExplosionDebugMode::default())
         .insert_resource(selection::SelectionState::default())
+        .insert_resource(selection::SquadCombatCache::default())
+        .insert_resource(selection::TurretCombatCache::default())
+        .insert_resource(selection::UiUpdateTimer::default())
         .insert_resource(ground_explosion::GroundExplosionDebugMenu::default())
         .insert_resource(artillery::ArtilleryState::default())
         .add_event::<AreaDamageEvent>()
@@ -98,8 +101,10 @@ fn main() {
             update_commander_markers_system,
         ))
         .add_systems(Update, (
+            // Movement tracking for accuracy system (must run before animate_march)
+            movement::update_movement_tracker,
             // Animation and movement systems run after formation corrections
-            movement::animate_march,
+            movement::animate_march.after(movement::update_movement_tracker),
             movement::update_fps_display,
             movement::rts_camera_movement,
         ))
@@ -113,6 +118,8 @@ fn main() {
             selection::box_selection_update_system,
             selection::move_command_system,
             selection::group_command_system,
+            selection::hold_command_system,
+            selection::update_hovered_squad_system,
         ).chain())
         .add_systems(Update, (
             // Selection visual feedback
@@ -123,10 +130,13 @@ fn main() {
             selection::update_group_orientation_markers,
             selection::update_group_bounding_box_debug,
             selection::update_squad_path_arrows,
+            selection::update_squad_details_ui,
+            selection::update_turret_details_ui,
         ))
         .add_systems(Update, (
             // Combat systems
             target_acquisition_system,
+            clear_blocked_targets_system, // Stuck prevention for AttackMove
             hitscan_fire_system,      // Infantry use hitscan (instant damage + visual tracer)
             auto_fire_system,         // Turrets still use projectiles
             volley_fire_system,

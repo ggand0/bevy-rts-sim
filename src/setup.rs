@@ -7,6 +7,7 @@ use crate::types::*;
 use crate::constants::*;
 use crate::formation::*;
 use crate::terrain::TerrainHeightmap;
+use crate::selection::{spawn_squad_details_ui, spawn_turret_details_ui};
 
 pub fn setup_scene(
     mut commands: Commands,
@@ -116,6 +117,12 @@ pub fn setup_scene(
         BackgroundColor(Color::NONE),  // Transparent background
         FpsText,
     ));
+
+    // Squad details UI (bottom-left, for debugging)
+    spawn_squad_details_ui(&mut commands);
+
+    // Turret details UI (bottom-right, for debugging)
+    spawn_turret_details_ui(&mut commands);
 }
 
 pub fn spawn_army_with_squads(
@@ -343,6 +350,7 @@ pub fn spawn_single_squad(
                 target_scan_timer: rng.gen_range(0.0..TARGET_SCAN_INTERVAL),
                 auto_fire_timer: rng.gen_range(0.0..AUTO_FIRE_INTERVAL),
                 current_target: None,
+                blocked_timer: 0.0,
             },
             SquadMember {
                 squad_id,
@@ -354,6 +362,8 @@ pub fn spawn_single_squad(
                 target_world_position: unit_position,
             },
             UnitMass(DEFAULT_UNIT_MASS),
+            MovementMode::default(),
+            MovementTracker::new(unit_position),
         )).id();
 
         // Add unit to squad manager
@@ -581,6 +591,7 @@ fn spawn_team_squads(
                     target_scan_timer: rng.gen_range(0.0..TARGET_SCAN_INTERVAL),
                     auto_fire_timer: rng.gen_range(0.0..AUTO_FIRE_INTERVAL),
                     current_target: None,
+                    blocked_timer: 0.0,
                 },
                 SquadMember {
                     squad_id,
@@ -592,6 +603,8 @@ fn spawn_team_squads(
                     target_world_position: unit_position,
                 },
                 UnitMass(DEFAULT_UNIT_MASS),
+                MovementMode::default(),
+                MovementTracker::new(unit_position),
             )).id();
 
             // Add unit to squad manager

@@ -14,15 +14,17 @@ use super::visuals::{spawn_move_indicator, spawn_move_indicator_with_color, spaw
 
 /// System: Handle right-click move commands for selected squads
 /// Supports drag-to-set-orientation (CoH1-style)
+/// Shift+RMB = Attack Move (units stop when engaged)
 /// During preparation phase, units teleport instantly to their destination
 pub fn move_command_system(
     mut commands: Commands,
     mouse_button: Res<ButtonInput<MouseButton>>,
+    keyboard: Res<ButtonInput<KeyCode>>,
     window_query: Query<&Window, With<PrimaryWindow>>,
     camera_query: Query<(&Camera, &GlobalTransform), With<RtsCamera>>,
     mut squad_manager: ResMut<SquadManager>,
     mut selection_state: ResMut<SelectionState>,
-    mut droid_query: Query<(Entity, &mut BattleDroid, &SquadMember, &mut FormationOffset, &mut Transform)>,
+    mut droid_query: Query<(Entity, &mut BattleDroid, &SquadMember, &mut FormationOffset, &mut Transform, &mut MovementMode)>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     arrow_query: Query<Entity, With<OrientationArrowVisual>>,
@@ -110,12 +112,21 @@ pub fn move_command_system(
             .map(|(ss, wm)| ss.active && wm.wave_state == WaveState::Preparation)
             .unwrap_or(false);
 
+        // Shift+RMB = Attack Move, regular RMB = Move
+        let shift_held = keyboard.pressed(KeyCode::ShiftLeft) || keyboard.pressed(KeyCode::ShiftRight);
+        let new_mode = if shift_held {
+            MovementMode::AttackMove
+        } else {
+            MovementMode::Move
+        };
+
         if is_prep_phase {
             info!("Prep phase: Teleporting {} squads to ({:.1}, {:.1})",
                   selection_state.selected_squads.len(), destination.x, destination.z);
         } else {
-            info!("Move command to ({:.1}, {:.1}) for {} squads, orientation: ({:.2}, {:.2})",
-                  destination.x, destination.z, selection_state.selected_squads.len(),
+            let mode_str = if shift_held { "Attack Move" } else { "Move" };
+            info!("{} command to ({:.1}, {:.1}) for {} squads, orientation: ({:.2}, {:.2})",
+                  mode_str, destination.x, destination.z, selection_state.selected_squads.len(),
                   unified_facing.x, unified_facing.z);
         }
 
@@ -131,6 +142,7 @@ pub fn move_command_system(
             unified_facing,
             hm,
             is_prep_phase,
+            new_mode,
         );
 
         // Clear drag state
@@ -146,7 +158,7 @@ fn execute_group_move(
     commands: &mut Commands,
     squad_manager: &mut ResMut<SquadManager>,
     selection_state: &mut SelectionState,
-    droid_query: &mut Query<(Entity, &mut BattleDroid, &SquadMember, &mut FormationOffset, &mut Transform)>,
+    droid_query: &mut Query<(Entity, &mut BattleDroid, &SquadMember, &mut FormationOffset, &mut Transform, &mut MovementMode)>,
     meshes: &mut ResMut<Assets<Mesh>>,
     materials: &mut ResMut<Assets<StandardMaterial>>,
     destination: Vec3,
@@ -154,6 +166,7 @@ fn execute_group_move(
     group_id: u32,
     heightmap: Option<&TerrainHeightmap>,
     instant_teleport: bool,
+    new_mode: MovementMode,
 ) {
     let Some(group) = selection_state.groups.get_mut(&group_id) else { return };
 
@@ -180,7 +193,7 @@ fn execute_group_move(
     // Calculate actual current positions for path visuals
     let group_squad_ids = group.squad_ids.clone();
     let squad_current_positions = calculate_filtered_squad_centers(
-        droid_query.iter().map(|(_, _, sm, _, t)| (sm.squad_id, t.translation)),
+        droid_query.iter().map(|(_, _, sm, _, t, _)| (sm.squad_id, t.translation)),
         |id| group_squad_ids.contains(&id),
         squad_manager,
     );
@@ -229,8 +242,11 @@ fn execute_group_move(
     }
 
     // Update individual unit targets using standard formation calculation
-    for (_entity, mut droid, squad_member, mut formation_offset, mut transform) in droid_query.iter_mut() {
+    for (_entity, mut droid, squad_member, mut formation_offset, mut transform, mut mode) in droid_query.iter_mut() {
         if group.squad_ids.contains(&squad_member.squad_id) {
+            // Set movement mode
+            *mode = new_mode;
+
             if let Some(squad) = squad_manager.get_squad(squad_member.squad_id) {
                 // Calculate formation offset with new facing direction
                 let new_offset = calculate_formation_offset(
@@ -267,13 +283,14 @@ fn execute_move_command(
     commands: &mut Commands,
     squad_manager: &mut ResMut<SquadManager>,
     selection_state: &mut SelectionState,
-    droid_query: &mut Query<(Entity, &mut BattleDroid, &SquadMember, &mut FormationOffset, &mut Transform)>,
+    droid_query: &mut Query<(Entity, &mut BattleDroid, &SquadMember, &mut FormationOffset, &mut Transform, &mut MovementMode)>,
     meshes: &mut ResMut<Assets<Mesh>>,
     materials: &mut ResMut<Assets<StandardMaterial>>,
     destination: Vec3,
     unified_facing: Vec3,
     heightmap: Option<&TerrainHeightmap>,
     instant_teleport: bool,
+    new_mode: MovementMode,
 ) {
     // Check if this is a complete group move
     if let Some(group_id) = check_is_complete_group(selection_state, squad_manager) {
@@ -290,6 +307,7 @@ fn execute_move_command(
             group_id,
             heightmap,
             instant_teleport,
+            new_mode,
         );
         return;
     }
@@ -316,7 +334,7 @@ fn execute_move_command(
     // Calculate actual current positions of squads from unit transforms (not squad.center_position which lags)
     let selected = selection_state.selected_squads.clone();
     let squad_current_positions = calculate_filtered_squad_centers(
-        droid_query.iter().map(|(_, _, sm, _, t)| (sm.squad_id, t.translation)),
+        droid_query.iter().map(|(_, _, sm, _, t, _)| (sm.squad_id, t.translation)),
         |id| selected.contains(&id),
         squad_manager,
     );
@@ -375,8 +393,11 @@ fn execute_move_command(
     }
 
     // Update individual unit targets
-    for (_entity, mut droid, squad_member, mut formation_offset, mut transform) in droid_query.iter_mut() {
+    for (_entity, mut droid, squad_member, mut formation_offset, mut transform, mut mode) in droid_query.iter_mut() {
         if selection_state.selected_squads.contains(&squad_member.squad_id) {
+            // Set movement mode
+            *mode = new_mode;
+
             if let Some(squad) = squad_manager.get_squad(squad_member.squad_id) {
                 // Calculate new formation offset with new facing direction
                 let new_offset = calculate_formation_offset(

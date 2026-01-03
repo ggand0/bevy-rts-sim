@@ -4,10 +4,12 @@ use std::collections::HashMap;
 
 use super::groups::SquadGroup;
 
-/// Selection state resource - tracks which squads are selected (Vec preserves selection order)
+/// Selection state resource - tracks which squads/turrets are selected (Vec preserves selection order)
 #[derive(Resource)]
 pub struct SelectionState {
     pub selected_squads: Vec<u32>,  // First element is primary selection
+    pub selected_turret: Option<Entity>,  // Selected turret (mutually exclusive with squad selection)
+    pub hovered_squad: Option<u32>,  // Squad currently under mouse cursor (for details UI)
     pub box_select_start: Option<Vec2>,  // Screen-space start position for box selection
     pub is_box_selecting: bool,
     pub drag_start_world: Option<Vec3>,  // World position where drag started
@@ -25,6 +27,8 @@ impl Default for SelectionState {
     fn default() -> Self {
         Self {
             selected_squads: Vec::new(),
+            selected_turret: None,
+            hovered_squad: None,
             box_select_start: None,
             is_box_selecting: false,
             drag_start_world: None,
