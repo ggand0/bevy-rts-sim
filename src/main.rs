@@ -137,8 +137,8 @@ fn main() {
             // Combat systems
             target_acquisition_system,
             clear_blocked_targets_system, // Stuck prevention for AttackMove
-            hitscan_fire_system,      // Infantry use hitscan (instant damage + visual tracer)
-            auto_fire_system,         // Turrets still use projectiles
+            hitscan_fire_system,          // Infantry use hitscan (instant damage + visual tracer)
+            turret_hitscan_fire_system,   // Turrets now use hitscan too (no more wasted shots)
             volley_fire_system,
             update_projectiles,
             update_hitscan_tracers,   // Update visual tracers
