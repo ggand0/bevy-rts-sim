@@ -355,6 +355,11 @@ pub struct TurretRotatingAssembly {
     pub current_barrel_index: usize, // 0-3 for four barrels in 2x2 arrangement
 }
 
+/// Marker component for MG turret barrel (child of TurretRotatingAssembly)
+/// The barrel entity handles pitch rotation while the assembly handles yaw
+#[derive(Component)]
+pub struct TurretBarrel;
+
 // Building collision component
 #[derive(Component)]
 pub struct BuildingCollider {

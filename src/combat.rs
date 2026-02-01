@@ -995,9 +995,8 @@ pub fn turret_hitscan_fire_system(
         Vec3::new(-1.8, 1.5, -6.0), // Left barrel
         Vec3::new(1.8, 1.5, -6.0),  // Right barrel
     ];
-    let mg_barrel_positions = [
-        Vec3::new(0.0, 2.0, -7.4),  // Single center barrel
-    ];
+    // Note: MG barrel position is now computed dynamically with pitch rotation
+    // See the firing_pos calculation for MG turrets below
 
     for (global_transform, local_transform, droid, mut combat_unit, mut turret, mut mg_turret_opt) in turret_query.iter_mut() {
         // === MG FIRING MODE CONTROL ===
@@ -1099,17 +1098,34 @@ pub fn turret_hitscan_fire_system(
                     let fire_interval = if is_mg { 0.05 } else { AUTO_FIRE_INTERVAL };
                     combat_unit.auto_fire_timer = fire_interval;
 
-                    // Get barrel positions
-                    let barrel_positions = if is_mg {
-                        &mg_barrel_positions[..]
-                    } else {
-                        &standard_barrel_positions[..]
-                    };
-
                     // Calculate firing position from barrel
-                    let local_barrel_pos = barrel_positions[turret.current_barrel_index % barrel_positions.len()];
-                    let world_barrel_offset = local_transform.rotation * local_barrel_pos;
-                    let firing_pos = global_transform.translation() + world_barrel_offset;
+                    let firing_pos = if is_mg {
+                        // MG turret: compute barrel muzzle position with pitch rotation
+                        // Barrel pivot is at Y=2.0, Z=-1.0 relative to assembly
+                        // Muzzle extends Z=-6.4 from pivot
+                        let assembly_pos = global_transform.translation();
+                        let barrel_pivot_local = Vec3::new(0.0, 2.0, -1.0);
+                        let barrel_pivot_world = assembly_pos + local_transform.rotation * barrel_pivot_local;
+
+                        // Calculate pitch angle to target
+                        let to_target = target_pos - barrel_pivot_world;
+                        let horizontal_dist = Vec2::new(to_target.x, to_target.z).length();
+                        let vertical_dist = to_target.y;
+                        let pitch_angle = vertical_dist.atan2(horizontal_dist).clamp(-0.52, 0.26);
+
+                        // Compute muzzle position with pitch applied
+                        // Muzzle extends 6.4 units forward from pivot
+                        let barrel_forward = local_transform.rotation * Vec3::NEG_Z;
+                        let pitch_rotation = Quat::from_axis_angle(local_transform.rotation * Vec3::X, pitch_angle);
+                        let pitched_forward = pitch_rotation * barrel_forward;
+                        let muzzle_offset = pitched_forward * 6.4;
+                        barrel_pivot_world + muzzle_offset
+                    } else {
+                        // Heavy turret: use standard barrel positions
+                        let local_barrel_pos = standard_barrel_positions[turret.current_barrel_index % standard_barrel_positions.len()];
+                        let world_barrel_offset = local_transform.rotation * local_barrel_pos;
+                        global_transform.translation() + world_barrel_offset
+                    };
 
                     // Check line of sight
                     if !has_line_of_sight(firing_pos, target_pos, heightmap.as_deref()) {
@@ -1239,8 +1255,9 @@ pub fn turret_hitscan_fire_system(
                         },
                     ));
 
-                    // Advance barrel index
-                    turret.current_barrel_index = (turret.current_barrel_index + 1) % barrel_positions.len();
+                    // Advance barrel index (MG has 1 barrel, Heavy has 2)
+                    let barrel_count = if is_mg { 1 } else { standard_barrel_positions.len() };
+                    turret.current_barrel_index = (turret.current_barrel_index + 1) % barrel_count;
 
                     // Increment MG burst counter
                     if let Some(ref mut mg_turret) = mg_turret_opt {
@@ -1503,35 +1520,63 @@ pub fn collision_detection_system(
     }
 }
 
-/// Turret rotation system - smoothly rotates turret assembly to face current target
+/// Turret rotation system - handles yaw (assembly) and pitch (barrel) rotation
+/// - TurretRotatingAssembly: horizontal rotation to face target
+/// - TurretBarrel: vertical rotation for MG turrets to aim up/down
 pub fn turret_rotation_system(
     time: Res<Time>,
-    mut turret_query: Query<(&mut Transform, &GlobalTransform, &CombatUnit, Option<&crate::types::MgTurret>), With<crate::types::TurretRotatingAssembly>>,
+    mut turret_query: Query<(&mut Transform, &GlobalTransform, &CombatUnit, Option<&crate::types::MgTurret>, Option<&Children>), With<crate::types::TurretRotatingAssembly>>,
     target_query: Query<&GlobalTransform, (With<BattleDroid>, Without<crate::types::TurretRotatingAssembly>)>,
+    mut barrel_query: Query<&mut Transform, (With<crate::types::TurretBarrel>, Without<crate::types::TurretRotatingAssembly>)>,
 ) {
-    for (mut turret_transform, turret_global_transform, combat_unit, mg_turret) in turret_query.iter_mut() {
+    for (mut turret_transform, turret_global_transform, combat_unit, mg_turret, children) in turret_query.iter_mut() {
         if let Some(target_entity) = combat_unit.current_target {
             if let Ok(target_global_transform) = target_query.get(target_entity) {
-                // Calculate direction to target (horizontal plane only)
-                // Use GlobalTransform to get world positions for direction calculation
                 let turret_pos = turret_global_transform.translation();
                 let target_pos = target_global_transform.translation();
 
-                // Flatten target position to horizontal plane (keep Y at turret's level)
+                // === YAW: Assembly rotation (horizontal) ===
                 let target_pos_flat = Vec3::new(target_pos.x, turret_pos.y, target_pos.z);
-
-                // Create target rotation using Transform's from_translation + looking_at
-                // This ensures the turret's -Z axis points at the target
                 let target_rotation = Transform::from_translation(turret_pos)
                     .looking_at(target_pos_flat, Vec3::Y)
                     .rotation;
 
-                // Smooth rotation interpolation
-                let rotation_speed = if mg_turret.is_some() { 5.0 } else { 3.0 }; // Faster for MG
+                let rotation_speed = if mg_turret.is_some() { 5.0 } else { 3.0 };
                 turret_transform.rotation = turret_transform.rotation.slerp(
                     target_rotation,
                     rotation_speed * time.delta_secs()
                 );
+
+                // === PITCH: Barrel rotation (vertical) - MG turret only ===
+                if mg_turret.is_some() {
+                    if let Some(children) = children {
+                        for child in children.iter() {
+                            if let Ok(mut barrel_transform) = barrel_query.get_mut(child) {
+                                // Calculate pitch angle from barrel pivot to target
+                                // Barrel pivot is at Y=3.0 (base 1.0 + assembly offset 2.0)
+                                let barrel_world_pos = turret_global_transform.translation() + Vec3::new(0.0, 3.0, 0.0);
+                                let to_target = target_pos - barrel_world_pos;
+                                let horizontal_dist = Vec2::new(to_target.x, to_target.z).length();
+                                let vertical_dist = to_target.y;
+
+                                // Calculate pitch angle (positive when looking down because target is below)
+                                let pitch_angle = vertical_dist.atan2(horizontal_dist);
+
+                                // Clamp pitch to reasonable range (-30° to +15°)
+                                let pitch_clamped = pitch_angle.clamp(-0.52, 0.26);
+
+                                // Apply pitch as rotation around local X axis
+                                let target_pitch = Quat::from_rotation_x(pitch_clamped);
+
+                                // Smooth interpolation for barrel pitch
+                                barrel_transform.rotation = barrel_transform.rotation.slerp(
+                                    target_pitch,
+                                    rotation_speed * time.delta_secs()
+                                );
+                            }
+                        }
+                    }
+                }
             }
         }
     }

@@ -8,7 +8,10 @@ use bevy::render::render_resource::{
 use bevy::render::alpha::AlphaMode;
 use crate::types::*;
 use crate::terrain::{TerrainHeightmap, MapSwitchEvent, MapPreset};
-use crate::procedural_meshes::*;
+use crate::procedural_meshes::{
+    create_mg_turret_base_mesh, create_mg_turret_assembly_mesh, create_mg_turret_barrel_mesh,
+    create_turret_base_mesh, create_turret_rotating_assembly_mesh,
+};
 
 /// MG turret health points
 pub const MG_TURRET_HEALTH: f32 = 10_000.0;
@@ -76,6 +79,7 @@ fn spawn_mg_turret_internal(
     // Create meshes
     let base_mesh = create_mg_turret_base_mesh(meshes);
     let assembly_mesh = create_mg_turret_assembly_mesh(meshes);
+    let barrel_mesh = create_mg_turret_barrel_mesh(meshes);
 
     // Create materials (Darker, more industrial)
     let base_material = materials.add(StandardMaterial {
@@ -92,6 +96,13 @@ fn spawn_mg_turret_internal(
         ..default()
     });
 
+    let barrel_material = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.25, 0.28, 0.25), // Slightly darker for barrel
+        metallic: 0.95,
+        perceptual_roughness: 0.3,
+        ..default()
+    });
+
     // Spawn base entity (parent)
     let base_entity = commands.spawn((
         Mesh3d(base_mesh),
@@ -102,7 +113,7 @@ fn spawn_mg_turret_internal(
         Health::new(MG_TURRET_HEALTH),
     )).id();
 
-    // Spawn rotating assembly entity (child)
+    // Spawn rotating assembly entity (child of base) - handles YAW rotation
     let assembly_entity = commands.spawn((
         Mesh3d(assembly_mesh),
         MeshMaterial3d(gun_material),
@@ -133,8 +144,18 @@ fn spawn_mg_turret_internal(
         },
     )).id();
 
-    // Link child to parent
+    // Spawn barrel entity (child of assembly) - handles PITCH rotation
+    // Position: at weapon housing front (Y=2.0 relative to assembly, Z=-1.0 at housing edge)
+    let barrel_entity = commands.spawn((
+        Mesh3d(barrel_mesh),
+        MeshMaterial3d(barrel_material),
+        Transform::from_xyz(0.0, 2.0, -1.0), // Pivot point at weapon housing front
+        TurretBarrel,
+    )).id();
+
+    // Link entities: Base -> Assembly -> Barrel
     commands.entity(base_entity).add_children(&[assembly_entity]);
+    commands.entity(assembly_entity).add_children(&[barrel_entity]);
 
     base_entity
 }
