@@ -1552,23 +1552,19 @@ pub fn turret_rotation_system(
                     if let Some(children) = children {
                         for child in children.iter() {
                             if let Ok(mut barrel_transform) = barrel_query.get_mut(child) {
-                                // Calculate pitch angle from barrel pivot to target
-                                // Barrel pivot is at Y=3.0 (base 1.0 + assembly offset 2.0)
-                                let barrel_world_pos = turret_global_transform.translation() + Vec3::new(0.0, 3.0, 0.0);
+                                // Barrel pivot is at (0, 2.0, -1.0) relative to assembly
+                                // Must match the pivot used in turret_hitscan_fire_system
+                                let barrel_pivot_local = Vec3::new(0.0, 2.0, -1.0);
+                                let barrel_world_pos = turret_pos + turret_transform.rotation * barrel_pivot_local;
                                 let to_target = target_pos - barrel_world_pos;
                                 let horizontal_dist = Vec2::new(to_target.x, to_target.z).length();
                                 let vertical_dist = to_target.y;
 
-                                // Calculate pitch angle (positive when looking down because target is below)
                                 let pitch_angle = vertical_dist.atan2(horizontal_dist);
-
-                                // Clamp pitch to reasonable range (-30° to +15°)
                                 let pitch_clamped = pitch_angle.clamp(-0.52, 0.26);
 
-                                // Apply pitch as rotation around local X axis
                                 let target_pitch = Quat::from_rotation_x(pitch_clamped);
 
-                                // Smooth interpolation for barrel pitch
                                 barrel_transform.rotation = barrel_transform.rotation.slerp(
                                     target_pitch,
                                     rotation_speed * time.delta_secs()
