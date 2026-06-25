@@ -514,39 +514,15 @@ pub fn auto_fire_system(
         // Handle MG firing mode control
         let mut can_fire = true;
         if let Some(ref mut mg_turret) = mg_turret_opt {
-            match mg_turret.firing_mode {
-                crate::types::FiringMode::Burst => {
-                    // Burst mode: fire fixed shots then cooldown
-                    if mg_turret.cooldown_timer > 0.0 {
-                        mg_turret.cooldown_timer -= delta_time;
-                        can_fire = false;
-
-                        // Reset burst counter when cooldown ends
-                        if mg_turret.cooldown_timer <= 0.0 {
-                            mg_turret.shots_in_burst = 0;
-                        }
-                    } else if mg_turret.shots_in_burst >= mg_turret.max_burst_shots {
-                        // Start cooldown
-                        mg_turret.cooldown_timer = mg_turret.cooldown_duration;
-                        can_fire = false;
-                    }
+            if mg_turret.cooldown_timer > 0.0 {
+                mg_turret.cooldown_timer -= delta_time;
+                can_fire = false;
+                if mg_turret.cooldown_timer <= 0.0 {
+                    mg_turret.shots_in_burst = 0;
                 }
-                crate::types::FiringMode::Continuous => {
-                    // Continuous mode: pause after max_burst_shots for cooling
-                    if mg_turret.cooldown_timer > 0.0 {
-                        mg_turret.cooldown_timer -= delta_time;
-                        can_fire = false;
-
-                        // Reset burst counter when cooldown ends
-                        if mg_turret.cooldown_timer <= 0.0 {
-                            mg_turret.shots_in_burst = 0;
-                        }
-                    } else if mg_turret.shots_in_burst >= mg_turret.max_burst_shots {
-                        // Start cooldown after firing max shots
-                        mg_turret.cooldown_timer = mg_turret.cooldown_duration;
-                        can_fire = false;
-                    }
-                }
+            } else if mg_turret.shots_in_burst >= mg_turret.max_burst_shots {
+                mg_turret.cooldown_timer = mg_turret.cooldown_duration;
+                can_fire = false;
             }
         }
 
@@ -1002,31 +978,15 @@ pub fn turret_hitscan_fire_system(
         // === MG FIRING MODE CONTROL ===
         let mut can_fire = true;
         if let Some(ref mut mg_turret) = mg_turret_opt {
-            match mg_turret.firing_mode {
-                crate::types::FiringMode::Burst => {
-                    if mg_turret.cooldown_timer > 0.0 {
-                        mg_turret.cooldown_timer -= delta_time;
-                        can_fire = false;
-                        if mg_turret.cooldown_timer <= 0.0 {
-                            mg_turret.shots_in_burst = 0;
-                        }
-                    } else if mg_turret.shots_in_burst >= mg_turret.max_burst_shots {
-                        mg_turret.cooldown_timer = mg_turret.cooldown_duration;
-                        can_fire = false;
-                    }
+            if mg_turret.cooldown_timer > 0.0 {
+                mg_turret.cooldown_timer -= delta_time;
+                can_fire = false;
+                if mg_turret.cooldown_timer <= 0.0 {
+                    mg_turret.shots_in_burst = 0;
                 }
-                crate::types::FiringMode::Continuous => {
-                    if mg_turret.cooldown_timer > 0.0 {
-                        mg_turret.cooldown_timer -= delta_time;
-                        can_fire = false;
-                        if mg_turret.cooldown_timer <= 0.0 {
-                            mg_turret.shots_in_burst = 0;
-                        }
-                    } else if mg_turret.shots_in_burst >= mg_turret.max_burst_shots {
-                        mg_turret.cooldown_timer = mg_turret.cooldown_duration;
-                        can_fire = false;
-                    }
-                }
+            } else if mg_turret.shots_in_burst >= mg_turret.max_burst_shots {
+                mg_turret.cooldown_timer = mg_turret.cooldown_duration;
+                can_fire = false;
             }
         }
 
