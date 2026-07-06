@@ -403,6 +403,7 @@ pub struct MgTurret {
     pub max_burst_shots: u32,     // Max shots before pause (Burst: 40, Continuous: 40-50)
     pub cooldown_timer: f32,      // Cooldown timer
     pub cooldown_duration: f32,   // Cooldown duration (pause between bursts/sweeps)
+    pub burst_audio: Option<Entity>, // Active burst audio entity, despawned when firing stops
 }
 
 // PendingExplosion and ExplosionEffect moved to src/explosion_system.rs

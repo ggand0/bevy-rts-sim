@@ -985,6 +985,10 @@ pub fn turret_hitscan_fire_system(
             } else if mg_turret.shots_in_burst >= mg_turret.max_burst_shots {
                 mg_turret.cooldown_timer = mg_turret.cooldown_duration;
                 can_fire = false;
+                // Stop burst audio when entering cooldown
+                if let Some(audio_entity) = mg_turret.burst_audio.take() {
+                    commands.entity(audio_entity).try_despawn();
+                }
             }
         }
 
@@ -1041,6 +1045,15 @@ pub fn turret_hitscan_fire_system(
             }
 
             // === FIRE AT TARGET ===
+            // No target: stop burst audio and reset counter
+            if combat_unit.current_target.is_none() {
+                if let Some(ref mut mg_turret) = mg_turret_opt {
+                    mg_turret.shots_in_burst = 0;
+                    if let Some(audio_entity) = mg_turret.burst_audio.take() {
+                        commands.entity(audio_entity).try_despawn();
+                    }
+                }
+            }
             if let Some(target_entity) = combat_unit.current_target {
                 // Get target position and movement state
                 let target_info_opt: Option<(Vec3, bool)> = all_droids_query.get(target_entity)
@@ -1224,19 +1237,30 @@ pub fn turret_hitscan_fire_system(
 
                     // === AUDIO ===
                     if is_mg {
-                        // Play burst sound once at start of each burst (not per-shot)
+                        // Play burst sound once at start of each burst, track entity to stop on idle
                         let burst_just_started = mg_turret_opt.as_ref()
                             .map(|mg| mg.shots_in_burst == 1)
                             .unwrap_or(false);
                         if burst_just_started {
+                            // Kill previous audio if still playing
+                            if let Some(ref mut mg_turret) = mg_turret_opt {
+                                if let Some(old_audio) = mg_turret.burst_audio.take() {
+                                    commands.entity(old_audio).try_despawn();
+                                }
+                            }
+
                             let turret_pos = global_transform.translation();
                             let distance = turret_pos.distance(camera_position);
                             let volume = proximity_volume(distance, crate::constants::VOLUME_MG_TURRET);
 
-                            commands.spawn((
+                            let audio_entity = commands.spawn((
                                 AudioPlayer::new(audio_assets.mg_sound.clone()),
                                 PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::Linear(volume)),
-                            ));
+                            )).id();
+
+                            if let Some(ref mut mg_turret) = mg_turret_opt {
+                                mg_turret.burst_audio = Some(audio_entity);
+                            }
                         }
                     } else {
                         shots_fired += 1;

@@ -136,11 +136,12 @@ fn spawn_mg_turret_internal(
             current_barrel_index: 0,
         },
         MgTurret {
-            firing_mode: FiringMode::Continuous, // Start with Continuous mode for mowing down
+            firing_mode: FiringMode::Continuous,
             shots_in_burst: 0,
-            max_burst_shots: 45,   // 45 shots at 0.05s = ~2.25 seconds before pause (20 shots/sec)
-            cooldown_timer: 0.0,   // No cooldown initially
-            cooldown_duration: 1.5, // 1.5 second pause between bursts/sweeps
+            max_burst_shots: 40,
+            cooldown_timer: 0.0,
+            cooldown_duration: 1.5,
+            burst_audio: None,
         },
     )).id();
 
