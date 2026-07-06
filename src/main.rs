@@ -139,6 +139,8 @@ fn main() {
             clear_blocked_targets_system, // Stuck prevention for AttackMove
             hitscan_fire_system,          // Infantry use hitscan (instant damage + visual tracer)
             turret_hitscan_fire_system,   // Turrets now use hitscan too (no more wasted shots)
+            mg_burst_audio_sync_system.after(turret_hitscan_fire_system), // Fade burst audio when firing stops
+            audio_fade_out_system,        // Apply audio fade-outs and despawn silent clips
             volley_fire_system,
             update_projectiles,
             update_hitscan_tracers,   // Update visual tracers

@@ -932,6 +932,7 @@ pub fn turret_hitscan_fire_system(
     shield_config: Res<crate::shield::ShieldConfig>,
     mut squad_manager: ResMut<SquadManager>,
     mut turret_query: Query<(
+        Entity,
         &GlobalTransform,
         &Transform,
         &BattleDroid,
@@ -972,7 +973,7 @@ pub fn turret_hitscan_fire_system(
     // Note: MG barrel position is now computed dynamically with pitch rotation
     // See the firing_pos calculation for MG turrets below
 
-    for (global_transform, local_transform, droid, mut combat_unit, mut turret, mut mg_turret_opt) in turret_query.iter_mut() {
+    for (turret_entity, global_transform, local_transform, droid, mut combat_unit, mut turret, mut mg_turret_opt) in turret_query.iter_mut() {
         // === MG FIRING MODE CONTROL ===
         let mut can_fire = true;
         if let Some(ref mut mg_turret) = mg_turret_opt {
@@ -1093,6 +1094,10 @@ pub fn turret_hitscan_fire_system(
                     // Check line of sight
                     if !has_line_of_sight(firing_pos, target_pos, heightmap.as_deref()) {
                         combat_unit.current_target = None;
+                        // Burst is interrupted: reset so the next burst retriggers its audio
+                        if let Some(ref mut mg_turret) = mg_turret_opt {
+                            mg_turret.shots_in_burst = 0;
+                        }
                         continue;
                     }
 
@@ -1241,6 +1246,10 @@ pub fn turret_hitscan_fire_system(
                             commands.spawn((
                                 AudioPlayer::new(audio_assets.mg_sound.clone()),
                                 PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::Linear(volume)),
+                                crate::types::MgBurstAudio {
+                                    turret: turret_entity,
+                                    volume,
+                                },
                             ));
                         }
                     } else {
@@ -1260,6 +1269,56 @@ pub fn turret_hitscan_fire_system(
                     }
                 }
             }
+        }
+    }
+}
+
+/// How long an MG burst clip takes to fade out after the last bullet.
+/// Matches the fade-out baked into the tail of the clip itself.
+const MG_BURST_AUDIO_FADE_SECS: f32 = 0.25;
+
+/// Start fading out MG burst audio the moment its turret stops firing —
+/// burst complete (cooldown), target lost, LOS blocked, or turret destroyed.
+/// This keeps the clip's end synced to the last bullet no matter how the
+/// burst ended, without the hard cut of despawning mid-playback.
+pub fn mg_burst_audio_sync_system(
+    mut commands: Commands,
+    audio_query: Query<(Entity, &crate::types::MgBurstAudio), Without<crate::types::AudioFadeOut>>,
+    turret_query: Query<(&CombatUnit, &crate::types::MgTurret)>,
+) {
+    for (audio_entity, burst_audio) in audio_query.iter() {
+        // Turret gone (destroyed) counts as not firing
+        let still_firing = turret_query.get(burst_audio.turret)
+            .map(|(combat_unit, mg_turret)| {
+                combat_unit.current_target.is_some()
+                    && mg_turret.cooldown_timer <= 0.0
+                    && mg_turret.shots_in_burst > 0
+            })
+            .unwrap_or(false);
+
+        if !still_firing {
+            commands.entity(audio_entity).insert(crate::types::AudioFadeOut {
+                remaining: MG_BURST_AUDIO_FADE_SECS,
+                duration: MG_BURST_AUDIO_FADE_SECS,
+            });
+        }
+    }
+}
+
+/// Fade marked audio entities to silence, then despawn them.
+/// One-way: once AudioFadeOut is inserted the clip always dies.
+pub fn audio_fade_out_system(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut audio_query: Query<(Entity, &crate::types::MgBurstAudio, &mut crate::types::AudioFadeOut, &mut AudioSink)>,
+) {
+    for (entity, burst_audio, mut fade, mut sink) in audio_query.iter_mut() {
+        fade.remaining -= time.delta_secs();
+        if fade.remaining <= 0.0 {
+            commands.entity(entity).try_despawn();
+        } else {
+            let t = fade.remaining / fade.duration;
+            sink.set_volume(bevy::audio::Volume::Linear(burst_audio.volume * t));
         }
     }
 }

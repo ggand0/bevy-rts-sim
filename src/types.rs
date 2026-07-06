@@ -405,6 +405,21 @@ pub struct MgTurret {
     pub cooldown_duration: f32,   // Cooldown duration (pause between bursts/sweeps)
 }
 
+/// Marker on an MG burst audio entity, linking it back to the turret that fired it.
+/// A sync system fades the clip out when the turret stops firing for any reason.
+#[derive(Component)]
+pub struct MgBurstAudio {
+    pub turret: Entity,   // The turret assembly entity (has MgTurret + CombatUnit)
+    pub volume: f32,      // Spawn volume, used as the fade's starting point
+}
+
+/// One-way fade-out: once inserted, the audio entity fades to silence and despawns.
+#[derive(Component)]
+pub struct AudioFadeOut {
+    pub remaining: f32,   // Seconds left in the fade
+    pub duration: f32,    // Total fade length
+}
+
 // PendingExplosion and ExplosionEffect moved to src/explosion_system.rs
 
 // Game state management
