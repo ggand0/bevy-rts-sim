@@ -960,11 +960,9 @@ pub fn turret_hitscan_fire_system(
         .map(|cam_transform| cam_transform.translation)
         .unwrap_or(Vec3::new(0.0, 100.0, 100.0));
 
-    // Audio throttling (separate counters for MG vs Heavy)
+    // Audio throttling for heavy turret (MG uses per-burst audio instead)
     let mut shots_fired = 0;
-    let mut mg_shots_fired = 0;
     const MAX_AUDIO_PER_FRAME: usize = 5;
-    const MAX_MG_AUDIO_PER_FRAME: usize = 3;
 
     // Barrel positions
     let standard_barrel_positions = [
@@ -1226,8 +1224,11 @@ pub fn turret_hitscan_fire_system(
 
                     // === AUDIO ===
                     if is_mg {
-                        mg_shots_fired += 1;
-                        if mg_shots_fired <= MAX_MG_AUDIO_PER_FRAME {
+                        // Play burst sound once at start of each burst (not per-shot)
+                        let burst_just_started = mg_turret_opt.as_ref()
+                            .map(|mg| mg.shots_in_burst == 1)
+                            .unwrap_or(false);
+                        if burst_just_started {
                             let turret_pos = global_transform.translation();
                             let distance = turret_pos.distance(camera_position);
                             let volume = proximity_volume(distance, crate::constants::VOLUME_MG_TURRET);

@@ -96,7 +96,7 @@ pub const VOLUME_TURRET_EXPLOSION: f32 = 0.3;      // Turret explosion volume (s
 pub const VOLUME_LASER: f32 = 0.3;                  // Laser fire volume (droids and turrets)
 #[allow(dead_code)]
 pub const VOLUME_SHIELD_IMPACT: f32 = 0.4;          // Shield impact volume (moved to ShieldConfig, kept for reference)
-pub const VOLUME_MG_TURRET: f32 = 0.1;             // MG turret max volume (proximity-based)
+pub const VOLUME_MG_TURRET: f32 = 0.125;           // MG turret max volume (proximity-based)
 pub const VOLUME_HEAVY_TURRET: f32 = 0.015;         // Heavy turret max volume (proximity-based)
 
 // Proximity-based audio attenuation
