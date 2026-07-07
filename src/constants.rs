@@ -91,12 +91,17 @@ pub const PERLIN_LACUNARITY: f64 = 2.0;             // Frequency multiplier per 
 
 // Audio volume settings
 pub const VOLUME_EXPLOSION: f32 = 0.5;              // Tower/unit explosion volume
-pub const VOLUME_TURRET_EXPLOSION: f32 = 0.3;      // Turret explosion volume (smaller than tower)
+pub const VOLUME_TURRET_EXPLOSION: f32 = 0.5;      // Turret explosion volume (plays over a ducked gunfire bed)
+
+// Explosion ducking: gunfire audio dips while an explosion plays so it isn't masked
+pub const EXPLOSION_DUCK_FACTOR: f32 = 0.25;   // Gunfire volume multiplier while ducked
+pub const EXPLOSION_DUCK_DURATION: f32 = 0.7;  // Total duck time in seconds
+pub const EXPLOSION_DUCK_RELEASE: f32 = 0.3;   // Ramp back to full volume over the last part
 #[allow(dead_code)]
 pub const VOLUME_LASER: f32 = 0.3;                  // Laser fire volume (droids and turrets)
 #[allow(dead_code)]
 pub const VOLUME_SHIELD_IMPACT: f32 = 0.4;          // Shield impact volume (moved to ShieldConfig, kept for reference)
-pub const VOLUME_MG_TURRET: f32 = 0.125;           // MG turret max volume (proximity-based)
+pub const VOLUME_MG_TURRET: f32 = 0.25;            // Target MG loudness; per-clip volume is divided by sqrt(concurrent bursts)
 pub const VOLUME_HEAVY_TURRET: f32 = 0.015;         // Heavy turret max volume (proximity-based)
 
 // Proximity-based audio attenuation

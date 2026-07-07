@@ -60,6 +60,7 @@ fn main() {
         .add_plugins(MaterialPlugin::<objective::ShieldBarMaterial>::default())
         .insert_resource(SpatialGrid::new())
         .insert_resource(SquadManager::new())
+        .insert_resource(types::ExplosionDucking::default())
         .insert_resource(GameState::default())
         .insert_resource(ExplosionDebugMode::default())
         .insert_resource(selection::SelectionState::default())
@@ -141,6 +142,7 @@ fn main() {
             turret_hitscan_fire_system,   // Turrets now use hitscan too (no more wasted shots)
             mg_burst_audio_sync_system.after(turret_hitscan_fire_system), // Fade burst audio when firing stops
             audio_fade_out_system,        // Apply audio fade-outs and despawn silent clips
+            explosion_ducking_system,     // Dip gunfire while explosions play
             volley_fire_system,
             update_projectiles,
             update_hitscan_tracers,   // Update visual tracers

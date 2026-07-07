@@ -517,6 +517,7 @@ pub fn turret_death_system(
     mut commands: Commands,
     turret_query: Query<(Entity, &Transform, &Health), With<TurretBase>>,
     audio_assets: Res<crate::types::AudioAssets>,
+    mut ducking: ResMut<crate::types::ExplosionDucking>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut additive_materials: ResMut<Assets<crate::wfx_materials::AdditiveMaterial>>,
     mut smoke_materials: ResMut<Assets<crate::wfx_materials::SmokeScrollMaterial>>,
@@ -527,11 +528,17 @@ pub fn turret_death_system(
             let position = transform.translation;
             info!("Turret destroyed at {:?}", position);
 
-            // Play explosion sound (smaller volume than tower explosions)
+            // Play explosion sound. Use the punchy ground_explosion clips, not
+            // distant_explosion1: that clip is ~7dB quieter at the source (pre-muffled
+            // "distant" recording) and gets masked by MG fire at any volume setting.
+            let mut rng = rand::thread_rng();
             commands.spawn((
-                AudioPlayer::new(audio_assets.explosion_sound.clone()),
+                AudioPlayer::new(audio_assets.get_random_ground_explosion_sound(&mut rng)),
                 PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::Linear(crate::constants::VOLUME_TURRET_EXPLOSION)),
             ));
+
+            // Duck the gunfire bed so the explosion reads through the mix
+            ducking.timer = crate::constants::EXPLOSION_DUCK_DURATION;
 
             // Spawn WFX billboard explosion (28 flames + 50 dot sparkles + 5 glow sparkles + 1 center glow)
             crate::wfx_spawn::spawn_turret_wfx_explosion(

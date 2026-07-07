@@ -413,6 +413,20 @@ pub struct MgBurstAudio {
     pub volume: f32,      // Spawn volume, used as the fade's starting point
 }
 
+/// Marker on any gunfire audio entity (infantry lasers, turret fire).
+/// Lets the explosion ducking system dip the whole gunfire bed at once.
+#[derive(Component)]
+pub struct GunfireAudio {
+    pub volume: f32,      // Spawn volume, restored when ducking releases
+}
+
+/// When an explosion fires, gunfire audio is ducked so the explosion
+/// punches through the mix instead of being masked by it.
+#[derive(Resource, Default)]
+pub struct ExplosionDucking {
+    pub timer: f32,       // Seconds of ducking remaining; 0 = inactive
+}
+
 /// One-way fade-out: once inserted, the audio entity fades to silence and despawns.
 #[derive(Component)]
 pub struct AudioFadeOut {

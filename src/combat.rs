@@ -914,6 +914,7 @@ pub fn hitscan_fire_system(
                         commands.spawn((
                             AudioPlayer::new(sound),
                             PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::Linear(volume)),
+                            crate::types::GunfireAudio { volume },
                         ));
                     }
                 }
@@ -972,6 +973,21 @@ pub fn turret_hitscan_fire_system(
     ];
     // Note: MG barrel position is now computed dynamically with pitch rotation
     // See the firing_pos calculation for MG turrets below
+
+    // MG turrets currently mid-burst (last frame's state), for loudness normalization:
+    // concurrent clips sum acoustically, so each clip is scaled by 1/sqrt(count) to keep
+    // perceived MG loudness constant whether 1 or 5 turrets are firing
+    let active_mg_bursts = turret_query.iter()
+        .filter(|(_, _, _, _, combat_unit, _, mg_turret_opt)| {
+            mg_turret_opt.as_ref()
+                .map(|mg| combat_unit.current_target.is_some()
+                    && mg.cooldown_timer <= 0.0
+                    && mg.shots_in_burst > 0)
+                .unwrap_or(false)
+        })
+        .count()
+        .max(1);
+    let mg_burst_volume_scale = 1.0 / (active_mg_bursts as f32).sqrt();
 
     for (turret_entity, global_transform, local_transform, droid, mut combat_unit, mut turret, mut mg_turret_opt) in turret_query.iter_mut() {
         // === MG FIRING MODE CONTROL ===
@@ -1241,7 +1257,10 @@ pub fn turret_hitscan_fire_system(
                         if burst_just_started {
                             let turret_pos = global_transform.translation();
                             let distance = turret_pos.distance(camera_position);
-                            let volume = proximity_volume(distance, crate::constants::VOLUME_MG_TURRET);
+                            let volume = proximity_volume(
+                                distance,
+                                crate::constants::VOLUME_MG_TURRET * mg_burst_volume_scale,
+                            );
 
                             commands.spawn((
                                 AudioPlayer::new(audio_assets.mg_sound.clone()),
@@ -1250,6 +1269,7 @@ pub fn turret_hitscan_fire_system(
                                     turret: turret_entity,
                                     volume,
                                 },
+                                crate::types::GunfireAudio { volume },
                             ));
                         }
                     } else {
@@ -1264,6 +1284,7 @@ pub fn turret_hitscan_fire_system(
                             commands.spawn((
                                 AudioPlayer::new(sound),
                                 PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::Linear(volume)),
+                                crate::types::GunfireAudio { volume },
                             ));
                         }
                     }
@@ -1302,6 +1323,34 @@ pub fn mg_burst_audio_sync_system(
                 duration: MG_BURST_AUDIO_FADE_SECS,
             });
         }
+    }
+}
+
+/// Duck the gunfire bed while an explosion plays, then ramp it back.
+/// One explosion clip can't compete with dozens of concurrent gunfire clips —
+/// masking, not volume, is why explosions sound small in a firefight.
+pub fn explosion_ducking_system(
+    time: Res<Time>,
+    mut ducking: ResMut<crate::types::ExplosionDucking>,
+    mut gunfire_query: Query<(&crate::types::GunfireAudio, &mut AudioSink), Without<crate::types::AudioFadeOut>>,
+) {
+    if ducking.timer <= 0.0 {
+        return;
+    }
+    ducking.timer -= time.delta_secs();
+
+    // Full duck, then ramp back to 1.0 over the release window so there's no pop
+    let factor = if ducking.timer <= 0.0 {
+        1.0
+    } else if ducking.timer >= crate::constants::EXPLOSION_DUCK_RELEASE {
+        crate::constants::EXPLOSION_DUCK_FACTOR
+    } else {
+        let t = ducking.timer / crate::constants::EXPLOSION_DUCK_RELEASE;
+        crate::constants::EXPLOSION_DUCK_FACTOR * t + 1.0 * (1.0 - t)
+    };
+
+    for (gunfire, mut sink) in gunfire_query.iter_mut() {
+        sink.set_volume(bevy::audio::Volume::Linear(gunfire.volume * factor));
     }
 }
 
