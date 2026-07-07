@@ -74,6 +74,15 @@ pub fn calculate_hit_chance(
     accuracy.clamp(ACCURACY_MIN, ACCURACY_MAX)
 }
 
+/// Pitch angle (radians) from the MG barrel pivot to a target, clamped to the
+/// barrel's articulation range. Used by BOTH the rotation system (visual barrel
+/// angle) and the firing system (muzzle position) so they can never diverge.
+fn mg_barrel_pitch(pivot_world: Vec3, target_pos: Vec3) -> f32 {
+    let to_target = target_pos - pivot_world;
+    let horizontal_dist = Vec2::new(to_target.x, to_target.z).length();
+    to_target.y.atan2(horizontal_dist).clamp(MG_BARREL_PITCH_MIN, MG_BARREL_PITCH_MAX)
+}
+
 /// Calculate range penalty using segment-based interpolation
 /// Returns penalty as a positive value (0.0 to RANGE_SEGMENT_2_PENALTY)
 pub fn calculate_range_penalty(distance: f32) -> f32 {
@@ -163,9 +172,6 @@ pub fn setup_laser_assets(
         ..default()
     });
 
-    // Standard laser mesh
-    let laser_mesh = meshes.add(Rectangle::new(LASER_WIDTH, LASER_LENGTH));
-
     // MG turret uses shorter bolts (60% length)
     let mg_laser_mesh = meshes.add(Rectangle::new(LASER_WIDTH, LASER_LENGTH * 0.6));
 
@@ -175,7 +181,6 @@ pub fn setup_laser_assets(
     commands.insert_resource(LaserAssets {
         team_a_material,
         team_b_material,
-        laser_mesh,
         mg_laser_mesh,
         hitscan_tracer_mesh,
     });
@@ -463,247 +468,6 @@ pub fn target_acquisition_system(
             }
 
             combat_unit.current_target = closest_enemy;
-        }
-    }
-}
-
-/// DEPRECATED: Turret projectile fire system
-/// Replaced by turret_hitscan_fire_system for instant hit detection
-/// Kept for reference only
-#[allow(dead_code)]
-pub fn auto_fire_system(
-    time: Res<Time>,
-    mut commands: Commands,
-    laser_assets: Res<LaserAssets>,
-    mut turret_query: Query<(&GlobalTransform, &Transform, &BattleDroid, &mut CombatUnit, &mut crate::types::TurretRotatingAssembly, Option<&mut crate::types::MgTurret>)>,
-    target_query: Query<&GlobalTransform, With<BattleDroid>>,
-    tower_target_query: Query<&GlobalTransform, With<UplinkTower>>,
-    all_units_query: Query<(Entity, &GlobalTransform, &BattleDroid)>,
-    all_towers_query: Query<(Entity, &GlobalTransform, &UplinkTower)>,
-    camera_query: Query<&Transform, (With<RtsCamera>, Without<LaserProjectile>)>,
-    audio_assets: Res<AudioAssets>,
-    heightmap: Option<Res<TerrainHeightmap>>,
-) {
-    let delta_time = time.delta_secs();
-    
-    // Get camera position for initial orientation
-    let camera_position = camera_query.single()
-        .map(|cam_transform| cam_transform.translation)
-        .unwrap_or(Vec3::new(0.0, 100.0, 100.0)); // Fallback position
-    
-    // Count shots fired this frame for audio throttling
-    // NOTE: Infantry firing is now handled by hitscan_fire_system
-    let mut shots_fired = 0;
-    let mut mg_shots_fired = 0; // Separate counter for MG (prioritized)
-    const MAX_AUDIO_PER_FRAME: usize = 5; // Limit concurrent audio to prevent spam
-    const MAX_MG_AUDIO_PER_FRAME: usize = 3; // Prioritized limit for MG turret
-
-    // Handle turret firing with barrel positions
-    // Standard turret barrel positions
-    let standard_barrel_positions = [
-        Vec3::new(-1.8, 1.5, -6.0), // Left barrel muzzle
-        Vec3::new(1.8, 1.5, -6.0),  // Right barrel muzzle
-    ];
-    
-    // MG turret barrel position (single center barrel)
-    let mg_barrel_positions = [
-        Vec3::new(0.0, 2.0, -7.4),
-    ];
-
-    for (global_transform, local_transform, droid, mut combat_unit, mut turret, mut mg_turret_opt) in turret_query.iter_mut() {
-        // Handle MG firing mode control
-        let mut can_fire = true;
-        if let Some(ref mut mg_turret) = mg_turret_opt {
-            if mg_turret.cooldown_timer > 0.0 {
-                mg_turret.cooldown_timer -= delta_time;
-                can_fire = false;
-                if mg_turret.cooldown_timer <= 0.0 {
-                    mg_turret.shots_in_burst = 0;
-                }
-            } else if mg_turret.shots_in_burst >= mg_turret.max_burst_shots {
-                mg_turret.cooldown_timer = mg_turret.cooldown_duration;
-                can_fire = false;
-            }
-        }
-
-        // Update auto fire timer
-        combat_unit.auto_fire_timer -= delta_time;
-
-        if can_fire && combat_unit.auto_fire_timer <= 0.0 {
-            // Handle target validation and rapid switching for MG turrets
-            let is_continuous_mode = mg_turret_opt.as_ref()
-                .map(|mg| mg.firing_mode == crate::types::FiringMode::Continuous)
-                .unwrap_or(false);
-
-            // Check if current target is dead
-            if combat_unit.current_target.is_some() {
-                if let Some(target_entity) = combat_unit.current_target {
-                    let target_exists = target_query.get(target_entity).is_ok() ||
-                                       tower_target_query.get(target_entity).is_ok();
-                    if !target_exists {
-                        combat_unit.current_target = None;
-                    }
-                }
-            }
-
-            // For continuous mode MG, immediately acquire new target if current is None
-            if is_continuous_mode && combat_unit.current_target.is_none() {
-                let shooter_pos = global_transform.translation();
-
-                // Find closest enemy in range
-                let mut closest_enemy: Option<(Entity, f32)> = None;
-
-                // Check all enemy units
-                for (target_entity, target_transform, target_droid) in all_units_query.iter() {
-                    if target_droid.team != droid.team {
-                        let distance = shooter_pos.distance(target_transform.translation());
-                        if distance <= TARGETING_RANGE {
-                            if let Some((_, min_dist)) = closest_enemy {
-                                if distance < min_dist {
-                                    closest_enemy = Some((target_entity, distance));
-                                }
-                            } else {
-                                closest_enemy = Some((target_entity, distance));
-                            }
-                        }
-                    }
-                }
-
-                // If no units found, check enemy towers
-                if closest_enemy.is_none() {
-                    for (target_entity, target_transform, target_tower) in all_towers_query.iter() {
-                        if target_tower.team != droid.team {
-                            let distance = shooter_pos.distance(target_transform.translation());
-                            if distance <= TARGETING_RANGE {
-                                if let Some((_, min_dist)) = closest_enemy {
-                                    if distance < min_dist {
-                                        closest_enemy = Some((target_entity, distance));
-                                    }
-                                } else {
-                                    closest_enemy = Some((target_entity, distance));
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Assign new target immediately
-                combat_unit.current_target = closest_enemy.map(|(entity, _)| entity);
-            }
-
-            // Get or keep target
-            if let Some(target_entity) = combat_unit.current_target {
-                // Double-check target still exists (critical for rapid-fire MG to avoid wasting shots)
-                let target_transform = target_query.get(target_entity)
-                    .or_else(|_| tower_target_query.get(target_entity));
-
-                if let Ok(target_transform) = target_transform {
-                    let is_mg = mg_turret_opt.is_some();
-
-                    // Check line of sight before firing (critical for Map 2 terrain blocking)
-                    let shooter_pos = global_transform.translation();
-                    let target_pos = target_transform.translation();
-                    if !has_line_of_sight(shooter_pos, target_pos, heightmap.as_deref()) {
-                        // Clear target if line of sight is blocked
-                        combat_unit.current_target = None;
-                        continue;
-                    }
-
-                    // Determine barrel configuration, fire rate, and laser speed
-                    let (barrel_positions, fire_interval, laser_speed) = if is_mg {
-                        (&mg_barrel_positions[..], 0.05, LASER_SPEED * 3.0) // MG: 20 shots/sec, 3x speed
-                    } else {
-                        (&standard_barrel_positions[..], AUTO_FIRE_INTERVAL, LASER_SPEED)
-                    };
-
-                    // Reset timer
-                    combat_unit.auto_fire_timer = fire_interval;
-
-                    // Use cached laser material (turrets are Team A = green)
-                    let laser_material = laser_assets.team_a_material.clone();
-
-                    // Use appropriate cached mesh based on turret type
-                    let laser_mesh = if is_mg {
-                        laser_assets.mg_laser_mesh.clone()
-                    } else {
-                        laser_assets.laser_mesh.clone()
-                    };
-
-                    // Get current barrel position in local space
-                    let local_barrel_pos = barrel_positions[turret.current_barrel_index % barrel_positions.len()];
-
-                    // Transform barrel position to world space using turret's rotation
-                    let world_barrel_offset = local_transform.rotation * local_barrel_pos;
-                    let firing_pos = global_transform.translation() + world_barrel_offset;
-
-                    // Aim at center of collision sphere (ground level, where collision detection happens)
-                    let target_pos = target_transform.translation();
-                    let direction = (target_pos - firing_pos).normalize();
-                    let velocity = direction * laser_speed;
-
-                    // Calculate proper initial orientation
-                    let laser_rotation = calculate_laser_orientation(velocity, firing_pos, camera_position);
-                    let laser_transform = Transform::from_translation(firing_pos)
-                        .with_rotation(laser_rotation);
-
-                    // Spawn laser
-                    commands.spawn((
-                        Mesh3d(laser_mesh),
-                        MeshMaterial3d(laser_material),
-                        laser_transform,
-                        LaserProjectile {
-                            velocity,
-                            lifetime: LASER_LIFETIME,
-                            team: droid.team,
-                            origin: firing_pos,
-                        },
-                    ));
-
-                    // Advance to next barrel
-                    turret.current_barrel_index = (turret.current_barrel_index + 1) % barrel_positions.len();
-
-                    // Increment MG burst counter (both modes track shots for pause timing)
-                    if let Some(ref mut mg_turret) = mg_turret_opt {
-                        mg_turret.shots_in_burst += 1;
-                    }
-
-                    // Play sound per bullet (MG sounds are prioritized with separate counter)
-                    if is_mg {
-                        mg_shots_fired += 1;
-                        if mg_shots_fired <= MAX_MG_AUDIO_PER_FRAME {
-                            // MG uses single bullet sound with distance-based volume
-                            let turret_pos = global_transform.translation();
-                            let distance = turret_pos.distance(camera_position);
-                            let volume = proximity_volume(distance, crate::constants::VOLUME_MG_TURRET);
-                            trace!("MG turret at {:?}, camera at {:?}, distance: {:.1}, volume: {:.3}",
-                                turret_pos, camera_position, distance, volume);
-
-                            commands.spawn((
-                                AudioPlayer::new(audio_assets.mg_sound.clone()),
-                                PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::Linear(volume)),
-                            ));
-                        }
-                    } else {
-                        shots_fired += 1;
-                        if shots_fired <= MAX_AUDIO_PER_FRAME {
-                            // Standard turret uses random laser sound with proximity-based volume
-                            let mut rng = rand::thread_rng();
-                            let sound = audio_assets.get_random_laser_sound(&mut rng);
-
-                            let turret_pos = global_transform.translation();
-                            let distance = turret_pos.distance(camera_position);
-                            let volume = proximity_volume(distance, crate::constants::VOLUME_HEAVY_TURRET);
-                            trace!("Heavy turret at {:?}, camera at {:?}, distance: {:.1}, volume: {:.3}",
-                                turret_pos, camera_position, distance, volume);
-
-                            commands.spawn((
-                                AudioPlayer::new(sound),
-                                PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::Linear(volume)),
-                            ));
-                        }
-                    }
-                }
-            }
         }
     }
 }
@@ -1081,25 +845,15 @@ pub fn turret_hitscan_fire_system(
                     // Calculate firing position from barrel
                     let firing_pos = if is_mg {
                         // MG turret: compute barrel muzzle position with pitch rotation
-                        // Barrel pivot is at Y=2.0, Z=-1.0 relative to assembly
-                        // Muzzle extends Z=-6.4 from pivot
                         let assembly_pos = global_transform.translation();
-                        let barrel_pivot_local = Vec3::new(0.0, 2.0, -1.0);
-                        let barrel_pivot_world = assembly_pos + local_transform.rotation * barrel_pivot_local;
-
-                        // Calculate pitch angle to target
-                        let to_target = target_pos - barrel_pivot_world;
-                        let horizontal_dist = Vec2::new(to_target.x, to_target.z).length();
-                        let vertical_dist = to_target.y;
-                        let pitch_angle = vertical_dist.atan2(horizontal_dist).clamp(-0.52, 0.26);
+                        let barrel_pivot_world = assembly_pos + local_transform.rotation * MG_BARREL_PIVOT;
+                        let pitch_angle = mg_barrel_pitch(barrel_pivot_world, target_pos);
 
                         // Compute muzzle position with pitch applied
-                        // Muzzle extends 6.4 units forward from pivot
                         let barrel_forward = local_transform.rotation * Vec3::NEG_Z;
                         let pitch_rotation = Quat::from_axis_angle(local_transform.rotation * Vec3::X, pitch_angle);
                         let pitched_forward = pitch_rotation * barrel_forward;
-                        let muzzle_offset = pitched_forward * 6.4;
-                        barrel_pivot_world + muzzle_offset
+                        barrel_pivot_world + pitched_forward * MG_BARREL_MUZZLE_LENGTH
                     } else {
                         // Heavy turret: use standard barrel positions
                         let local_barrel_pos = standard_barrel_positions[turret.current_barrel_index % standard_barrel_positions.len()];
@@ -1626,18 +1380,9 @@ pub fn turret_rotation_system(
                     if let Some(children) = children {
                         for child in children.iter() {
                             if let Ok(mut barrel_transform) = barrel_query.get_mut(child) {
-                                // Barrel pivot is at (0, 2.0, -1.0) relative to assembly
-                                // Must match the pivot used in turret_hitscan_fire_system
-                                let barrel_pivot_local = Vec3::new(0.0, 2.0, -1.0);
-                                let barrel_world_pos = turret_pos + turret_transform.rotation * barrel_pivot_local;
-                                let to_target = target_pos - barrel_world_pos;
-                                let horizontal_dist = Vec2::new(to_target.x, to_target.z).length();
-                                let vertical_dist = to_target.y;
-
-                                let pitch_angle = vertical_dist.atan2(horizontal_dist);
-                                let pitch_clamped = pitch_angle.clamp(-0.52, 0.26);
-
-                                let target_pitch = Quat::from_rotation_x(pitch_clamped);
+                                let barrel_world_pos = turret_pos + turret_transform.rotation * MG_BARREL_PIVOT;
+                                let pitch_angle = mg_barrel_pitch(barrel_world_pos, target_pos);
+                                let target_pitch = Quat::from_rotation_x(pitch_angle);
 
                                 barrel_transform.rotation = barrel_transform.rotation.slerp(
                                     target_pitch,

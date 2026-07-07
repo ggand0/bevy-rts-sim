@@ -167,7 +167,6 @@ impl AudioAssets {
 pub struct LaserAssets {
     pub team_a_material: Handle<StandardMaterial>,
     pub team_b_material: Handle<StandardMaterial>,
-    pub laser_mesh: Handle<Mesh>,
     pub mg_laser_mesh: Handle<Mesh>,  // Shorter bolts for MG turret
     pub hitscan_tracer_mesh: Handle<Mesh>,  // Tracer bolt for hitscan weapons
 }

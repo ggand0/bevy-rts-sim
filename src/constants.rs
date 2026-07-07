@@ -42,6 +42,14 @@ pub const HITSCAN_TRACER_LENGTH: f32 = 4.0;   // Length of the tracer bolt visua
 pub const HITSCAN_TRACER_WIDTH: f32 = 0.25;   // Slightly wider than projectiles for visibility
 pub const HITSCAN_DAMAGE: f32 = 25.0;         // Damage per hitscan hit (buildings)
 
+// MG turret barrel geometry — shared by the spawn code (turrets.rs), the rotation
+// system, and the firing system. These MUST stay in sync or the visual barrel
+// angle diverges from the actual bullet trajectory.
+pub const MG_BARREL_PIVOT: bevy::math::Vec3 = bevy::math::Vec3::new(0.0, 2.0, -1.0); // Pivot relative to the rotating assembly
+pub const MG_BARREL_MUZZLE_LENGTH: f32 = 6.4;  // Muzzle distance from the pivot along the barrel
+pub const MG_BARREL_PITCH_MIN: f32 = -0.52;    // ~30° down
+pub const MG_BARREL_PITCH_MAX: f32 = 0.26;     // ~15° up
+
 // Spatial partitioning settings
 pub const GRID_CELL_SIZE: f32 = 5.0; // Size of each grid cell (smaller = fewer neighbors per cell)
 pub const GRID_SIZE: i32 = 200; // Number of cells per side (covers 1000x1000 area)

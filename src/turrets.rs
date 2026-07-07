@@ -145,11 +145,12 @@ fn spawn_mg_turret_internal(
     )).id();
 
     // Spawn barrel entity (child of assembly) - handles PITCH rotation
-    // Position: at weapon housing front (Y=2.0 relative to assembly, Z=-1.0 at housing edge)
+    // Positioned at the weapon housing front; the rotation and firing systems
+    // both derive from the same constant so visuals and ballistics stay in sync
     let barrel_entity = commands.spawn((
         Mesh3d(barrel_mesh),
         MeshMaterial3d(barrel_material),
-        Transform::from_xyz(0.0, 2.0, -1.0), // Pivot point at weapon housing front
+        Transform::from_translation(crate::constants::MG_BARREL_PIVOT),
         TurretBarrel,
     )).id();
 
