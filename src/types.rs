@@ -167,7 +167,6 @@ impl AudioAssets {
 pub struct LaserAssets {
     pub team_a_material: Handle<StandardMaterial>,
     pub team_b_material: Handle<StandardMaterial>,
-    pub laser_mesh: Handle<Mesh>,
     pub mg_laser_mesh: Handle<Mesh>,  // Shorter bolts for MG turret
     pub hitscan_tracer_mesh: Handle<Mesh>,  // Tracer bolt for hitscan weapons
 }
@@ -355,6 +354,11 @@ pub struct TurretRotatingAssembly {
     pub current_barrel_index: usize, // 0-3 for four barrels in 2x2 arrangement
 }
 
+/// Marker component for MG turret barrel (child of TurretRotatingAssembly)
+/// The barrel entity handles pitch rotation while the assembly handles yaw
+#[derive(Component)]
+pub struct TurretBarrel;
+
 // Building collision component
 #[derive(Component)]
 pub struct BuildingCollider {
@@ -398,6 +402,35 @@ pub struct MgTurret {
     pub max_burst_shots: u32,     // Max shots before pause (Burst: 40, Continuous: 40-50)
     pub cooldown_timer: f32,      // Cooldown timer
     pub cooldown_duration: f32,   // Cooldown duration (pause between bursts/sweeps)
+}
+
+/// Marker on an MG burst audio entity, linking it back to the turret that fired it.
+/// A sync system fades the clip out when the turret stops firing for any reason.
+#[derive(Component)]
+pub struct MgBurstAudio {
+    pub turret: Entity,   // The turret assembly entity (has MgTurret + CombatUnit)
+    pub volume: f32,      // Spawn volume, used as the fade's starting point
+}
+
+/// Marker on any gunfire audio entity (infantry lasers, turret fire).
+/// Lets the explosion ducking system dip the whole gunfire bed at once.
+#[derive(Component)]
+pub struct GunfireAudio {
+    pub volume: f32,      // Spawn volume, restored when ducking releases
+}
+
+/// When an explosion fires, gunfire audio is ducked so the explosion
+/// punches through the mix instead of being masked by it.
+#[derive(Resource, Default)]
+pub struct ExplosionDucking {
+    pub timer: f32,       // Seconds of ducking remaining; 0 = inactive
+}
+
+/// One-way fade-out: once inserted, the audio entity fades to silence and despawns.
+#[derive(Component)]
+pub struct AudioFadeOut {
+    pub remaining: f32,   // Seconds left in the fade
+    pub duration: f32,    // Total fade length
 }
 
 // PendingExplosion and ExplosionEffect moved to src/explosion_system.rs

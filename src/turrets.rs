@@ -8,7 +8,10 @@ use bevy::render::render_resource::{
 use bevy::render::alpha::AlphaMode;
 use crate::types::*;
 use crate::terrain::{TerrainHeightmap, MapSwitchEvent, MapPreset};
-use crate::procedural_meshes::*;
+use crate::procedural_meshes::{
+    create_mg_turret_base_mesh, create_mg_turret_assembly_mesh, create_mg_turret_barrel_mesh,
+    create_turret_base_mesh, create_turret_rotating_assembly_mesh,
+};
 
 /// MG turret health points
 pub const MG_TURRET_HEALTH: f32 = 10_000.0;
@@ -76,6 +79,7 @@ fn spawn_mg_turret_internal(
     // Create meshes
     let base_mesh = create_mg_turret_base_mesh(meshes);
     let assembly_mesh = create_mg_turret_assembly_mesh(meshes);
+    let barrel_mesh = create_mg_turret_barrel_mesh(meshes);
 
     // Create materials (Darker, more industrial)
     let base_material = materials.add(StandardMaterial {
@@ -92,6 +96,13 @@ fn spawn_mg_turret_internal(
         ..default()
     });
 
+    let barrel_material = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.25, 0.28, 0.25), // Slightly darker for barrel
+        metallic: 0.95,
+        perceptual_roughness: 0.3,
+        ..default()
+    });
+
     // Spawn base entity (parent)
     let base_entity = commands.spawn((
         Mesh3d(base_mesh),
@@ -102,7 +113,7 @@ fn spawn_mg_turret_internal(
         Health::new(MG_TURRET_HEALTH),
     )).id();
 
-    // Spawn rotating assembly entity (child)
+    // Spawn rotating assembly entity (child of base) - handles YAW rotation
     let assembly_entity = commands.spawn((
         Mesh3d(assembly_mesh),
         MeshMaterial3d(gun_material),
@@ -127,14 +138,25 @@ fn spawn_mg_turret_internal(
         MgTurret {
             firing_mode: FiringMode::Continuous, // Start with Continuous mode for mowing down
             shots_in_burst: 0,
-            max_burst_shots: 45,   // 45 shots at 0.05s = ~2.25 seconds before pause (20 shots/sec)
+            max_burst_shots: 40,   // 40 shots at 0.05s = ~2.0s, ends before the burst clip's fade-out
             cooldown_timer: 0.0,   // No cooldown initially
             cooldown_duration: 1.5, // 1.5 second pause between bursts/sweeps
         },
     )).id();
 
-    // Link child to parent
+    // Spawn barrel entity (child of assembly) - handles PITCH rotation
+    // Positioned at the weapon housing front; the rotation and firing systems
+    // both derive from the same constant so visuals and ballistics stay in sync
+    let barrel_entity = commands.spawn((
+        Mesh3d(barrel_mesh),
+        MeshMaterial3d(barrel_material),
+        Transform::from_translation(crate::constants::MG_BARREL_PIVOT),
+        TurretBarrel,
+    )).id();
+
+    // Link entities: Base -> Assembly -> Barrel
     commands.entity(base_entity).add_children(&[assembly_entity]);
+    commands.entity(assembly_entity).add_children(&[barrel_entity]);
 
     base_entity
 }
@@ -496,6 +518,7 @@ pub fn turret_death_system(
     mut commands: Commands,
     turret_query: Query<(Entity, &Transform, &Health), With<TurretBase>>,
     audio_assets: Res<crate::types::AudioAssets>,
+    mut ducking: ResMut<crate::types::ExplosionDucking>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut additive_materials: ResMut<Assets<crate::wfx_materials::AdditiveMaterial>>,
     mut smoke_materials: ResMut<Assets<crate::wfx_materials::SmokeScrollMaterial>>,
@@ -506,11 +529,17 @@ pub fn turret_death_system(
             let position = transform.translation;
             info!("Turret destroyed at {:?}", position);
 
-            // Play explosion sound (smaller volume than tower explosions)
+            // Play explosion sound. Use the punchy ground_explosion clips, not
+            // distant_explosion1: that clip is ~7dB quieter at the source (pre-muffled
+            // "distant" recording) and gets masked by MG fire at any volume setting.
+            let mut rng = rand::thread_rng();
             commands.spawn((
-                AudioPlayer::new(audio_assets.explosion_sound.clone()),
+                AudioPlayer::new(audio_assets.get_random_ground_explosion_sound(&mut rng)),
                 PlaybackSettings::DESPAWN.with_volume(bevy::audio::Volume::Linear(crate::constants::VOLUME_TURRET_EXPLOSION)),
             ));
+
+            // Duck the gunfire bed so the explosion reads through the mix
+            ducking.timer = crate::constants::EXPLOSION_DUCK_DURATION;
 
             // Spawn WFX billboard explosion (28 flames + 50 dot sparkles + 5 glow sparkles + 1 center glow)
             crate::wfx_spawn::spawn_turret_wfx_explosion(

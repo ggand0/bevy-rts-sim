@@ -968,6 +968,90 @@ pub fn create_mg_turret_assembly_mesh(meshes: &mut ResMut<Assets<Mesh>>) -> Hand
         }
     }
 
+    // 1. Shoulder Swivel (Improved Connector)
+    // Turret ring (wide base)
+    add_cylinder(&mut vertices, &mut normals, &mut indices,
+        Vec3::new(0.0, 0.2, 0.0), 1.2, 0.4, 16);
+
+    // Hinge block (Box shape for pivot)
+    add_box(&mut vertices, &mut normals, &mut indices,
+        Vec3::new(0.0, 0.6, 0.0),
+        Vec3::new(1.0, 0.8, 1.0));
+
+    // 2. Arm Segment (Angled connection)
+    add_box(&mut vertices, &mut normals, &mut indices,
+        Vec3::new(0.0, 1.4, 0.5),
+        Vec3::new(0.6, 1.5, 0.6));
+
+    // 3. Weapon Housing (Main body)
+    add_box(&mut vertices, &mut normals, &mut indices,
+        Vec3::new(0.0, 2.0, 0.0),
+        Vec3::new(0.8, 0.8, 2.0));
+
+    // NOTE: Barrel is now a separate entity (see create_mg_turret_barrel_mesh)
+    // This allows independent pitch rotation
+
+    // 5. Cooling Fins (Thin boxes along housing sides)
+    // Moved slightly outward to avoid z-fighting with housing
+    let fin_count = 6;
+    for i in 0..fin_count {
+        let z_pos = 0.5 - (i as f32 * 0.25);
+        // Left fins
+        add_box(&mut vertices, &mut normals, &mut indices,
+            Vec3::new(-0.52, 2.0, z_pos),
+            Vec3::new(0.2, 0.6, 0.1));
+        // Right fins
+        add_box(&mut vertices, &mut normals, &mut indices,
+            Vec3::new(0.52, 2.0, z_pos),
+            Vec3::new(0.2, 0.6, 0.1));
+    }
+
+    // 7. Ammo Magazines (Side boxes)
+    // Left Magazine
+    add_box(&mut vertices, &mut normals, &mut indices,
+        Vec3::new(-0.95, 2.1, 0.0),
+        Vec3::new(0.5, 1.0, 1.4));
+    // Left Strut
+    add_box(&mut vertices, &mut normals, &mut indices,
+        Vec3::new(-0.6, 2.1, 0.0),
+        Vec3::new(0.3, 0.4, 0.8));
+
+    // Right Magazine
+    add_box(&mut vertices, &mut normals, &mut indices,
+        Vec3::new(0.95, 2.1, 0.0),
+        Vec3::new(0.5, 1.0, 1.4));
+    // Right Strut
+    add_box(&mut vertices, &mut normals, &mut indices,
+        Vec3::new(0.6, 2.1, 0.0),
+        Vec3::new(0.3, 0.4, 0.8));
+
+    // 6. Hydraulic Details (Optional small cylinders)
+    add_cylinder(&mut vertices, &mut normals, &mut indices,
+        Vec3::new(0.6, 1.0, 0.0), 0.1, 0.8, 8); // Right piston
+    add_cylinder(&mut vertices, &mut normals, &mut indices,
+        Vec3::new(-0.6, 1.0, 0.0), 0.1, 0.8, 8); // Left piston
+
+
+    // Add UVs
+    let uvs: Vec<[f32; 2]> = (0..vertices.len()).map(|_| [0.5, 0.5]).collect();
+
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, vertices);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
+    mesh.insert_indices(Indices::U32(indices));
+
+    meshes.add(mesh)
+}
+
+/// Create procedural mesh for the MG turret barrel (separate entity for pitch rotation)
+/// Barrel origin is at the pivot point (weapon housing front) so pitch rotation works correctly
+pub fn create_mg_turret_barrel_mesh(meshes: &mut ResMut<Assets<Mesh>>) -> Handle<Mesh> {
+    let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::RENDER_WORLD);
+
+    let mut vertices = Vec::new();
+    let mut normals = Vec::new();
+    let mut indices = Vec::new();
+
     // Helper: Add Cylinder (Z-aligned for barrels)
     fn add_z_cylinder(
         vertices: &mut Vec<[f32; 3]>,
@@ -1002,7 +1086,6 @@ pub fn create_mg_turret_assembly_mesh(meshes: &mut ResMut<Assets<Mesh>>) -> Hand
             let bn = side_base + next * 2;
             let tn = side_base + next * 2 + 1;
 
-            // REVERTED winding order to (b, tn, t) for Z-Axis Cylinder Outward faces
             indices.push(b); indices.push(tn); indices.push(t);
             indices.push(b); indices.push(bn); indices.push(tn);
         }
@@ -1050,87 +1133,30 @@ pub fn create_mg_turret_assembly_mesh(meshes: &mut ResMut<Assets<Mesh>>) -> Hand
         }
     }
 
-    // 1. Shoulder Swivel (Improved Connector)
-    // Turret ring (wide base)
-    add_cylinder(&mut vertices, &mut normals, &mut indices,
-        Vec3::new(0.0, 0.2, 0.0), 1.2, 0.4, 16);
+    // Barrel geometry - positions relative to pivot point at (0, 0, 0)
+    // The barrel will be parented to the assembly at the weapon housing front
+    // Original positions were at Y=2.0, Z=-1.2 to -7.4 relative to assembly
+    // Now centered at pivot: Y=0, Z starts at -0.2 (just past housing edge)
 
-    // Hinge block (Box shape for pivot)
-    add_box(&mut vertices, &mut normals, &mut indices,
-        Vec3::new(0.0, 0.6, 0.0),
-        Vec3::new(1.0, 0.8, 1.0));
-
-    // 2. Arm Segment (Angled connection)
-    add_box(&mut vertices, &mut normals, &mut indices,
-        Vec3::new(0.0, 1.4, 0.5),
-        Vec3::new(0.6, 1.5, 0.6));
-
-    // 3. Weapon Housing (Main body)
-    add_box(&mut vertices, &mut normals, &mut indices,
-        Vec3::new(0.0, 2.0, 0.0),
-        Vec3::new(0.8, 0.8, 2.0));
-
-    // 4. Barrel (Oerlikon 20mm Style - Elongated)
     // Stage 1: Base Connector/Shroud
     add_z_cylinder(&mut vertices, &mut normals, &mut indices,
-        Vec3::new(0.0, 2.0, -1.2),
+        Vec3::new(0.0, 0.0, -0.2),
         0.25, 0.4, 12);
 
     // Stage 2: Recoil Spring/Mechanism (Thicker section)
     add_z_cylinder(&mut vertices, &mut normals, &mut indices,
-        Vec3::new(0.0, 2.0, -2.2),
+        Vec3::new(0.0, 0.0, -1.2),
         0.18, 1.6, 12);
 
     // Stage 3: Main Long Barrel (Thin)
     add_z_cylinder(&mut vertices, &mut normals, &mut indices,
-        Vec3::new(0.0, 2.0, -5.0),
+        Vec3::new(0.0, 0.0, -4.0),
         0.10, 4.0, 12);
 
     // Stage 4: Muzzle Brake/Flash Hider
     add_z_cylinder(&mut vertices, &mut normals, &mut indices,
-        Vec3::new(0.0, 2.0, -7.2),
+        Vec3::new(0.0, 0.0, -6.2),
         0.14, 0.4, 12);
-
-    // 5. Cooling Fins (Thin boxes along housing sides)
-    // Moved slightly outward to avoid z-fighting with housing
-    let fin_count = 6;
-    for i in 0..fin_count {
-        let z_pos = 0.5 - (i as f32 * 0.25);
-        // Left fins
-        add_box(&mut vertices, &mut normals, &mut indices,
-            Vec3::new(-0.52, 2.0, z_pos),
-            Vec3::new(0.2, 0.6, 0.1));
-        // Right fins
-        add_box(&mut vertices, &mut normals, &mut indices,
-            Vec3::new(0.52, 2.0, z_pos),
-            Vec3::new(0.2, 0.6, 0.1));
-    }
-
-    // 7. Ammo Magazines (Side boxes)
-    // Left Magazine
-    add_box(&mut vertices, &mut normals, &mut indices,
-        Vec3::new(-0.95, 2.1, 0.0),
-        Vec3::new(0.5, 1.0, 1.4));
-    // Left Strut
-    add_box(&mut vertices, &mut normals, &mut indices,
-        Vec3::new(-0.6, 2.1, 0.0),
-        Vec3::new(0.3, 0.4, 0.8));
-
-    // Right Magazine
-    add_box(&mut vertices, &mut normals, &mut indices,
-        Vec3::new(0.95, 2.1, 0.0),
-        Vec3::new(0.5, 1.0, 1.4));
-    // Right Strut
-    add_box(&mut vertices, &mut normals, &mut indices,
-        Vec3::new(0.6, 2.1, 0.0),
-        Vec3::new(0.3, 0.4, 0.8));
-
-    // 6. Hydraulic Details (Optional small cylinders)
-    add_cylinder(&mut vertices, &mut normals, &mut indices,
-        Vec3::new(0.6, 1.0, 0.0), 0.1, 0.8, 8); // Right piston
-    add_cylinder(&mut vertices, &mut normals, &mut indices,
-        Vec3::new(-0.6, 1.0, 0.0), 0.1, 0.8, 8); // Left piston
-
 
     // Add UVs
     let uvs: Vec<[f32; 2]> = (0..vertices.len()).map(|_| [0.5, 0.5]).collect();
